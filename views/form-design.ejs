@@ -1,0 +1,738 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>${esc(form.name)}</h1>
+    <p class="sub">
+      <span class="tag tag-primary" id="typeTag">${esc(form.formTypeName)}</span>
+      <span class="muted">拖拽左侧控件到中间画布 · 点击字段编辑属性</span>
+    </p>
+  </div>
+  <div class="head-actions">
+    <select class="input" id="formTypeSel" style="width:130px" onchange="changeFormType()">
+      <option value="fill"${form.formType === 'fill' ? ' selected' : ''}>填写表单</option>
+      <option value="flow"${form.formType === 'flow' ? ' selected' : ''}>流程表单</option>
+      <option value="exam"${form.formType === 'exam' ? ' selected' : ''}>考试表单</option>
+    </select>
+    <button class="btn" onclick="preview()">预览</button>
+    <button class="btn" onclick="openShare()">分享设置</button>
+    <button class="btn btn-primary" onclick="save()">保存表单</button>
+    <a class="btn btn-ghost" href="/forms">返回</a>
+  </div>
+</div>
+
+<div class="form-designer">
+  <div class="fd-palette">
+    <div style="font-size:13px;font-weight:600;margin-bottom:10px">控件库</div>
+    <div id="palette"></div>
+  </div>
+
+  <div>
+    <div class="fd-toolbar">
+      <span class="muted small">画布宽度</span>
+      <select class="input" id="canvasWidth" style="width:110px" onchange="renderCanvas()">
+        <option value="100%">100%</option>
+        <option value="900px">900px</option>
+        <option value="720px">720px</option>
+        <option value="600px">600px</option>
+      </select>
+      <span class="sep"></span>
+      <span class="muted small">快速插入：</span>
+      <button class="btn btn-sm" data-quick="1/5" title="1/5 宽">1/5</button>
+      <button class="btn btn-sm" data-quick="1/4" title="1/4 宽">1/4</button>
+      <button class="btn btn-sm" data-quick="1/3" title="1/3 宽">1/3</button>
+      <button class="btn btn-sm" data-quick="1/2" title="1/2 宽">1/2</button>
+      <button class="btn btn-sm" data-quick="1" title="整行">整行</button>
+      <div class="spacer"></div>
+      <span class="muted small" id="fieldCount">0 个字段</span>
+    </div>
+    <div class="fd-width-preview" id="widthPreview"></div>
+    <div class="fd-canvas" id="canvas">
+      <div class="empty-mini" id="canvasEmpty">从左侧拖拽控件到这里，或点击控件直接添加</div>
+    </div>
+  </div>
+
+  <div class="fd-props">
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px">字段属性</div>
+    <div id="props"><div class="empty-mini">请选择一个字段</div></div>
+  </div>
+</div>
+
+<!-- 分享设置 -->
+<div class="modal-mask" id="shareModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>分享设置</h3>
+      <button class="modal-close" onclick="closeModal('shareModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <label class="field">
+        <span>分享标题</span>
+        <input class="input" id="sh_title" placeholder="显示在填写页顶部">
+      </label>
+      <label class="field">
+        <span>分享图标</span>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px" id="iconPicker"></div>
+        <input class="input" id="sh_icon" style="margin-top:8px" placeholder="也可直接输入 emoji 或文字">
+      </label>
+      <label class="field">
+        <span>分享描述</span>
+        <textarea class="input" id="sh_desc" rows="2" placeholder="简要说明表单用途"></textarea>
+      </label>
+      <label class="field">
+        <span>提交成功提示</span>
+        <input class="input" id="sh_success" placeholder="提交成功，感谢您的填写！">
+      </label>
+      <label class="field">
+        <span>公开填写</span>
+        <label class="switch">
+          <input type="checkbox" id="sh_public">
+          <span class="track"></span>
+          <span class="label-text">允许通过链接公开填写</span>
+        </label>
+      </label>
+      <label class="field">
+        <span>表单状态</span>
+        <label class="switch">
+          <input type="checkbox" id="sh_status">
+          <span class="track"></span>
+          <span class="label-text">启用该表单</span>
+        </label>
+      </label>
+      <div id="examSettings" class="hidden">
+        <div class="form-row">
+          <label class="field">
+            <span>及格分数（%）</span>
+            <input class="input" type="number" id="sh_pass" value="60" min="0" max="100">
+          </label>
+          <label class="field">
+            <span>考试时长（分钟，0 不限）</span>
+            <input class="input" type="number" id="sh_duration" value="0" min="0">
+          </label>
+        </div>
+        <label class="field">
+          <span>提交后显示答案</span>
+          <label class="switch">
+            <input type="checkbox" id="sh_showAnswer">
+            <span class="track"></span>
+            <span class="label-text">考生提交后可查看正确答案</span>
+          </label>
+        </label>
+      </div>
+      <div class="url-box" style="margin-top:12px">
+        <code id="publicUrl">-</code>
+        <button class="btn btn-sm" onclick="copyPublicUrl()">复制</button>
+        <button class="btn btn-sm" onclick="regenToken()">重置链接</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('shareModal')">取消</button>
+      <button class="btn btn-primary" onclick="saveShare()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 预览 -->
+<div class="modal-mask" id="previewModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>表单预览</h3>
+      <button class="modal-close" onclick="closeModal('previewModal')">×</button>
+    </div>
+    <div class="modal-body" id="previewBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('previewModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const FID = <%= form.id %>;
+const FORM = <%- JSON.stringify({
+  id: form.id, name: form.name, code: form.code, description: form.description,
+  projectId: form.projectId, allowPublic: form.allowPublic, publicToken: form.publicToken,
+  status: form.status, formType: form.formType, settings: form.settings,
+}) %>;
+
+let TYPES = [];
+let FORM_TYPES = [];
+let WIDTHS = [];
+let LAYOUTS = [];
+let FIELDS = <%- JSON.stringify(form.fields || []) %>;
+let SELECTED = -1;
+let PROJECTS = [];
+let SETTINGS = Object.assign({}, FORM.settings || {});
+let FORM_TYPE = FORM.formType || 'fill';
+
+const ICONS = ['▤','📋','📝','📊','✎','📄','🗂','✅','🎯','📌','🔔','💡','🏢','👥','📦','🧾'];
+
+/* ══════════ 初始化 ══════════ */
+async function init() {
+  const [tr, pr] = await Promise.all([
+    api('/api/form-field-types'),
+    api('/api/projects'),
+  ]);
+  if (tr.ok) {
+    const d = tr.data;
+    TYPES = d.types || d;
+    FORM_TYPES = d.formTypes || [];
+    WIDTHS = d.widths || [];
+    LAYOUTS = d.optionLayouts || [];
+  }
+  if (pr.ok) PROJECTS = pr.data;
+
+  renderPalette();
+  renderCanvas();
+  updateTypeTag();
+}
+
+function updateTypeTag() {
+  const t = FORM_TYPES.find(x => x.key === FORM_TYPE);
+  const tag = document.getElementById('typeTag');
+  if (tag && t) tag.textContent = t.name;
+  document.getElementById('examSettings').classList.toggle('hidden', FORM_TYPE !== 'exam');
+}
+
+function changeFormType() {
+  FORM_TYPE = document.getElementById('formTypeSel').value;
+  updateTypeTag();
+  renderProps();
+}
+
+/* ══════════ 控件库 ══════════ */
+function renderPalette() {
+  const groups = {};
+  TYPES.forEach(t => {
+    if (!groups[t.group]) groups[t.group] = [];
+    groups[t.group].push(t);
+  });
+
+  document.getElementById('palette').innerHTML = Object.keys(groups).map(g =>
+    '<div style="font-size:11px;font-weight:700;color:var(--text-muted);margin:10px 0 6px">' + esc(g) + '</div>' +
+    groups[g].map(t => '<div class="fd-palette-item" draggable="true" data-type="' + t.key + '">' +
+      '<span style="width:18px;text-align:center">' + t.icon + '</span>' + esc(t.name) + '</div>').join('')
+  ).join('');
+
+  document.querySelectorAll('.fd-palette-item').forEach(el => {
+    el.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', el.dataset.type);
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    el.addEventListener('click', () => addField(el.dataset.type));
+  });
+}
+
+/* ══════════ 画布（12 栅格自适应） ══════════ */
+function spanOf(width) {
+  const w = WIDTHS.find(x => x.key === width);
+  return w ? w.span : 12;
+}
+
+function renderCanvas() {
+  const canvas = document.getElementById('canvas');
+  const width = document.getElementById('canvasWidth').value;
+  canvas.style.maxWidth = width;
+
+  document.getElementById('fieldCount').textContent = FIELDS.length + ' 个字段';
+  renderWidthPreview();
+
+  if (!FIELDS.length) {
+    canvas.innerHTML = '<div class="empty-mini" id="canvasEmpty">从左侧拖拽控件到这里，或点击控件直接添加</div>';
+    return;
+  }
+
+  // 12 栅格网格
+  canvas.innerHTML = '<div class="fd-grid">' + FIELDS.map((f, i) => {
+    const t = TYPES.find(x => x.key === f.type) || { name: f.type, icon: '▭' };
+    const span = spanOf(f.width);
+    return '<div class="fd-field' + (i === SELECTED ? ' selected' : '') + '" ' +
+      'data-index="' + i + '" draggable="true" style="grid-column: span ' + span + '">' +
+      '<div class="ff-tools">' +
+        '<button class="btn btn-sm" data-up="' + i + '" title="上移">↑</button>' +
+        '<button class="btn btn-sm" data-down="' + i + '" title="下移">↓</button>' +
+        '<button class="btn btn-sm btn-danger" data-rm="' + i + '" title="删除">×</button>' +
+      '</div>' +
+      '<div class="ff-label">' + esc(f.label) + (f.required ? ' <span class="req">*</span>' : '') +
+        ' <span class="muted small">(' + esc(t.name) + ')</span>' +
+        (f.width && f.width !== '1' ? ' <span class="tag tag-primary tag-sm">' + f.width + '</span>' : '') +
+        (Number(f.score) > 0 ? ' <span class="tag tag-warn tag-sm">' + f.score + '分</span>' : '') +
+      '</div>' +
+      '<div class="ff-control">' + renderPreviewControl(f) + '</div>' +
+    '</div>';
+  }).join('') + '</div>';
+
+  bindCanvasEvents();
+}
+
+/** 宽度分布预览条 */
+function renderWidthPreview() {
+  const el = document.getElementById('widthPreview');
+  if (!el) return;
+
+  if (!FIELDS.length) {
+    el.innerHTML = '<span class="muted small">宽度分布预览：添加字段后显示</span>';
+    return;
+  }
+
+  // 按行模拟 12 栅格排布
+  const rows = [];
+  let cur = [];
+  let used = 0;
+
+  FIELDS.forEach((f, i) => {
+    const span = spanOf(f.width);
+    if (used + span > 12) { rows.push(cur); cur = []; used = 0; }
+    cur.push({ span, index: i, label: f.label });
+    used += span;
+  });
+  if (cur.length) rows.push(cur);
+
+  el.innerHTML = '<span class="muted small" style="flex:0 0 auto">宽度分布：</span>' +
+    '<div class="wp-rows">' + rows.map(row =>
+      '<div class="wp-row">' + row.map(c =>
+        '<div class="wp-cell" style="flex:' + c.span + '" title="' + esc(c.label) + ' (' + c.span + '/12)">' +
+          (c.span >= 4 ? esc(c.label.slice(0, 6)) : '') +
+        '</div>').join('') + '</div>').join('') + '</div>';
+}
+
+function bindCanvasEvents() {
+  const canvas = document.getElementById('canvas');
+
+  canvas.querySelectorAll('.fd-field').forEach(el => {
+    const idx = Number(el.dataset.index);
+    el.addEventListener('click', e => {
+      if (e.target.closest('button')) return;
+      SELECTED = idx;
+      renderCanvas();
+      renderProps();
+    });
+    el.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/field-index', String(idx));
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    el.addEventListener('dragover', e => e.preventDefault());
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const from = e.dataTransfer.getData('text/field-index');
+      if (from === '') return;
+      reorder(Number(from), idx);
+    });
+  });
+
+  canvas.querySelectorAll('button[data-up]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation(); move(Number(b.dataset.up), -1);
+  }));
+  canvas.querySelectorAll('button[data-down]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation(); move(Number(b.dataset.down), 1);
+  }));
+  canvas.querySelectorAll('button[data-rm]').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation(); removeField(Number(b.dataset.rm));
+  }));
+}
+
+function renderPreviewControl(f) {
+  const layout = f.optionLayout || 'horizontal';
+  const opts = f.options || [];
+
+  switch (f.type) {
+    case 'textarea': return '<div style="border:1px solid var(--border);border-radius:6px;padding:8px;height:46px;background:var(--surface-alt)"></div>';
+    case 'select':
+      return '<select class="input" disabled><option>' + esc(opts[0] || '请选择') + '</option></select>';
+    case 'radio':
+    case 'checkbox': {
+      if (layout === 'dropdown') {
+        return '<select class="input" disabled><option>' + esc(opts[0] || '请选择') + '</option></select>';
+      }
+      const items = opts.length ? opts : ['选项一', '选项二'];
+      const wrap = layout === 'vertical'
+        ? 'display:flex;flex-direction:column;gap:6px'
+        : 'display:flex;flex-wrap:wrap;gap:14px';
+      return '<div style="' + wrap + '">' + items.map(o =>
+        '<label style="font-size:12.5px;display:inline-flex;align-items:center;gap:5px">' +
+        '<input type="' + (f.type === 'radio' ? 'radio' : 'checkbox') + '" disabled> ' + esc(o) + '</label>'
+      ).join('') + '</div>';
+    }
+    case 'number': case 'amount': case 'percent':
+      return '<input class="input" type="number" disabled placeholder="' + esc(f.placeholder || '') + '">';
+    case 'date': return '<input class="input" type="date" disabled>';
+    case 'datetime': return '<input class="input" type="datetime-local" disabled>';
+    case 'time': return '<input class="input" type="time" disabled>';
+    case 'divider': return '<hr style="margin:4px 0">';
+    case 'section': return '<div style="font-weight:600;color:var(--primary-dark)">' + esc(f.label) + '</div>';
+    case 'rating': return '<span style="font-size:17px;color:#FFC000">★★★★★</span>';
+    case 'slider': return '<input type="range" disabled style="width:100%">';
+    case 'image': case 'file':
+      return '<div style="border:1px dashed var(--border-strong);border-radius:6px;padding:12px;text-align:center;color:var(--text-muted);font-size:12px">点击上传</div>';
+    case 'formula':
+      return '<input class="input" disabled placeholder="' + esc(f.formula || '自动计算') + '">';
+    default:
+      return '<input class="input" type="text" disabled placeholder="' + esc(f.placeholder || '') + '">';
+  }
+}
+
+function addField(type) {
+  const t = TYPES.find(x => x.key === type);
+  if (!t) return;
+  const n = FIELDS.filter(f => f.type === type).length + 1;
+  FIELDS.push({
+    key: type + '_' + Date.now().toString(36),
+    type,
+    label: t.name + (n > 1 ? n : ''),
+    placeholder: '',
+    required: false,
+    options: ['select', 'radio', 'checkbox'].includes(type) ? ['选项一', '选项二'] : [],
+    optionLayout: type === 'select' ? 'dropdown' : 'horizontal',
+    width: '1',
+    score: 0,
+  });
+  SELECTED = FIELDS.length - 1;
+  renderCanvas();
+  renderProps();
+}
+
+function removeField(i) {
+  FIELDS.splice(i, 1);
+  if (SELECTED >= FIELDS.length) SELECTED = FIELDS.length - 1;
+  renderCanvas();
+  renderProps();
+}
+
+function move(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= FIELDS.length) return;
+  const t = FIELDS[i];
+  FIELDS[i] = FIELDS[j];
+  FIELDS[j] = t;
+  SELECTED = j;
+  renderCanvas();
+  renderProps();
+}
+
+function reorder(from, to) {
+  if (from === to) return;
+  const item = FIELDS.splice(from, 1)[0];
+  FIELDS.splice(to, 0, item);
+  SELECTED = to;
+  renderCanvas();
+  renderProps();
+}
+
+/* ══════════ 属性面板 ══════════ */
+function renderProps() {
+  const el = document.getElementById('props');
+  if (SELECTED < 0 || !FIELDS[SELECTED]) {
+    el.innerHTML = '<div class="empty-mini">请选择一个字段</div>';
+    return;
+  }
+  const f = FIELDS[SELECTED];
+  const isChoice = ['select', 'radio', 'checkbox'].includes(f.type);
+  const isNumber = ['number', 'amount', 'percent', 'slider', 'rating'].includes(f.type);
+  const isExam = FORM_TYPE === 'exam';
+
+  let extra = '';
+
+  // 选项配置
+  if (isChoice) {
+    extra += '<label class="field"><span>选项（每行一个）</span>' +
+      '<textarea class="input" id="p_options" rows="4">' + esc((f.options || []).join('\n')) + '</textarea></label>' +
+      '<label class="field"><span>选项展示方式</span>' +
+        '<select class="input" id="p_layout">' +
+          LAYOUTS.map(l => '<option value="' + l.key + '"' +
+            ((f.optionLayout || 'horizontal') === l.key ? ' selected' : '') + '>' + l.name + '</option>').join('') +
+        '</select></label>';
+
+    if (f.type === 'checkbox') {
+      extra += '<div class="form-row">' +
+        '<label class="field"><span>最少选择</span>' +
+          '<input class="input" type="number" id="p_minSelect" min="0" value="' +
+          (f.minSelect === null || f.minSelect === undefined ? '' : f.minSelect) + '"></label>' +
+        '<label class="field"><span>最多选择</span>' +
+          '<input class="input" type="number" id="p_maxSelect" min="0" value="' +
+          (f.maxSelect === null || f.maxSelect === undefined ? '' : f.maxSelect) + '"></label>' +
+      '</div>';
+    }
+  }
+
+  // 数值范围
+  if (isNumber) {
+    extra += '<div class="form-row">' +
+      '<label class="field"><span>最小值</span><input class="input" id="p_min" type="number" value="' +
+        (f.min === null || f.min === undefined ? '' : f.min) + '"></label>' +
+      '<label class="field"><span>最大值</span><input class="input" id="p_max" type="number" value="' +
+        (f.max === null || f.max === undefined ? '' : f.max) + '"></label>' +
+      '</div>';
+  }
+
+  // 公式
+  if (f.type === 'formula' || isNumber) {
+    extra += '<label class="field"><span>计算公式</span>' +
+      '<input class="input mono" id="p_formula" value="' + esc(f.formula || '') + '" placeholder="{price} * {qty}">' +
+      '<small class="hint">用 {字段标识} 引用其他字段，支持 + - * / 与 ROUND/ABS/MAX/MIN</small></label>';
+  }
+
+  // 联动
+  const otherFields = FIELDS.filter((x, i) => i !== SELECTED && x.type !== 'divider' && x.type !== 'section');
+  extra += '<label class="field"><span>联动数据源字段</span>' +
+    '<select class="input" id="p_linkSource">' +
+      '<option value="">（不联动）</option>' +
+      otherFields.map(x => '<option value="' + esc(x.key) + '"' +
+        (f.linkage && f.linkage.source === x.key ? ' selected' : '') + '>' + esc(x.label) + '</option>').join('') +
+    '</select>' +
+    '<small class="hint">选择后，该字段的值会随源字段变化自动填充</small></label>';
+
+  if (f.linkage && f.linkage.source) {
+    extra += '<label class="field"><span>联动映射（每行：源值=目标值）</span>' +
+      '<textarea class="input mono" id="p_linkMap" rows="3">' +
+        esc(Object.keys(f.linkage.map || {}).map(k => k + '=' + f.linkage.map[k]).join('\n')) +
+      '</textarea>' +
+      '<small class="hint">留空表示直接复制源字段的值</small></label>';
+  }
+
+  // 考试配置
+  if (isExam) {
+    extra += '<div class="form-row">' +
+      '<label class="field"><span>分值</span>' +
+        '<input class="input" type="number" id="p_score" min="0" value="' + (Number(f.score) || 0) + '"></label>' +
+      '<label class="field"><span>正确答案</span>' +
+        '<input class="input" id="p_answer" value="' + esc(f.answer || '') + '" placeholder="多选用逗号分隔"></label>' +
+    '</div>';
+  }
+
+  el.innerHTML =
+    '<label class="field"><span>字段名称 <i class="req">*</i></span>' +
+      '<input class="input" id="p_label" value="' + esc(f.label) + '"></label>' +
+    '<label class="field"><span>字段标识</span>' +
+      '<input class="input mono" id="p_key" value="' + esc(f.key) + '">' +
+      '<small class="hint">写入数据库的列名，仅字母数字下划线</small></label>' +
+    '<label class="field"><span>提示文字</span>' +
+      '<input class="input" id="p_placeholder" value="' + esc(f.placeholder || '') + '"></label>' +
+    '<label class="field"><span>默认值</span>' +
+      '<input class="input" id="p_default" value="' + esc(f.defaultValue || '') + '" placeholder="打开表单时的初始值"></label>' +
+    '<label class="field"><span>字段宽度</span>' +
+      '<select class="input" id="p_width">' +
+        WIDTHS.map(w => '<option value="' + w.key + '"' +
+          ((f.width || '1') === w.key ? ' selected' : '') + '>' + w.name + '</option>').join('') +
+      '</select>' +
+      '<small class="hint">同一行可放多个窄字段，窄屏自动堆叠</small></label>' +
+    extra +
+    '<label class="field"><span>必填</span>' +
+      '<label class="switch"><input type="checkbox" id="p_required"' + (f.required ? ' checked' : '') + '>' +
+      '<span class="track"></span><span class="label-text">该字段必须填写</span></label></label>' +
+    '<label class="field"><span>填写说明</span>' +
+      '<input class="input" id="p_hint" value="' + esc(f.hint || '') + '"></label>' +
+    '<button class="btn btn-primary btn-block" onclick="applyProps()">应用修改</button>';
+
+  const keyEl = document.getElementById('p_key');
+  if (keyEl) keyEl.addEventListener('input', () => {
+    keyEl.value = keyEl.value.replace(/[^a-zA-Z0-9_]/g, '_');
+  });
+}
+
+function applyProps() {
+  const f = FIELDS[SELECTED];
+  if (!f) return;
+  const label = document.getElementById('p_label').value.trim();
+  if (!label) return toast('字段名称不能为空', 'error');
+
+  f.label = label;
+  f.key = document.getElementById('p_key').value.trim().replace(/[^a-zA-Z0-9_]/g, '_') || f.key;
+  f.placeholder = document.getElementById('p_placeholder').value;
+  f.defaultValue = document.getElementById('p_default').value;
+  f.width = document.getElementById('p_width').value;
+  f.required = document.getElementById('p_required').checked;
+  f.hint = document.getElementById('p_hint').value;
+
+  const optEl = document.getElementById('p_options');
+  if (optEl) f.options = optEl.value.split('\n').map(s => s.trim()).filter(Boolean);
+
+  const layoutEl = document.getElementById('p_layout');
+  if (layoutEl) f.optionLayout = layoutEl.value;
+
+  const minSel = document.getElementById('p_minSelect');
+  if (minSel) f.minSelect = minSel.value === '' ? null : Number(minSel.value);
+  const maxSel = document.getElementById('p_maxSelect');
+  if (maxSel) f.maxSelect = maxSel.value === '' ? null : Number(maxSel.value);
+
+  const minEl = document.getElementById('p_min');
+  if (minEl) f.min = minEl.value === '' ? null : Number(minEl.value);
+  const maxEl = document.getElementById('p_max');
+  if (maxEl) f.max = maxEl.value === '' ? null : Number(maxEl.value);
+
+  const fEl = document.getElementById('p_formula');
+  if (fEl) f.formula = fEl.value;
+
+  const linkSrc = document.getElementById('p_linkSource');
+  if (linkSrc) {
+    if (linkSrc.value) {
+      const mapEl = document.getElementById('p_linkMap');
+      const map = {};
+      if (mapEl) {
+        mapEl.value.split('\n').forEach(line => {
+          const i = line.indexOf('=');
+          if (i > 0) map[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+        });
+      }
+      f.linkage = { source: linkSrc.value, mode: Object.keys(map).length ? 'map' : 'copy', map };
+    } else {
+      f.linkage = null;
+    }
+  }
+
+  const scoreEl = document.getElementById('p_score');
+  if (scoreEl) f.score = Number(scoreEl.value) || 0;
+  const ansEl = document.getElementById('p_answer');
+  if (ansEl) f.answer = ansEl.value;
+
+  toast('已应用', 'success');
+  renderCanvas();
+}
+
+/* ══════════ 保存 ══════════ */
+async function save() {
+  if (!FIELDS.length) return toast('请至少添加一个字段', 'error');
+  const r = await api('/api/forms/' + FID, {
+    method: 'PUT',
+    body: { fields: FIELDS, formType: FORM_TYPE },
+  });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast('表单已保存', 'success');
+}
+
+/* ══════════ 分享设置 ══════════ */
+function openShare() {
+  document.getElementById('sh_title').value = SETTINGS.shareTitle || FORM.name;
+  document.getElementById('sh_icon').value = SETTINGS.shareIcon || '▤';
+  document.getElementById('sh_desc').value = SETTINGS.shareDesc || '';
+  document.getElementById('sh_success').value = SETTINGS.successMessage || '';
+  document.getElementById('sh_public').checked = !!FORM.allowPublic;
+  document.getElementById('sh_status').checked = !!FORM.status;
+  document.getElementById('sh_pass').value = SETTINGS.examPassScore || 60;
+  document.getElementById('sh_duration').value = SETTINGS.examDuration || 0;
+  document.getElementById('sh_showAnswer').checked = !!SETTINGS.examShowAnswer;
+
+  document.getElementById('iconPicker').innerHTML = ICONS.map(ic =>
+    '<div class="icon-pick" data-icon="' + ic + '" style="width:38px;height:38px;border:1.5px solid var(--border);' +
+    'border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer">' +
+    ic + '</div>').join('');
+
+  document.querySelectorAll('.icon-pick').forEach(el => {
+    el.addEventListener('click', () => {
+      document.getElementById('sh_icon').value = el.dataset.icon;
+      document.querySelectorAll('.icon-pick').forEach(x => x.style.borderColor = 'var(--border)');
+      el.style.borderColor = 'var(--primary)';
+    });
+  });
+
+  document.getElementById('publicUrl').textContent = window.location.origin + '/f/' + FORM.publicToken;
+  document.getElementById('examSettings').classList.toggle('hidden', FORM_TYPE !== 'exam');
+  openModal('shareModal');
+}
+
+async function saveShare() {
+  const settings = Object.assign({}, SETTINGS, {
+    shareTitle: document.getElementById('sh_title').value.trim(),
+    shareIcon: document.getElementById('sh_icon').value.trim() || '▤',
+    shareDesc: document.getElementById('sh_desc').value.trim(),
+    successMessage: document.getElementById('sh_success').value.trim(),
+    examPassScore: Number(document.getElementById('sh_pass').value) || 60,
+    examDuration: Number(document.getElementById('sh_duration').value) || 0,
+    examShowAnswer: document.getElementById('sh_showAnswer').checked,
+  });
+
+  const r = await api('/api/forms/' + FID, {
+    method: 'PUT',
+    body: {
+      settings,
+      allowPublic: document.getElementById('sh_public').checked,
+      status: document.getElementById('sh_status').checked ? 1 : 0,
+    },
+  });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  SETTINGS = settings;
+  toast('分享设置已保存', 'success');
+  closeModal('shareModal');
+}
+
+function copyPublicUrl() {
+  copyText(window.location.origin + '/f/' + FORM.publicToken);
+}
+
+async function regenToken() {
+  if (!confirm('重置后原链接立即失效，确定继续？')) return;
+  const r = await api('/api/forms/' + FID + '/regenerate-token', { method: 'POST' });
+  if (!r.ok) return toast(r.message || '重置失败', 'error');
+  document.getElementById('publicUrl').textContent = r.url;
+  toast('链接已重置', 'success');
+}
+
+/* ══════════ 预览 ══════════ */
+function preview() {
+  if (!FIELDS.length) return toast('请先添加字段', 'error');
+  const width = document.getElementById('canvasWidth').value;
+
+  document.getElementById('previewBody').innerHTML =
+    '<div style="max-width:' + width + ';margin:0 auto">' +
+      '<div style="text-align:center;margin-bottom:22px">' +
+        '<div style="width:52px;height:52px;border-radius:14px;margin:0 auto 12px;' +
+          'background:linear-gradient(135deg,var(--primary),var(--accent));color:#FFFFFF;' +
+          'display:flex;align-items:center;justify-content:center;font-size:24px">' +
+          esc(SETTINGS.shareIcon || '▤') + '</div>' +
+        '<h2 style="font-size:19px;margin:0 0 6px">' + esc(SETTINGS.shareTitle || FORM.name) + '</h2>' +
+        (SETTINGS.shareDesc ? '<p class="muted" style="margin:0;font-size:13px">' + esc(SETTINGS.shareDesc) + '</p>' : '') +
+      '</div>' +
+      '<div class="fd-grid">' + FIELDS.map(f => {
+        const span = spanOf(f.width);
+        return '<label class="field" style="grid-column: span ' + span + '">' +
+          '<span>' + esc(f.label) + (f.required ? ' <i class="req">*</i>' : '') +
+            (Number(f.score) > 0 ? ' <span class="tag tag-warn tag-sm">' + f.score + '分</span>' : '') + '</span>' +
+          renderPreviewControl(f) +
+          (f.hint ? '<small class="hint">' + esc(f.hint) + '</small>' : '') +
+        '</label>';
+      }).join('') + '</div>' +
+      '<button class="btn btn-primary btn-block btn-lg" style="margin-top:20px" disabled>提交</button>' +
+    '</div>';
+  openModal('previewModal');
+}
+
+/* ══════════ 拖拽到画布 ══════════ */
+const canvas = document.getElementById('canvas');
+canvas.addEventListener('dragover', e => {
+  e.preventDefault();
+  canvas.classList.add('drag-over');
+});
+canvas.addEventListener('dragleave', () => canvas.classList.remove('drag-over'));
+canvas.addEventListener('drop', e => {
+  e.preventDefault();
+  canvas.classList.remove('drag-over');
+  const type = e.dataTransfer.getData('text/plain');
+  if (type) addField(type);
+});
+
+/* 快速插入：按指定宽度添加文本字段 */
+document.querySelectorAll('button[data-quick]').forEach(b => {
+  b.addEventListener('click', () => {
+    const width = b.dataset.quick;
+    const n = FIELDS.length + 1;
+    FIELDS.push({
+      key: 'text_' + Date.now().toString(36),
+      type: 'text',
+      label: '字段' + n,
+      placeholder: '',
+      required: false,
+      options: [],
+      optionLayout: 'horizontal',
+      width,
+      score: 0,
+    });
+    SELECTED = FIELDS.length - 1;
+    renderCanvas();
+    renderProps();
+    toast('已添加 ' + width + ' 宽字段', 'success');
+  });
+});
+
+init();
+</script>

@@ -1,0 +1,115 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>分享管理</h1>
+    <p class="sub">报表分享链接 · 可设置密码与有效期</p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" onclick="load()">刷新</button>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  分享链接格式：<code>{平台地址}/s/{分享令牌}</code>，无需登录即可查看报表。
+  可在创建时设置访问密码与有效期，随时停用或删除。
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="table table-fixed">
+      <thead>
+        <tr>
+          <th style="width:60px">ID</th>
+          <th style="width:160px">报表</th>
+          <th>分享链接</th>
+          <th style="width:180px">访问密码</th>
+          <th style="width:150px">有效期至</th>
+          <th style="width:70px">浏览</th>
+          <th style="width:80px">状态</th>
+          <th style="width:260px">操作</th>
+        </tr>
+      </thead>
+      <tbody id="shareBody"><tr><td colspan="8" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+let LIST = [];
+
+async function load() {
+  const r = await api('/api/shares');
+  if (!r.ok) return toast(r.message, 'error');
+  LIST = r.data;
+  render();
+}
+
+function render() {
+  const body = document.getElementById('shareBody');
+  if (!LIST.length) { body.innerHTML = '<tr><td colspan="8" class="empty">暂无分享链接</td></tr>'; return; }
+
+  const base = window.location.origin;
+  body.innerHTML = LIST.map(s => {
+    const url = base + '/s/' + s.token;
+    const expired = s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();
+
+    // 密码列：明文显示（便于管理员告知使用者）
+    let pwdCell;
+    if (!s.hasPassword) {
+      pwdCell = '<span class="muted">无</span>';
+    } else if (s.password) {
+      pwdCell = '<code class="mini">' + esc(s.password) + '</code>' +
+        '<button class="btn btn-sm" data-copy="' + esc(s.password) + '" style="margin-left:4px">复制</button>';
+    } else {
+      pwdCell = '<span class="tag tag-warn tag-sm">已设置</span>';
+    }
+
+    return '<tr>' +
+      '<td>' + s.id + '</td>' +
+      '<td>' + esc(s.reportName || s.title || '-') + '</td>' +
+      '<td><code class="mini">' + esc(url) + '</code></td>' +
+      '<td>' + pwdCell + '</td>' +
+      '<td class="small">' + (s.expiresAt ? fmtTime(s.expiresAt) : '永久有效') + '</td>' +
+      '<td>' + s.viewCount + '</td>' +
+      '<td>' + (expired ? '<span class="tag tag-err">已过期</span>'
+        : (s.status ? '<span class="tag tag-ok">启用</span>' : '<span class="tag tag-off">停用</span>')) + '</td>' +
+      '<td>' +
+        '<button class="btn btn-sm" data-copy="' + esc(url) + '">复制链接</button>' +
+        '<button class="btn btn-sm" data-open="' + esc(url) + '">打开</button>' +
+        '<button class="btn btn-sm" data-toggle="' + s.id + '" data-status="' + (s.status ? 0 : 1) + '">' +
+          (s.status ? '停用' : '启用') + '</button>' +
+        '<button class="btn btn-sm btn-danger" data-del="' + s.id + '">删除</button>' +
+      '</td>' +
+    '</tr>';
+  }).join('');
+
+  body.querySelectorAll('button[data-copy]').forEach(b =>
+    b.addEventListener('click', () => copyText(b.dataset.copy)));
+  body.querySelectorAll('button[data-open]').forEach(b =>
+    b.addEventListener('click', () => window.open(b.dataset.open, '_blank')));
+  body.querySelectorAll('button[data-toggle]').forEach(b =>
+    b.addEventListener('click', () => toggle(Number(b.dataset.toggle), Number(b.dataset.status))));
+  body.querySelectorAll('button[data-del]').forEach(b =>
+    b.addEventListener('click', () => del(Number(b.dataset.del))));
+}
+
+async function toggle(id, status) {
+  const r = await api('/api/shares/' + id, { method: 'PUT', body: { status } });
+  if (!r.ok) return toast(r.message || '操作失败', 'error');
+  toast(r.message, 'success');
+  load();
+}
+
+async function del(id) {
+  if (!confirm('确定删除该分享链接？删除后链接立即失效。')) return;
+  const r = await api('/api/shares/' + id, { method: 'DELETE' });
+  if (!r.ok) return toast(r.message || '删除失败', 'error');
+  toast('已删除', 'success');
+  load();
+}
+
+load();
+</script>

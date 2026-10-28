@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %> - <%= settings.site_name %></title>
+  <link rel="stylesheet" href="/public/css/app.css">
+  <% if (settings.theme_color && settings.theme_color !== '#3687FF') { %>
+  <style>:root { --primary: <%= settings.theme_color %>; }</style>
+  <% } %>
+</head>
+<body class="share-body">
+  <div class="share-header">
+    <div style="display:flex;align-items:center;gap:12px">
+      <span class="brand-logo" style="width:36px;height:36px;font-size:16px;flex:0 0 36px"><%= settings.site_logo_text %></span>
+      <div>
+        <div class="sh-title"><%= report.name %></div>
+        <div class="sh-meta"><%= settings.site_name %> · 数据报表分享</div>
+      </div>
+    </div>
+    <div class="sh-meta">
+      共 <%= rowCount %> 行 · 浏览 <%= share.viewCount %> 次
+      <% if (share.expiresAt) { %> · 有效期至 <%= fmtTime(share.expiresAt) %><% } %>
+    </div>
+  </div>
+
+  <div class="share-content">
+    <div class="chart-box">
+      <div class="cb-title">
+        <span><%= report.config && report.config.title ? report.config.title : report.name %></span>
+        <% if (report.description) { %><span class="muted small"><%= report.description %></span><% } %>
+      </div>
+      <div class="chart-canvas" id="chartCanvas" style="min-height:<%= (report.config && report.config.height) || 420 %>px"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <h3>数据明细</h3>
+        <span class="muted small" id="rowInfo">共 <%= rowCount %> 行</span>
+      </div>
+      <div class="table-wrap" style="max-height:560px;overflow:auto">
+        <table class="table table-fixed">
+          <thead id="dataHead"></thead>
+          <tbody id="dataBody"></tbody>
+        </table>
+      </div>
+      <div class="pager" id="pager"></div>
+    </div>
+
+    <div style="text-align:center;margin-top:26px;color:var(--text-muted);font-size:12px">
+      <% if (settings.site_footer) { %><%= settings.site_footer %><br><% } %>
+      由 <%= settings.site_name %> 提供数据服务
+    </div>
+  </div>
+
+  <script src="/public/js/charts.js"></script>
+  <script>
+    const ROWS = <%- JSON.stringify(rows) %>;
+    const COLUMNS = <%- JSON.stringify(columns.map(function (c) { return c.name; })) %>;
+    const REPORT = <%- JSON.stringify({ name: report.name, config: report.config }) %>;
+    let PAGE = 1;
+    const PAGE_SIZE = 50;
+
+    function esc(s) {
+      if (s === null || s === undefined) return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function renderPager(containerId, total, page, pageSize, onGo) {
+      const el = document.getElementById(containerId);
+      if (!el) return;
+      const pages = Math.max(1, Math.ceil(total / pageSize));
+      const parts = ['<span class="pinfo">共 ' + total + ' 条，第 ' + page + ' / ' + pages + ' 页</span>'];
+      parts.push('<button ' + (page <= 1 ? 'disabled' : '') + ' data-p="' + (page - 1) + '">上一页</button>');
+      const start = Math.max(1, page - 2);
+      const end = Math.min(pages, start + 4);
+      for (let i = start; i <= end; i += 1) {
+        parts.push('<button class="' + (i === page ? 'active' : '') + '" data-p="' + i + '">' + i + '</button>');
+      }
+      parts.push('<button ' + (page >= pages ? 'disabled' : '') + ' data-p="' + (page + 1) + '">下一页</button>');
+      el.innerHTML = parts.join('');
+      el.querySelectorAll('button[data-p]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          const p = parseInt(b.dataset.p, 10);
+          if (p >= 1 && p <= pages && p !== page) onGo(p);
+        });
+      });
+    }
+
+    function drawChart() {
+      const el = document.getElementById('chartCanvas');
+      if (!ROWS.length) { el.innerHTML = '<div class="empty-mini">暂无数据</div>'; return; }
+      const cfg = Object.assign({ height: 420 }, REPORT.config || {});
+      if (!cfg.chartType) cfg.chartType = 'bar';
+      Charts.render(el, ROWS, cfg);
+    }
+
+    function renderTable() {
+      document.getElementById('dataHead').innerHTML =
+        '<tr>' + COLUMNS.map(function (c) { return '<th>' + esc(c) + '</th>'; }).join('') + '</tr>';
+
+      const start = (PAGE - 1) * PAGE_SIZE;
+      const pageRows = ROWS.slice(start, start + PAGE_SIZE);
+
+      document.getElementById('dataBody').innerHTML = pageRows.map(function (row) {
+        return '<tr>' + COLUMNS.map(function (c) {
+          const v = row[c];
+          const s = v === null || v === undefined ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+          return '<td title="' + esc(s) + '"><span class="cell-inner">' + esc(s.slice(0, 100)) + '</span></td>';
+        }).join('') + '</tr>';
+      }).join('') || '<tr><td colspan="' + COLUMNS.length + '" class="empty">无数据</td></tr>';
+
+      renderPager('pager', ROWS.length, PAGE, PAGE_SIZE, function (p) { PAGE = p; renderTable(); });
+    }
+
+    drawChart();
+    renderTable();
+    window.addEventListener('resize', function () {
+      clearTimeout(window.__rt);
+      window.__rt = setTimeout(drawChart, 400);
+    });
+  </script>
+</body>
+</html>

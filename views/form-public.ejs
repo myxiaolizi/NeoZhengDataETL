@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %> - <%= settings.site_name %></title>
+  <link rel="stylesheet" href="/public/css/app.css">
+  <% if (settings.theme_color && settings.theme_color !== '#3687FF') { %>
+  <style>:root { --primary: <%= settings.theme_color %>; }</style>
+  <% } %>
+  <style>
+    .form-page { background: var(--bg); min-height: 100vh; padding: 30px 16px 60px; }
+    .form-wrap { max-width: 760px; margin: 0 auto; }
+    .form-head { text-align: center; margin-bottom: 24px; }
+    .form-head .fh-logo {
+      width: 56px; height: 56px; border-radius: 16px; margin: 0 auto 14px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      color: #FFFFFF; display: flex; align-items: center; justify-content: center;
+      font-size: 26px; box-shadow: 0 6px 18px rgba(54,135,255,.4);
+    }
+    .form-head h1 { font-size: 22px; margin: 0 0 6px; }
+    .form-head p { color: var(--text-muted); font-size: 13px; margin: 0; }
+    .form-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 28px; box-shadow: var(--shadow-lg); }
+    .form-card .field .req { color: var(--danger); font-style: normal; }
+    .form-card .field .fh-hint { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; }
+    .form-foot { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--border); }
+    .success-box { text-align: center; padding: 40px 20px; }
+    .success-box .sb-ico {
+      width: 72px; height: 72px; border-radius: 50%; margin: 0 auto 18px;
+      background: var(--success-bg); color: var(--success);
+      display: flex; align-items: center; justify-content: center; font-size: 34px;
+    }
+    .success-box h2 { font-size: 20px; margin: 0 0 8px; }
+    .success-box p { color: var(--text-muted); margin: 0 0 22px; }
+    .error-box { text-align: center; padding: 50px 20px; }
+    .error-box .eb-ico { font-size: 46px; opacity: .35; margin-bottom: 14px; }
+    .error-box h2 { font-size: 19px; margin: 0 0 8px; }
+    .error-box p { color: var(--text-muted); margin: 0; }
+    .field-error { color: var(--danger); font-size: 11.5px; margin-top: 4px; display: none; }
+    .field.invalid .input { border-color: var(--danger); }
+    .field.invalid .field-error { display: block; }
+    .form-footer-note { text-align: center; margin-top: 22px; color: var(--text-muted); font-size: 12px; }
+
+    .exam-bar {
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      padding: 12px 18px; background: var(--primary-soft); border: 1px solid var(--border-strong);
+      border-radius: 12px; margin-bottom: 18px; font-size: 13px; flex-wrap: wrap;
+    }
+    .exam-bar .timer { font-weight: 700; color: var(--primary-dark); font-size: 16px; }
+    .score-box { text-align: center; padding: 30px 20px; }
+    .score-box .sc-big { font-size: 52px; font-weight: 800; line-height: 1; margin-bottom: 8px; }
+    .score-box .sc-big.pass { color: var(--success); }
+    .score-box .sc-big.fail { color: var(--danger); }
+    .score-box .sc-sub { color: var(--text-muted); font-size: 13px; margin-bottom: 20px; }
+    .q-result { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    .q-result .qr-icon { width: 20px; flex: 0 0 20px; font-weight: 700; }
+    .q-result .qr-icon.ok { color: var(--success); }
+    .q-result .qr-icon.no { color: var(--danger); }
+  </style>
+</head>
+<body>
+<div class="form-page">
+  <div class="form-wrap">
+    <% if (error) { %>
+    <div class="form-card">
+      <div class="error-box">
+        <div class="eb-ico">⚠</div>
+        <h2><%= title %></h2>
+        <p><%= error %></p>
+      </div>
+    </div>
+    <% } else { %>
+    <div class="form-head">
+      <div class="fh-logo"><%= form.shareIcon || settings.site_logo_text %></div>
+      <h1><%= form.shareTitle || form.name %></h1>
+      <% if (form.shareDesc) { %><p><%= form.shareDesc %></p><% } %>
+    </div>
+
+    <% if (form.formType === 'exam' && form.settings && form.settings.examDuration > 0) { %>
+    <div class="exam-bar">
+      <span>📝 考试模式 · 共 <%= (form.fields || []).filter(function(f){ return Number(f.score) > 0; }).length %> 题</span>
+      <span>剩余时间：<span class="timer" id="timer">--:--</span></span>
+    </div>
+    <% } %>
+
+    <div class="form-card" id="formCard">
+      <form id="mainForm" autocomplete="off">
+        <div class="fd-grid" id="fieldsGrid"></div>
+        <div class="form-foot">
+          <button class="btn btn-primary btn-block btn-lg" type="submit" id="submitBtn">提交</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="form-footer-note">
+      <% if (settings.site_footer) { %><%= settings.site_footer %> · <% } %>
+      由 <%= settings.site_name %> 提供表单服务
+    </div>
+    <% } %>
+  </div>
+</div>
+
+<% if (!error) { %>
+<script>
+  const FORM = <%- JSON.stringify({
+    id: form.id, name: form.name, token: form.publicToken,
+    formType: form.formType, fields: form.fields, settings: form.settings,
+  }) %>;
+  const SUCCESS_MSG = <%- JSON.stringify((form.settings && form.settings.successMessage) || '提交成功，感谢您的填写！') %>;
+  const IS_EXAM = FORM.formType === 'exam';
+
+  const WIDTH_SPAN = { '1/5': 2, '1/4': 3, '1/3': 4, '1/2': 6, '1': 12, 'half': 6, 'full': 12 };
+
+  function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function spanOf(w) { return WIDTH_SPAN[w] || 12; }
+
+  function renderControl(f) {
+    const req = f.required ? ' required' : '';
+    const ph = f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : '';
+    const name = ' name="' + esc(f.key) + '" data-key="' + esc(f.key) + '"';
+    const def = f.defaultValue === undefined || f.defaultValue === null ? '' : String(f.defaultValue);
+    const layout = f.optionLayout || (f.type === 'select' ? 'dropdown' : 'horizontal');
+    const opts = f.options || [];
+
+    switch (f.type) {
+      case 'textarea':
+        return '<textarea class="input" rows="4"' + name + ph + req + '>' + esc(def) + '</textarea>';
+
+      case 'select':
+        return '<select class="input"' + name + req + '>' +
+          '<option value="">请选择</option>' +
+          opts.map(o => '<option value="' + esc(o) + '"' +
+            (o === def ? ' selected' : '') + '>' + esc(o) + '</option>').join('') +
+          '</select>';
+
+      case 'radio':
+      case 'checkbox': {
+        if (layout === 'dropdown') {
+          return '<select class="input"' + name + req + '>' +
+            '<option value="">请选择</option>' +
+            opts.map(o => '<option value="' + esc(o) + '"' +
+              (o === def ? ' selected' : '') + '>' + esc(o) + '</option>').join('') +
+            '</select>';
+        }
+        const wrapStyle = layout === 'vertical'
+          ? 'display:flex;flex-direction:column;gap:8px'
+          : 'display:flex;flex-wrap:wrap;gap:8px 18px';
+        const inputType = f.type === 'radio' ? 'radio' : 'checkbox';
+        const sel = f.type === 'checkbox'
+          ? def.split(',').map(s => s.trim()).filter(Boolean)
+          : [def];
+
+        return '<div style="' + wrapStyle + '" data-group="' + esc(f.key) + '">' +
+          opts.map(o =>
+            '<label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">' +
+            '<input type="' + inputType + '" name="' + esc(f.key) + '" data-key="' + esc(f.key) + '" ' +
+            'value="' + esc(o) + '"' + (sel.includes(o) ? ' checked' : '') + req + '>' +
+            esc(o) + '</label>').join('') +
+          '</div>' +
+          (f.type === 'checkbox' && (f.minSelect || f.maxSelect)
+            ? '<div class="fh-hint">请选择 ' + (f.minSelect || 0) + ' ~ ' +
+              (f.maxSelect || opts.length) + ' 项</div>'
+            : '');
+      }
+
+      case 'number': case 'amount': case 'percent':
+        return '<input class="input" type="number"' + name + ph + req +
+          (def ? ' value="' + esc(def) + '"' : '') +
+          (f.min !== null && f.min !== undefined ? ' min="' + f.min + '"' : '') +
+          (f.max !== null && f.max !== undefined ? ' max="' + f.max + '"' : '') +
+          (f.precision !== null && f.precision !== undefined ? ' step="' + Math.pow(10, -f.precision) + '"' : '') + '>';
+
+      case 'date':
+        return '<input class="input" type="date"' + name + req + (def ? ' value="' + esc(def) + '"' : '') + '>';
+      case 'datetime':
+        return '<input class="input" type="datetime-local"' + name + req + (def ? ' value="' + esc(def) + '"' : '') + '>';
+      case 'time':
+        return '<input class="input" type="time"' + name + req + (def ? ' value="' + esc(def) + '"' : '') + '>';
+
+      case 'daterange':
+        return '<div style="display:flex;gap:8px;align-items:center">' +
+          '<input class="input" type="date" data-key="' + esc(f.key) + '_start">' +
+          '<span class="muted">至</span>' +
+          '<input class="input" type="date" data-key="' + esc(f.key) + '_end"></div>';
+
+      case 'rating':
+        return '<div class="rating-row" data-key="' + esc(f.key) + '" style="font-size:26px;color:#FFC000;cursor:pointer">' +
+          [1,2,3,4,5].map(n => '<span data-v="' + n + '">' + (Number(def) >= n ? '★' : '☆') + '</span>').join('') + '</div>';
+
+      case 'slider':
+        return '<div style="display:flex;align-items:center;gap:10px">' +
+          '<input type="range" data-key="' + esc(f.key) + '" min="' + (f.min || 0) + '" max="' + (f.max || 100) + '" ' +
+          'value="' + (def || f.min || 0) + '" style="flex:1">' +
+          '<span class="muted" data-slider-val="' + esc(f.key) + '">' + (def || f.min || 0) + '</span></div>';
+
+      case 'image': case 'file':
+        return '<input class="input" type="file"' + name + (f.type === 'image' ? ' accept="image/*"' : '') + '>';
+
+      case 'address':
+        return '<input class="input" type="text"' + name + ph + ' placeholder="请输入详细地址"' + req + '>';
+
+      case 'member': case 'department':
+        return '<input class="input" type="text"' + name + ph +
+          ' placeholder="请输入' + (f.type === 'member' ? '成员姓名' : '部门名称') + '"' + req + '>';
+
+      case 'location':
+        return '<input class="input" type="text"' + name + ph + ' placeholder="请输入经纬度或地址"' + req + '>';
+
+      case 'formula':
+        return '<input class="input" type="text" readonly data-key="' + esc(f.key) + '" ' +
+          'data-formula="' + esc(f.formula || '') + '" placeholder="自动计算">';
+
+      case 'divider':
+        return '<hr style="margin:8px 0">';
+
+      case 'section':
+        return '<div style="font-weight:600;color:var(--primary-dark);font-size:14px">' + esc(f.label) + '</div>';
+
+      default:
+        return '<input class="input" type="text"' + name + ph + req +
+          (def ? ' value="' + esc(def) + '"' : '') + '>';
+    }
+  }
+
+  function renderForm() {
+    document.getElementById('fieldsGrid').innerHTML = FORM.fields.map(f => {
+      const span = spanOf(f.width);
+      const scoreTag = Number(f.score) > 0
+        ? ' <span style="font-size:11px;color:#FFC000;font-weight:600">(' + f.score + '分)</span>' : '';
+
+      if (f.type === 'divider') {
+        return '<div style="grid-column:span 12">' + renderControl(f) + '</div>';
+      }
+
+      return '<label class="field" data-field="' + esc(f.key) + '" style="grid-column:span ' + span + '">' +
+        (f.type === 'section' ? '' :
+          '<span>' + esc(f.label) + (f.required ? ' <i class="req">*</i>' : '') + scoreTag + '</span>') +
+        renderControl(f) +
+        (f.hint ? '<div class="fh-hint">' + esc(f.hint) + '</div>' : '') +
+        '<div class="field-error">此项为必填</div>' +
+      '</label>';
+    }).join('');
+
+    bindInteractions();
+  }
+
+  function bindInteractions() {
+    document.querySelectorAll('.rating-row').forEach(row => {
+      row.addEventListener('click', e => {
+        const v = Number(e.target.dataset.v);
+        if (!v) return;
+        row.dataset.value = String(v);
+        row.querySelectorAll('span').forEach(s => {
+          s.textContent = Number(s.dataset.v) <= v ? '★' : '☆';
+        });
+        applyFormulas();
+      });
+    });
+
+    document.querySelectorAll('input[type=range][data-key]').forEach(el => {
+      el.addEventListener('input', () => {
+        const out = document.querySelector('[data-slider-val="' + el.dataset.key + '"]');
+        if (out) out.textContent = el.value;
+        applyFormulas();
+      });
+    });
+
+    document.querySelectorAll('[data-key]').forEach(el => {
+      el.addEventListener('change', () => { applyLinkage(el.dataset.key); applyFormulas(); });
+      el.addEventListener('input', () => applyFormulas());
+    });
+
+    applyFormulas();
+  }
+
+  function applyLinkage(changedKey) {
+    FORM.fields.forEach(f => {
+      if (!f.linkage || f.linkage.source !== changedKey) return;
+
+      const srcEl = document.querySelector('[data-key="' + f.linkage.source + '"]');
+      if (!srcEl) return;
+      const srcVal = srcEl.value;
+
+      let targetVal = srcVal;
+      if (f.linkage.mode === 'map' && f.linkage.map) {
+        targetVal = f.linkage.map[srcVal] !== undefined ? f.linkage.map[srcVal] : '';
+      }
+
+      const tgtEl = document.querySelector('[data-key="' + f.key + '"]');
+      if (tgtEl) tgtEl.value = targetVal;
+    });
+  }
+
+  function applyFormulas() {
+    FORM.fields.forEach(f => {
+      if (f.type !== 'formula' || !f.formula) return;
+
+      const el = document.querySelector('[data-key="' + f.key + '"]');
+      if (!el) return;
+
+      const expr = f.formula.replace(/\{([^}]+)\}/g, (_, k) => {
+        const src = document.querySelector('[data-key="' + k.trim() + '"]');
+        const v = src ? Number(src.value) : 0;
+        return Number.isFinite(v) ? String(v) : '0';
+      });
+
+      try {
+        const ROUND = (n, d) => { const p = Math.pow(10, d || 0); return Math.round(n * p) / p; };
+        const ABS = Math.abs, MAX = Math.max, MIN = Math.min, CEIL = Math.ceil, FLOOR = Math.floor;
+        const fn = new Function('ROUND', 'ABS', 'MAX', 'MIN', 'CEIL', 'FLOOR',
+          '"use strict"; return (' + expr + ');');
+        const v = fn(ROUND, ABS, MAX, MIN, CEIL, FLOOR);
+        el.value = Number.isFinite(v) ? (Math.round(v * 10000) / 10000) : '';
+      } catch (e) {
+        el.value = '';
+      }
+    });
+  }
+
+  function collect() {
+    const out = {};
+    FORM.fields.forEach(f => {
+      if (f.type === 'divider' || f.type === 'section') return;
+      const key = f.key;
+
+      if (f.type === 'checkbox') {
+        out[key] = Array.from(document.querySelectorAll('input[type=checkbox][data-key="' + key + '"]:checked'))
+          .map(x => x.value);
+      } else if (f.type === 'radio') {
+        const el = document.querySelector('input[type=radio][data-key="' + key + '"]:checked');
+        out[key] = el ? el.value : '';
+      } else if (f.type === 'rating') {
+        const row = document.querySelector('.rating-row[data-key="' + key + '"]');
+        out[key] = row && row.dataset.value ? Number(row.dataset.value) : '';
+      } else if (f.type === 'daterange') {
+        const s = document.querySelector('[data-key="' + key + '_start"]');
+        const e2 = document.querySelector('[data-key="' + key + '_end"]');
+        const arr = [s ? s.value : '', e2 ? e2.value : ''].filter(Boolean);
+        out[key] = arr.length ? arr : '';
+      } else {
+        const el = document.querySelector('[data-key="' + key + '"]');
+        out[key] = el ? el.value : '';
+      }
+    });
+    return out;
+  }
+
+  function validate() {
+    let invalid = false;
+    document.querySelectorAll('.field').forEach(el => el.classList.remove('invalid'));
+    const data = collect();
+
+    FORM.fields.forEach(f => {
+      if (f.type === 'divider' || f.type === 'section') return;
+      const v = data[f.key];
+      const empty = v === '' || v === null || v === undefined || (Array.isArray(v) && !v.length);
+
+      if (f.required && empty) {
+        invalid = true;
+        const el = document.querySelector('.field[data-field="' + f.key + '"]');
+        if (el) el.classList.add('invalid');
+        return;
+      }
+
+      if (f.type === 'checkbox' && Array.isArray(v) && v.length) {
+        if (f.minSelect && v.length < Number(f.minSelect)) {
+          invalid = true;
+          const el = document.querySelector('.field[data-field="' + f.key + '"]');
+          if (el) {
+            el.classList.add('invalid');
+            const err = el.querySelector('.field-error');
+            if (err) err.textContent = '至少选择 ' + f.minSelect + ' 项';
+          }
+        }
+        if (f.maxSelect && v.length > Number(f.maxSelect)) {
+          invalid = true;
+          const el = document.querySelector('.field[data-field="' + f.key + '"]');
+          if (el) {
+            el.classList.add('invalid');
+            const err = el.querySelector('.field-error');
+            if (err) err.textContent = '最多选择 ' + f.maxSelect + ' 项';
+          }
+        }
+      }
+    });
+
+    return !invalid;
+  }
+
+  document.getElementById('mainForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    if (!validate()) {
+      const first = document.querySelector('.field.invalid');
+      if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true; btn.textContent = '提交中...';
+
+    try {
+      const res = await fetch('/f/' + FORM.token + '/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(collect()),
+      });
+      const data = await res.json();
+
+      if (!data.ok) {
+        btn.disabled = false; btn.textContent = '提交';
+        alert(data.message || '提交失败');
+        return;
+      }
+
+      showSuccess(data.data);
+    } catch (err) {
+      btn.disabled = false; btn.textContent = '提交';
+      alert('网络错误，请稍后重试');
+    }
+  });
+
+  function showSuccess(result) {
+    const card = document.getElementById('formCard');
+
+    if (IS_EXAM && result && result.examResult) {
+      const r = result.examResult;
+      card.innerHTML =
+        '<div class="score-box">' +
+          '<div class="sc-big ' + (r.passed ? 'pass' : 'fail') + '">' + r.percent + '%</div>' +
+          '<div class="sc-sub">' +
+            '得分 ' + r.earned + ' / ' + r.totalScore + ' 分 · ' +
+            '答对 ' + r.correctCount + ' / ' + r.questionCount + ' 题 · ' +
+            (r.passed ? '<b style="color:var(--success)">通过</b>' : '<b style="color:var(--danger)">未通过</b>') +
+            '（及格线 ' + r.passScore + '%）' +
+          '</div>' +
+          '<div style="text-align:left;max-width:520px;margin:0 auto">' +
+            r.details.map(d =>
+              '<div class="q-result">' +
+                '<span class="qr-icon ' + (d.correct ? 'ok' : 'no') + '">' + (d.correct ? '✓' : '✗') + '</span>' +
+                '<div style="flex:1">' +
+                  '<div>' + esc(d.label) + ' <span class="muted">(' + d.earned + '/' + d.score + ' 分)</span></div>' +
+                  (d.expected !== undefined && !d.correct
+                    ? '<div class="muted" style="font-size:12px">正确答案：' + esc(d.expected) + '</div>' : '') +
+                '</div>' +
+              '</div>').join('') +
+          '</div>' +
+          '<button class="btn btn-primary" style="margin-top:22px" onclick="location.reload()">再答一次</button>' +
+        '</div>';
+      return;
+    }
+
+    if (result && result.flowInfo) {
+      card.innerHTML =
+        '<div class="success-box">' +
+          '<div class="sb-ico">✓</div>' +
+          '<h2>提交成功</h2>' +
+          '<p>已进入审批流程，当前状态：<b>待审批</b></p>' +
+          '<div style="text-align:left;max-width:420px;margin:0 auto 22px">' +
+            (result.flowInfo.nodes || []).map(n =>
+              '<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px">' +
+                '<span style="width:20px;color:' + (n.status === 'pending' ? 'var(--primary)' : 'var(--text-muted)') + '">' +
+                  (n.status === 'pending' ? '◉' : '○') + '</span>' +
+                '<span style="flex:1">' + esc(n.name) + '</span>' +
+                '<span class="muted">' + (n.status === 'pending' ? '待审批' : '等待中') + '</span>' +
+              '</div>').join('') +
+          '</div>' +
+          '<button class="btn btn-primary" onclick="location.reload()">再填一份</button>' +
+        '</div>';
+      return;
+    }
+
+    card.innerHTML =
+      '<div class="success-box">' +
+        '<div class="sb-ico">✓</div>' +
+        '<h2>提交成功</h2>' +
+        '<p>' + esc(SUCCESS_MSG) + '</p>' +
+        '<button class="btn btn-primary" onclick="location.reload()">再填一份</button>' +
+      '</div>';
+  }
+
+  if (IS_EXAM && FORM.settings && FORM.settings.examDuration > 0) {
+    let left = Number(FORM.settings.examDuration) * 60;
+    const timerEl = document.getElementById('timer');
+
+    const tick = () => {
+      if (left <= 0) {
+        timerEl.textContent = '00:00';
+        document.getElementById('submitBtn').click();
+        return;
+      }
+      const m = Math.floor(left / 60);
+      const s = left % 60;
+      timerEl.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+      if (left <= 60) timerEl.style.color = 'var(--danger)';
+      left -= 1;
+    };
+    tick();
+    setInterval(tick, 1000);
+  }
+
+  renderForm();
+</script>
+<% } %>
+</body>
+</html>

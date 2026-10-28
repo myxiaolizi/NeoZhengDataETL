@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %> - <%= settings.site_name %></title>
+  <link rel="stylesheet" href="/public/css/app.css?v=<%= settings.asset_version || '20261028c' %>">
+  <% if (settings.theme_color && settings.theme_color !== '#3687FF') { %>
+  <style>:root { --primary: <%= settings.theme_color %>; }</style>
+  <% } %>
+</head>
+<%
+  // 错误页可能在未登录时渲染，这里做空值兜底
+  var _user = (typeof currentUser !== 'undefined' && currentUser) ? currentUser : null;
+  var _can = (typeof can === 'function') ? can : function () { return false; };
+  var _isAdmin = (typeof isAdmin !== 'undefined') ? !!isAdmin : false;
+  var _display = _user ? (_user.displayName || _user.username || '访客') : '访客';
+  var _act = (typeof active !== 'undefined') ? active : '';
+%>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-logo"><%= settings.site_logo_text %></span>
+      <div class="brand-text">
+        <strong><%= settings.site_short %></strong>
+        <small><%= settings.site_subtitle %></small>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <a class="nav-item <%= _act === 'dashboard' ? 'active' : '' %>" href="/dashboard">
+        <span class="ico">◧</span> 数据概览
+      </a>
+
+      <% if (_can('project:read')) { %>
+      <div class="nav-section">数据接入</div>
+      <a class="nav-item <%= _act === 'projects' ? 'active' : '' %>" href="/projects">
+        <span class="ico">▦</span> 数据项目
+      </a>
+      <% } %>
+      <% if (_can('form:read')) { %>
+      <a class="nav-item <%= _act === 'forms' ? 'active' : '' %>" href="/forms">
+        <span class="ico">▤</span> 表单中心
+      </a>
+      <% } %>
+      <% if (_can('integration:read')) { %>
+      <a class="nav-item <%= _act === 'integrations' ? 'active' : '' %>" href="/integrations">
+        <span class="ico">⇋</span> 数据集成
+      </a>
+      <% } %>
+      <% if (_can('project:read')) { %>
+      <a class="nav-item <%= _act === 'mail-push' ? 'active' : '' %>" href="/mail-push">
+        <span class="ico">✉</span> 邮箱推送
+      </a>
+      <% } %>
+
+      <% if (_can('flow:read')) { %>
+      <div class="nav-section">数据处理</div>
+      <a class="nav-item <%= _act === 'flows' ? 'active' : '' %>" href="/flows">
+        <span class="ico">⚙</span> 处理流程
+      </a>
+      <% } %>
+
+      <% if (_can('datasource:read') || _can('dataset:read')) { %>
+      <div class="nav-section">数据管理</div>
+      <% } %>
+      <% if (_can('datasource:read')) { %>
+      <a class="nav-item <%= _act === 'datasources' ? 'active' : '' %>" href="/datasources">
+        <span class="ico">⛁</span> 数据源
+      </a>
+      <% } %>
+      <% if (_can('dataset:read')) { %>
+      <a class="nav-item <%= _act === 'datasets' ? 'active' : '' %>" href="/datasets">
+        <span class="ico">◫</span> 数据集
+      </a>
+      <% } %>
+
+      <% if (_can('report:read') || _can('share:write') || _can('ai:use')) { %>
+      <div class="nav-section">分析与可视化</div>
+      <% } %>
+      <% if (_can('report:read')) { %>
+      <a class="nav-item <%= _act === 'reports' ? 'active' : '' %>" href="/reports">
+        <span class="ico">◨</span> 报表中心
+      </a>
+      <% } %>
+      <% if (_can('share:write')) { %>
+      <a class="nav-item <%= _act === 'shares' ? 'active' : '' %>" href="/shares">
+        <span class="ico">⇱</span> 分享管理
+      </a>
+      <% } %>
+      <% if (_can('ai:use')) { %>
+      <a class="nav-item <%= _act === 'ai' ? 'active' : '' %>" href="/ai">
+        <span class="ico">✦</span> AI 问数
+      </a>
+      <% } %>
+
+      <% if (_can('project:read')) { %>
+      <div class="nav-section">数据治理</div>
+      <a class="nav-item <%= _act === 'governance' ? 'active' : '' %>" href="/governance">
+        <span class="ico">◍</span> 治理总览
+      </a>
+      <% } %>
+      <% if (_can('audit:read')) { %>
+      <a class="nav-item <%= _act === 'audit' ? 'active' : '' %>" href="/audit">
+        <span class="ico">☰</span> 审计日志
+      </a>
+      <% } %>
+
+      <% if (_can('user:read') || _can('settings:read')) { %>
+      <div class="nav-section">系统管理</div>
+      <% } %>
+      <% if (_can('user:read')) { %>
+      <a class="nav-item <%= _act === 'users' ? 'active' : '' %>" href="/users">
+        <span class="ico">◈</span> 用户管理
+      </a>
+      <% } %>
+      <% if (_can('settings:read')) { %>
+      <a class="nav-item <%= _act === 'settings' ? 'active' : '' %>" href="/settings">
+        <span class="ico">⚙</span> 系统设置
+      </a>
+      <% } %>
+
+      <div class="nav-section">其他</div>
+      <a class="nav-item <%= _act === 'intro' ? 'active' : '' %>" href="/intro">
+        <span class="ico">◈</span> 项目介绍
+      </a>
+      <a class="nav-item <%= _act === 'help' ? 'active' : '' %>" href="/help">
+        <span class="ico">?</span> 使用说明
+      </a>
+      <a class="nav-item <%= _act === 'profile' ? 'active' : '' %>" href="/profile">
+        <span class="ico">◐</span> 个人中心
+      </a>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="user-box">
+        <% if (_user && _user.avatar) { %>
+        <span class="avatar" style="padding:0;overflow:hidden"><img src="<%= _user.avatar %>" alt="" style="width:100%;height:100%;object-fit:cover"></span>
+        <% } else { %>
+        <span class="avatar"<% if (_user && _user.avatarColor) { %> style="background:<%= _user.avatarColor %>"<% } %>><%= _display.slice(0, 1) %></span>
+        <% } %>
+        <div style="min-width:0">
+          <div class="uname truncate"><%= _display %></div>
+          <div class="urole"><%= _user ? _user.roleName : '未登录' %></div>
+        </div>
+      </div>
+      <% if (_user) { %>
+      <a class="btn btn-ghost btn-block" href="/logout" style="color:var(--sidebar-text);border-color:rgba(255,255,255,.12)">退出登录</a>
+      <% } else { %>
+      <a class="btn btn-ghost btn-block" href="/login" style="color:var(--sidebar-text);border-color:rgba(255,255,255,.12)">前往登录</a>
+      <% } %>
+    </div>
+  </aside>
+
+  <main class="main">
+    <%- body %>
+  </main>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/public/js/app.js?v=<%= settings.asset_version || '20261028c' %>"></script>
+<script src="/public/js/charts.js"></script>
+<script>
+  window.__USER__ = <%- JSON.stringify(_user ? { id: _user.id, username: _user.username, displayName: _user.displayName, role: _user.role, permissions: _user.permissions } : null) %>;
+  window.__THEME__ = <%- JSON.stringify({ primary: settings.theme_color, palette: settings.chart_palette }) %>;
+</script>
+</body>
+</html>

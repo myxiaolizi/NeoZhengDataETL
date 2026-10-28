@@ -1,0 +1,206 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>表单中心</h1>
+    <p class="sub">设计表单采集数据 · 支持公开填写链接</p>
+  </div>
+  <div class="head-actions">
+    <input class="input" id="kw" placeholder="搜索表单" style="width:200px">
+    ${can('form:write') ? '<button class="btn btn-primary" onclick="openCreate()">+ 新建表单</button>' : ''}
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-label">表单总数</div><div class="stat-value" id="s_total">-</div></div>
+  <div class="stat"><div class="stat-label">已启用</div><div class="stat-value" id="s_active">-</div></div>
+  <div class="stat"><div class="stat-label">提交总量</div><div class="stat-value" id="s_records">-</div></div>
+  <div class="stat"><div class="stat-label">今日提交</div><div class="stat-value" id="s_today">-</div></div>
+</div>
+
+<div class="report-grid" id="formGrid"></div>
+<div id="formEmpty" class="empty-state hidden">
+  <div class="ico">▤</div>
+  <h3>还没有表单</h3>
+  <p>通过拖拽设计表单，把收集到的数据写入项目数据表</p>
+  ${can('form:write') ? '<button class="btn btn-primary" onclick="openCreate()">创建第一个表单</button>' : ''}
+</div>
+
+<div class="modal-mask" id="createModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modalTitle">新建表单</h3>
+      <button class="modal-close" onclick="closeModal('createModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="c_id">
+      <label class="field">
+        <span>表单名称 <i class="req">*</i></span>
+        <input class="input" id="c_name" placeholder="例如：客户信息登记">
+      </label>
+      <label class="field">
+        <span>数据写入项目</span>
+        <select class="input" id="c_project"><option value="">（仅存储提交记录，不写入项目表）</option></select>
+        <small class="hint">提交的数据会写入该项目的解析数据表</small>
+      </label>
+      <label class="field">
+        <span>表单说明</span>
+        <textarea class="input" id="c_desc" rows="2" placeholder="显示在填写页顶部"></textarea>
+      </label>
+      <label class="field">
+        <span>公开填写</span>
+        <label class="switch">
+          <input type="checkbox" id="c_public">
+          <span class="track"></span>
+          <span class="label-text">允许通过链接公开填写（无需登录）</span>
+        </label>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('createModal')">取消</button>
+      <button class="btn btn-primary" id="createBtn" onclick="doCreate()">创建并设计</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const CAN_WRITE = <%= can('form:write') ? 'true' : 'false' %>;
+let LIST = [];
+let PROJECTS = [];
+
+async function load() {
+  const kw = document.getElementById('kw').value.trim();
+  const [fr, pr] = await Promise.all([
+    api('/api/forms?keyword=' + encodeURIComponent(kw)),
+    api('/api/projects'),
+  ]);
+  if (!fr.ok) return toast(fr.message, 'error');
+  LIST = fr.data.list;
+  if (pr.ok) PROJECTS = pr.data;
+
+  const s = fr.data.stats;
+  document.getElementById('s_total').textContent = s.forms;
+  document.getElementById('s_active').textContent = s.active;
+  document.getElementById('s_records').textContent = s.records;
+  document.getElementById('s_today').textContent = s.today;
+
+  render();
+}
+
+function render() {
+  const grid = document.getElementById('formGrid');
+  const empty = document.getElementById('formEmpty');
+  if (!LIST.length) { grid.innerHTML = ''; empty.classList.remove('hidden'); return; }
+  empty.classList.add('hidden');
+
+  grid.innerHTML = LIST.map(f => {
+    const url = window.location.origin + '/f/' + f.publicToken;
+    return '<div class="report-card">' +
+      '<div class="rc-head">' +
+        '<div class="rc-title">' + esc(f.name) + '</div>' +
+        '<div class="rc-meta">' +
+          '<span class="tag tag-primary tag-sm">' + f.fieldCount + ' 个字段</span>' +
+          (f.status ? '<span class="tag tag-ok tag-sm">启用</span>' : '<span class="tag tag-off tag-sm">停用</span>') +
+          (f.allowPublic ? '<span class="tag tag-warn tag-sm">公开填写</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="card-body" style="padding:12px 18px">' +
+        '<div class="muted small" style="margin-bottom:8px">' + esc(f.description || '暂无说明') + '</div>' +
+        '<div class="kv" style="font-size:12px">' +
+          '<div><span>写入项目</span>' + esc(f.projectName || '未绑定') + '</div>' +
+          '<div><span>提交数</span><b>' + f.submitCount + '</b></div>' +
+        '</div>' +
+        (f.allowPublic ? '<div class="url-box" style="margin-top:10px">' +
+          '<code>' + esc(url) + '</code>' +
+          '<button class="btn btn-sm" data-copy="' + esc(url) + '">复制</button></div>' : '') +
+      '</div>' +
+      '<div class="rc-actions">' +
+        '<a class="btn btn-sm btn-primary" href="/forms/' + f.id + '/data">查看数据</a>' +
+        (CAN_WRITE ? '<a class="btn btn-sm" href="/forms/' + f.id + '/design">设计</a>' : '') +
+        (CAN_WRITE ? '<button class="btn btn-sm" data-edit="' + f.id + '">设置</button>' : '') +
+        (f.allowPublic ? '<button class="btn btn-sm" data-open="' + esc(url) + '">填写</button>' : '') +
+        (CAN_WRITE ? '<button class="btn btn-sm btn-danger" data-del="' + f.id + '">删除</button>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  grid.querySelectorAll('button[data-copy]').forEach(b => b.addEventListener('click', () => copyText(b.dataset.copy)));
+  grid.querySelectorAll('button[data-open]').forEach(b => b.addEventListener('click', () => window.open(b.dataset.open, '_blank')));
+  grid.querySelectorAll('button[data-edit]').forEach(b => b.addEventListener('click', () => openEdit(Number(b.dataset.edit))));
+  grid.querySelectorAll('button[data-del]').forEach(b => b.addEventListener('click', () => del(Number(b.dataset.del))));
+}
+
+function fillProjects(selected) {
+  document.getElementById('c_project').innerHTML =
+    '<option value="">（仅存储提交记录，不写入项目表）</option>' +
+    PROJECTS.map(p => '<option value="' + p.id + '"' +
+      (String(p.id) === String(selected) ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('');
+}
+
+function openCreate() {
+  document.getElementById('modalTitle').textContent = '新建表单';
+  document.getElementById('c_id').value = '';
+  document.getElementById('c_name').value = '';
+  document.getElementById('c_desc').value = '';
+  document.getElementById('c_public').checked = false;
+  document.getElementById('createBtn').textContent = '创建并设计';
+  fillProjects(null);
+  openModal('createModal');
+}
+
+function openEdit(id) {
+  const f = LIST.find(x => x.id === id);
+  if (!f) return;
+  document.getElementById('modalTitle').textContent = '表单设置：' + f.name;
+  document.getElementById('c_id').value = f.id;
+  document.getElementById('c_name').value = f.name;
+  document.getElementById('c_desc').value = f.description || '';
+  document.getElementById('c_public').checked = !!f.allowPublic;
+  document.getElementById('createBtn').textContent = '保存';
+  fillProjects(f.projectId);
+  openModal('createModal');
+}
+
+async function doCreate() {
+  const id = document.getElementById('c_id').value;
+  const body = {
+    name: document.getElementById('c_name').value.trim(),
+    description: document.getElementById('c_desc').value.trim(),
+    projectId: Number(document.getElementById('c_project').value) || null,
+    allowPublic: document.getElementById('c_public').checked,
+  };
+  if (!body.name) return toast('请填写表单名称', 'error');
+
+  const btn = document.getElementById('createBtn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '保存中...';
+  const r = id
+    ? await api('/api/forms/' + id, { method: 'PUT', body })
+    : await api('/api/forms', { method: 'POST', body });
+  btn.disabled = false; btn.textContent = orig;
+
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  if (id) {
+    toast('表单已保存', 'success');
+    closeModal('createModal');
+    load();
+  } else {
+    toast('创建成功，正在进入设计器...', 'success');
+    setTimeout(() => { location.href = '/forms/' + r.data.id + '/design'; }, 600);
+  }
+}
+
+async function del(id) {
+  const f = LIST.find(x => x.id === id);
+  if (!confirm('确定删除表单「' + (f ? f.name : id) + '」？提交记录也会一并删除。')) return;
+  const r = await api('/api/forms/' + id, { method: 'DELETE' });
+  if (!r.ok) return toast(r.message || '删除失败', 'error');
+  toast('表单已删除', 'success');
+  load();
+}
+
+document.getElementById('kw').addEventListener('input', debounce(load, 400));
+load();
+</script>

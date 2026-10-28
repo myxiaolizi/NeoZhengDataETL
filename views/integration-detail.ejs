@@ -1,0 +1,167 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>${esc(task.name)}</h1>
+    <p class="sub">
+      <span class="dir-badge ${task.direction === 'pull' ? 'dir-pull' : 'dir-push'}">
+        ${task.direction === 'pull' ? '⇣ 接口采集' : '⇡ 接口推送'}
+      </span>
+      <code>${esc(task.code)}</code>
+      <span class="tag ${task.status ? 'tag-ok' : 'tag-off'}">${task.status ? '启用' : '停用'}</span>
+    </p>
+  </div>
+  <div class="head-actions">
+    ${can('integration:write') ? '<button class="btn btn-primary" onclick="runTask()">立即执行</button>' : ''}
+    <button class="btn" onclick="loadLogs(1)">刷新日志</button>
+    <a class="btn btn-ghost" href="/integrations">返回列表</a>
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-label">执行次数</div><div class="stat-value">${task.runCount}</div></div>
+  <div class="stat"><div class="stat-label">成功次数</div><div class="stat-value">${task.successCount}</div></div>
+  <div class="stat"><div class="stat-label">成功率</div><div class="stat-value">${task.runCount ? Math.round(task.successCount / task.runCount * 100) : 0}%</div></div>
+  <div class="stat"><div class="stat-label">最近执行</div><div class="stat-value small">${fmtTime(task.lastRunAt)}</div></div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h3>任务配置</h3></div>
+  <div class="card-body">
+    <div class="kv">
+      <div><span>接口地址</span><code>${esc(task.url || '-')}</code></div>
+      <div><span>请求方法</span><b>${esc(task.method)}</b></div>
+      <div><span>关联项目</span>${esc(task.projectName || '-')}</div>
+      <div><span>鉴权方式</span>${esc(task.authType)}</div>
+      ${task.direction === 'pull' ? `
+      <div><span>数据路径</span><code>${esc(task.dataPath || '根节点')}</code></div>` : `
+      <div><span>推送数据源</span>${esc(task.body && task.body.includes('{{rows}}') ? '自定义模板' : 'JSON 数组')}</div>`}
+      <div><span>最近结果</span>
+        ${task.lastRunOk === null ? '<span class="tag tag-off">未执行</span>'
+          : (task.lastRunOk ? '<span class="tag tag-ok">成功</span>' : '<span class="tag tag-err">失败</span>')}
+      </div>
+    </div>
+    ${task.lastRunMsg ? '<div class="alert alert-info" style="margin-top:12px">' + esc(task.lastRunMsg) + '</div>' : ''}
+    ${Object.keys(task.headers || {}).length ? `
+    <details class="details">
+      <summary>请求头</summary>
+      <pre class="pre">${esc(JSON.stringify(task.headers, null, 2))}</pre>
+    </details>` : ''}
+    ${Object.keys(task.fieldMap || {}).length ? `
+    <details class="details">
+      <summary>字段映射</summary>
+      <pre class="pre">${esc(JSON.stringify(task.fieldMap, null, 2))}</pre>
+    </details>` : ''}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3>运行日志</h3>
+    <span class="muted small" id="logCount"></span>
+  </div>
+  <div class="table-wrap">
+    <table class="table table-fixed">
+      <thead>
+        <tr>
+          <th style="width:70px">ID</th>
+          <th style="width:100px">触发</th>
+          <th style="width:90px">结果</th>
+          <th style="width:100px">HTTP</th>
+          <th style="width:100px">影响行数</th>
+          <th style="width:100px">耗时</th>
+          <th>消息</th>
+          <th style="width:160px">时间</th>
+          <th style="width:80px">详情</th>
+        </tr>
+      </thead>
+      <tbody id="logBody"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="logPager"></div>
+</div>
+
+<div class="modal-mask" id="detailModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3>执行详情</h3>
+      <button class="modal-close" onclick="closeModal('detailModal')">×</button>
+    </div>
+    <div class="modal-body" id="detailBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('detailModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const TID = <%= task.id %>;
+const CAN_WRITE = <%= can('integration:write') ? 'true' : 'false' %>;
+const TRIGGER = { manual: '手动', cron: '定时', webhook: 'Webhook' };
+
+async function loadLogs(page) {
+  const r = await api('/api/integrations/' + TID + '/logs?page=' + page + '&pageSize=20');
+  if (!r.ok) return toast(r.message, 'error');
+
+  const body = document.getElementById('logBody');
+  if (!r.data.list.length) {
+    body.innerHTML = '<tr><td colspan="9" class="empty">暂无运行日志</td></tr>';
+  } else {
+    body.innerHTML = r.data.list.map(l => '<tr>' +
+      '<td>' + l.id + '</td>' +
+      '<td>' + esc(TRIGGER[l.trigger_source] || l.trigger_source || '-') + '</td>' +
+      '<td>' + (l.success ? '<span class="tag tag-ok">成功</span>' : '<span class="tag tag-err">失败</span>') + '</td>' +
+      '<td>' + (l.http_status || '-') + '</td>' +
+      '<td>' + (l.rows_affected || 0) + '</td>' +
+      '<td>' + (l.duration_ms || 0) + 'ms</td>' +
+      '<td class="small" title="' + esc(l.message || '') + '">' + esc(l.message || '') + '</td>' +
+      '<td class="small">' + fmtTime(l.created_at) + '</td>' +
+      '<td><button class="btn btn-sm" data-detail="' + l.id + '">查看</button></td>' +
+    '</tr>').join('');
+
+    body.querySelectorAll('button[data-detail]').forEach(b => {
+      b.addEventListener('click', () => showDetail(Number(b.dataset.detail), r.data.list));
+    });
+  }
+
+  document.getElementById('logCount').textContent = '共 ' + r.data.total + ' 条';
+  renderPager('logPager', r.data.total, r.data.page, r.data.pageSize, loadLogs);
+}
+
+function showDetail(id, list) {
+  const l = list.find(x => x.id === id);
+  if (!l) return;
+  let req = l.request_snapshot || '';
+  let res = l.response_snapshot || '';
+  try { req = JSON.stringify(JSON.parse(req), null, 2); } catch (e) { /* 保留原文 */ }
+  try { res = JSON.stringify(JSON.parse(res), null, 2); } catch (e) { /* 保留原文 */ }
+
+  document.getElementById('detailBody').innerHTML =
+    '<div class="kv">' +
+      '<div><span>结果</span><b>' + (l.success ? '成功' : '失败') + '</b></div>' +
+      '<div><span>HTTP 状态</span>' + (l.http_status || '-') + '</div>' +
+      '<div><span>影响行数</span>' + (l.rows_affected || 0) + '</div>' +
+      '<div><span>耗时</span>' + (l.duration_ms || 0) + 'ms</div>' +
+      '<div><span>触发方式</span>' + esc(TRIGGER[l.trigger_source] || l.trigger_source || '-') + '</div>' +
+      '<div><span>时间</span>' + fmtTime(l.created_at) + '</div>' +
+    '</div>' +
+    (l.message ? '<div class="alert alert-info">' + esc(l.message) + '</div>' : '') +
+    '<h4 style="margin:16px 0 6px;font-size:14px">请求快照</h4>' +
+    '<pre class="pre">' + esc(req || '（无）') + '</pre>' +
+    '<h4 style="margin:16px 0 6px;font-size:14px">响应快照</h4>' +
+    '<pre class="pre">' + esc(res || '（无）') + '</pre>';
+  openModal('detailModal');
+}
+
+async function runTask() {
+  if (!confirm('立即执行该任务？')) return;
+  toast('正在执行...');
+  const r = await api('/api/integrations/' + TID + '/run', { method: 'POST', body: {} });
+  toast(r.message || (r.ok ? '执行成功' : '执行失败'), r.ok ? 'success' : 'error');
+  loadLogs(1);
+}
+
+loadLogs(1);
+</script>

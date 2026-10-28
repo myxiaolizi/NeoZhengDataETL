@@ -1,0 +1,120 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>审计日志</h1>
+    <p class="sub">记录用户关键操作 · 便于追溯与合规审计</p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" onclick="cleanup()">按策略清理</button>
+    <button class="btn" onclick="load(1)">刷新</button>
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-label">日志总数</div><div class="stat-value" id="s_total">-</div></div>
+  <div class="stat"><div class="stat-label">今日操作</div><div class="stat-value" id="s_today">-</div></div>
+  <div class="stat"><div class="stat-label">涉及用户</div><div class="stat-value" id="s_users">-</div></div>
+</div>
+
+<div class="card">
+  <div class="toolbar">
+    <input class="input" id="kw" placeholder="搜索用户 / 操作 / 详情 / IP" style="width:260px">
+    <select class="input" id="action" style="width:200px"><option value="">全部操作</option></select>
+    <input class="input" id="startDate" type="date" style="width:150px">
+    <span class="muted">至</span>
+    <input class="input" id="endDate" type="date" style="width:150px">
+    <button class="btn btn-primary" onclick="load(1)">查询</button>
+    <button class="btn" onclick="reset()">重置</button>
+    <div class="spacer"></div>
+    <span class="muted small" id="count"></span>
+  </div>
+  <div class="table-wrap">
+    <table class="table table-fixed">
+      <thead>
+        <tr>
+          <th style="width:70px">ID</th>
+          <th style="width:140px">用户</th>
+          <th style="width:150px">操作</th>
+          <th style="width:130px">对象</th>
+          <th>详情</th>
+          <th style="width:140px">IP</th>
+          <th style="width:160px">时间</th>
+        </tr>
+      </thead>
+      <tbody id="logBody"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager"></div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+let ACTIONS = {};
+
+async function load(page) {
+  const q = new URLSearchParams({
+    page: page || 1,
+    pageSize: 30,
+    keyword: document.getElementById('kw').value.trim(),
+    action: document.getElementById('action').value,
+    startDate: document.getElementById('startDate').value,
+    endDate: document.getElementById('endDate').value,
+  });
+
+  const r = await api('/api/audit-logs?' + q.toString());
+  if (!r.ok) return toast(r.message, 'error');
+
+  ACTIONS = r.data.actions || {};
+  document.getElementById('s_total').textContent = r.data.stats.total.toLocaleString();
+  document.getElementById('s_today').textContent = r.data.stats.today;
+  document.getElementById('s_users').textContent = r.data.stats.users;
+
+  const sel = document.getElementById('action');
+  if (sel.options.length <= 1) {
+    sel.innerHTML = '<option value="">全部操作</option>' +
+      Object.keys(ACTIONS).map(k => '<option value="' + esc(k) + '">' + esc(ACTIONS[k]) + '</option>').join('');
+  }
+
+  const body = document.getElementById('logBody');
+  if (!r.data.list.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">暂无审计日志</td></tr>';
+  } else {
+    body.innerHTML = r.data.list.map(l => {
+      let detail = l.detail || '';
+      try { detail = JSON.stringify(JSON.parse(detail)); } catch (e) { /* 保留原文 */ }
+      return '<tr>' +
+        '<td>' + l.id + '</td>' +
+        '<td>' + esc(l.username || '-') + '</td>' +
+        '<td><span class="tag tag-primary tag-sm">' + esc(l.actionName || l.action) + '</span></td>' +
+        '<td class="small">' + esc(l.target_type || '-') + (l.target_id ? ' #' + esc(l.target_id) : '') + '</td>' +
+        '<td class="small" title="' + esc(detail) + '">' + esc(detail.slice(0, 90)) + '</td>' +
+        '<td><code class="mini">' + esc(l.ip || '-') + '</code></td>' +
+        '<td class="small">' + fmtTime(l.created_at) + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  document.getElementById('count').textContent = '共 ' + r.data.total + ' 条';
+  renderPager('pager', r.data.total, r.data.page, r.data.pageSize, load);
+}
+
+function reset() {
+  document.getElementById('kw').value = '';
+  document.getElementById('action').value = '';
+  document.getElementById('startDate').value = '';
+  document.getElementById('endDate').value = '';
+  load(1);
+}
+
+async function cleanup() {
+  if (!confirm('按保留策略清理过期审计日志与登录日志？')) return;
+  const r = await api('/api/audit-logs/cleanup', { method: 'POST' });
+  toast(r.message || (r.ok ? '已清理' : '清理失败'), r.ok ? 'success' : 'error');
+  load(1);
+}
+
+document.getElementById('kw').addEventListener('input', debounce(() => load(1), 400));
+load(1);
+</script>

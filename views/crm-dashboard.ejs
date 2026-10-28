@@ -1,0 +1,424 @@
+<% var body = '' %>
+<% body += `
+<div class="dash2">
+  <div class="wrap">
+
+    <!-- 顶部栏 -->
+    <div class="topbar">
+      <div class="logo">
+        <div class="logo-mark">客</div>
+        <div>
+          <div class="logo-txt">客户签约看板</div>
+          <div class="sync">最新数据同步时间：<span id="syncTime">—</span></div>
+        </div>
+      </div>
+      <div class="navsep"></div>
+      <div class="filters">
+        <select class="input" id="f_region" style="width:130px"><option value="">全部区域</option></select>
+        <select class="input" id="f_type" style="width:140px"><option value="">全部类型</option></select>
+        <select class="input" id="f_sales" style="width:130px"><option value="">全部销售</option></select>
+        <select class="input" id="f_state" style="width:130px"><option value="">全部状态</option></select>
+        <button class="btn btn-primary" onclick="applyFilter()">筛选</button>
+        <button class="btn" onclick="resetFilter()">重置</button>
+      </div>
+      <div class="navsep"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn" onclick="load()">刷新</button>
+        <a class="btn" href="/projects/16">原始数据</a>
+        <a class="btn" href="/reports">报表中心</a>
+      </div>
+    </div>
+
+    <!-- 第一行：KPI 卡组 -->
+    <div class="row r1">
+      <div class="card clickable" id="cardTotal" onclick="drill('all')"></div>
+      <div class="card clickable" id="cardStores" onclick="drill('all')"></div>
+      <div class="card" id="cardProgress"></div>
+      <div class="card clickable" id="cardIng" onclick="drill('进行中')"></div>
+      <div class="card clickable" id="cardDone" onclick="drill('已完成')"></div>
+    </div>
+
+    <!-- 第二行：区域分布 + 任务进度 -->
+    <div class="row r2">
+      <div class="card" id="cardRegion"></div>
+      <div class="card" id="cardTask"></div>
+    </div>
+
+    <!-- 第三行：流程状态 + 连锁类型 + 销售排行 -->
+    <div class="row r3">
+      <div class="card" id="cardFlow"></div>
+      <div class="card" id="cardType"></div>
+      <div class="card" id="cardRank"></div>
+    </div>
+
+    <!-- 第四行：签约趋势 -->
+    <div class="row r4">
+      <div class="card" id="cardTrend"></div>
+    </div>
+
+    <!-- 第五行：签约明细 -->
+    <div class="row r4">
+      <div class="card" id="cardDetail"></div>
+    </div>
+
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script src="/public/js/dash.js"></script>
+<script>
+const PROJECT_ID = <%= projectId %>;
+const TARGET = 500;
+
+let DATA = null;
+let VIEW = null;
+let TREND_MODE = 'count';
+let PAGE = 1;
+let PAGE_SIZE = 20;
+
+const DETAIL_COLS = [
+  { name: '连锁名称', label: '连锁名称', width: '200px' },
+  { name: '连锁类型', label: '连锁类型', width: '100px' },
+  { name: '区域', label: '区域', width: '70px' },
+  { name: '销售', label: '销售', width: '80px' },
+  { name: '客服', label: '客服', width: '80px' },
+  { name: '门店数', label: '门店数', width: '75px' },
+  { name: '流程状态', label: '流程状态', width: '90px' },
+  { name: '签约时间', label: '签约时间', width: '110px' },
+  { name: '服务开始', label: '服务开始', width: '110px' },
+  { name: '服务结束', label: '服务结束', width: '110px' },
+  { name: '业务对接人', label: '业务对接人', width: '100px' },
+  { name: '业务电话', label: '业务电话', width: '120px' },
+  { name: '技术对接人', label: '技术对接人', width: '100px' },
+  { name: '技术电话', label: '技术电话', width: '120px' },
+  { name: '对接结果', label: '对接结果', width: '90px' },
+  { name: '提交人', label: '提交人', width: '80px' },
+  { name: '提交时间', label: '提交时间', width: '140px' },
+];
+
+/* ══════════ 加载 ══════════ */
+async function load() {
+  const r = await api('/api/crm/dashboard?projectId=' + PROJECT_ID);
+  if (!r.ok) return toast(r.message || '加载失败', 'error');
+
+  DATA = r.data;
+  VIEW = DATA;
+  document.getElementById('syncTime').textContent = fmtTime(DATA.updatedAt);
+
+  fillFilters();
+  render();
+}
+
+function fillFilters() {
+  const opts = DATA.options || {};
+  const fill = (id, label, list) => {
+    const sel = document.getElementById(id);
+    sel.innerHTML = '<option value="">' + label + '</option>' +
+      (list || []).map(v => '<option value="' + esc(v) + '">' + esc(v) + '</option>').join('');
+  };
+  fill('f_region', '全部区域', opts.regions);
+  fill('f_type', '全部类型', opts.types);
+  fill('f_sales', '全部销售', opts.sales);
+  fill('f_state', '全部状态', opts.states);
+}
+
+function applyFilter() {
+  const region = document.getElementById('f_region').value;
+  const type = document.getElementById('f_type').value;
+  const sales = document.getElementById('f_sales').value;
+  const state = document.getElementById('f_state').value;
+
+  let rows = DATA.detail;
+  if (region) rows = rows.filter(r => r.区域 === region);
+  if (type) rows = rows.filter(r => r.连锁类型 === type);
+  if (sales) rows = rows.filter(r => r.销售 === sales);
+  if (state) rows = rows.filter(r => r.流程状态 === state);
+
+  VIEW = aggregate(rows);
+  PAGE = 1;
+  render();
+}
+
+function resetFilter() {
+  ['f_region', 'f_type', 'f_sales', 'f_state'].forEach(id => { document.getElementById(id).value = ''; });
+  VIEW = DATA;
+  PAGE = 1;
+  render();
+}
+
+function drill(state) {
+  document.getElementById('f_state').value = state === 'all' ? '' : state;
+  applyFilter();
+}
+
+/** 重新聚合 */
+function aggregate(rows) {
+  const total = rows.length;
+  const totalStores = rows.reduce((s, r) => s + (Number(r.门店数) || 0), 0);
+
+  const byRegion = {};
+  const byType = {};
+  const bySales = {};
+  const byState = {};
+  const byMonth = {};
+
+  rows.forEach(r => {
+    const region = r.区域 || '未分区';
+    const type = r.连锁类型 || '未分类';
+    const sales = r.销售 || '未分配';
+    const state = r.流程状态 || '未知';
+    const stores = Number(r.门店数) || 0;
+
+    if (!byRegion[region]) byRegion[region] = { count: 0, stores: 0 };
+    byRegion[region].count++; byRegion[region].stores += stores;
+
+    if (!byType[type]) byType[type] = { count: 0, stores: 0 };
+    byType[type].count++; byType[type].stores += stores;
+
+    if (!bySales[sales]) bySales[sales] = { count: 0, stores: 0 };
+    bySales[sales].count++; bySales[sales].stores += stores;
+
+    byState[state] = (byState[state] || 0) + 1;
+
+    const t = r.签约时间 || r.提交时间;
+    if (t) {
+      const d = new Date(String(t).replace(' ', 'T'));
+      if (!isNaN(d.getTime())) {
+        const m = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+        if (!byMonth[m]) byMonth[m] = { count: 0, stores: 0 };
+        byMonth[m].count++; byMonth[m].stores += stores;
+      }
+    }
+  });
+
+  return {
+    kpi: {
+      total, totalStores, target: TARGET,
+      completion: TARGET > 0 ? Number(((total / TARGET) * 100).toFixed(1)) : 0,
+      inProgress: byState['进行中'] || 0,
+      done: byState['已完成'] || 0,
+      regions: Object.keys(byRegion).length,
+      salesCount: Object.keys(bySales).length,
+    },
+    byRegion: Object.keys(byRegion).map(k => ({ name: k, count: byRegion[k].count, stores: byRegion[k].stores })).sort((a,b)=>b.count-a.count),
+    byType: Object.keys(byType).map(k => ({ name: k, count: byType[k].count, stores: byType[k].stores })).sort((a,b)=>b.count-a.count),
+    byFlowState: Object.keys(byState).map(k => ({ name: k, value: byState[k] })).sort((a,b)=>b.value-a.value),
+    salesRank: Object.keys(bySales).map(k => ({ name: k, count: bySales[k].count, stores: bySales[k].stores })).sort((a,b)=>b.count-a.count),
+    trend: Object.keys(byMonth).sort().map(m => ({ label: m, count: byMonth[m].count, stores: byMonth[m].stores })),
+    detail: rows,
+  };
+}
+
+/* ══════════ 渲染 ══════════ */
+function render() {
+  const D = VIEW;
+  const T = Dash.THEME;
+  const PAL = Dash.PALETTE || [T.brand, T.green, T.orange, T.cyan, T.warn, T.danger, T.brand3, T.purple];
+
+  /* ── 1. 签约客户 ── */
+  Dash.renderCard('cardTotal', 'kpiSplit', {
+    title: '签约客户',
+    color: T.brand,
+    value: Dash.fmtInt(D.kpi.total),
+    sub: '总客户数',
+    split: D.byRegion.slice(0, 2).map((r, i) => ({
+      label: r.name,
+      value: Dash.fmtInt(r.count),
+      unit: '家',
+      color: i === 0 ? T.brand : T.orange,
+    })),
+  });
+
+  /* ── 2. 门店总数 ── */
+  Dash.renderCard('cardStores', 'kpiSplit', {
+    title: '门店总数',
+    color: T.cyan,
+    value: Dash.fmtInt(D.kpi.totalStores),
+    sub: '全部门店数',
+    split: D.byRegion.slice(0, 2).map((r, i) => ({
+      label: r.name + '门店',
+      value: Dash.fmtInt(r.stores),
+      unit: '家',
+      color: i === 0 ? T.cyan : T.green,
+    })),
+  });
+
+  /* ── 3. 任务完成进度 ── */
+  Dash.renderCard('cardProgress', 'semi', {
+    title: '任务完成进度',
+    value: D.kpi.total,
+    target: D.kpi.target,
+    unit: '家',
+    width: 220,
+    height: 120,
+    sub: '总体完成 ' + D.kpi.completion + '%',
+  });
+
+  /* ── 4. 进行中 ── */
+  Dash.renderCard('cardIng', 'ingList', {
+    title: '进行中',
+    hint: D.kpi.inProgress + ' 家',
+    data: D.byRegion.map((r, i) => ({
+      name: r.name,
+      value: Math.round(r.count * (D.kpi.inProgress / Math.max(1, D.kpi.total))),
+      color: PAL[i % PAL.length],
+    })),
+  });
+
+  /* ── 5. 流程完成 ── */
+  Dash.renderCard('cardDone', 'kpiSplit', {
+    title: '流程完成',
+    color: T.green,
+    value: Dash.fmtInt(D.kpi.done),
+    sub: '已完成流程客户数',
+    split: D.byRegion.slice(0, 2).map((r, i) => ({
+      label: r.name + '完成',
+      value: Dash.fmtInt(Math.round(r.count * (D.kpi.done / Math.max(1, D.kpi.total)))),
+      unit: '家',
+      color: i === 0 ? T.purple : T.brand3,
+    })),
+  });
+
+  /* ── 6. 区域分布 ── */
+  Dash.renderCard('cardRegion', 'donutLegend', {
+    title: '签约客户分布',
+    hint: '按区域',
+    data: D.byRegion.map((r, i) => ({
+      name: r.name,
+      value: r.count,
+      color: PAL[i % PAL.length],
+    })),
+    center: { value: Dash.fmtInt(D.kpi.total), label: '签约客户' },
+    size: 180,
+    stroke: 28,
+  });
+
+  /* ── 7. 任务进度明细 ── */
+  Dash.renderCard('cardTask', 'progress', {
+    title: '任务完成进度',
+    items: [
+      { label: '总体完成', value: D.kpi.total, target: D.kpi.target },
+    ].concat(D.byRegion.map(r => ({
+      label: r.name + '任务',
+      value: r.count,
+      target: Math.ceil(D.kpi.target / Math.max(1, D.byRegion.length)),
+    }))),
+  });
+
+  /* ── 8. 流程状态分布 ── */
+  Dash.renderCard('cardFlow', 'flowmap', {
+    title: '流程状态分布',
+    data: D.byFlowState.map(s => ({
+      name: s.name,
+      value: s.value,
+      color: s.name === '已完成' ? T.green : s.name === '进行中' ? T.brand2 : T.warn,
+    })),
+  });
+
+  /* ── 9. 连锁类型分布 ── */
+  Dash.renderCard('cardType', 'donutLegend', {
+    title: '连锁类型分布',
+    data: D.byType.map((t, i) => ({
+      name: t.name,
+      value: t.count,
+      color: Dash.PALETTE[i % Dash.PALETTE.length],
+    })),
+    center: { value: Dash.fmtInt(D.kpi.total), label: '客户' },
+    size: 160,
+    stroke: 24,
+  });
+
+  /* ── 10. 销售排行榜 ── */
+  Dash.renderCard('cardRank', 'rank', {
+    title: '销售排行榜',
+    hint: '按客户数',
+    limit: 10,
+    data: D.salesRank.map(s => ({
+      name: s.name,
+      value: s.count,
+      valueText: s.count + ' 家',
+      sub: s.stores + ' 门店',
+    })),
+  });
+
+  /* ── 11. 签约趋势 ── */
+  Dash.renderCard('cardTrend', 'trendBar', {
+    title: '签约趋势',
+    hint: TREND_MODE === 'count' ? '签约客户数' : '签约门店数',
+    color: T.brand2,
+    height: 260,
+    data: D.trend.map(t => ({
+      label: t.label,
+      value: TREND_MODE === 'count' ? t.count : t.stores,
+    })),
+  });
+
+  /* ── 12. 签约明细 ── */
+  renderDetail();
+}
+
+function renderDetail() {
+  const rows = VIEW.detail;
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (PAGE > pages) PAGE = pages;
+  const start = (PAGE - 1) * PAGE_SIZE;
+  const pageRows = rows.slice(start, start + PAGE_SIZE);
+
+  const box = document.getElementById('cardDetail');
+  box.innerHTML = Dash.detailTable({
+    title: '签约明细',
+    columns: DETAIL_COLS,
+    rows: pageRows,
+    pageSize: PAGE_SIZE,
+  });
+
+  // 追加分页
+  const pager = document.createElement('div');
+  pager.className = 'pager';
+  pager.style.padding = '12px 18px';
+  box.appendChild(pager);
+  renderPager(pager, total, PAGE, PAGE_SIZE, (p) => { PAGE = p; renderDetail(); });
+
+  // 追加搜索
+  const head = box.querySelector('.card-h');
+  if (head && !head.querySelector('.dsearch')) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;gap:8px;align-items:center';
+    wrap.innerHTML = '<input class="input dsearch" placeholder="搜索连锁/销售" style="width:160px;height:30px;font-size:12px">' +
+      '<select class="input dpage" style="width:90px;height:30px;font-size:12px">' +
+      '<option value="10">10 条/页</option><option value="20" selected>20 条/页</option>' +
+      '<option value="50">50 条/页</option></select>';
+    head.appendChild(wrap);
+
+    wrap.querySelector('.dsearch').addEventListener('input', debounce((e) => {
+      const kw = e.target.value.trim().toLowerCase();
+      if (!kw) { VIEW = DATA; }
+      else {
+        const filtered = (window.__FILTERED_ROWS__ || DATA.detail).filter(r =>
+          String(r.连锁名称 || '').toLowerCase().includes(kw) ||
+          String(r.销售 || '').toLowerCase().includes(kw));
+        VIEW = aggregate(filtered);
+      }
+      PAGE = 1;
+      render();
+    }, 300));
+
+    wrap.querySelector('.dpage').addEventListener('change', (e) => {
+      PAGE_SIZE = Number(e.target.value) || 20;
+      PAGE = 1;
+      renderDetail();
+    });
+  }
+}
+
+/* 记录筛选后的行，供搜索使用 */
+const _origApplyFilter = applyFilter;
+applyFilter = function () {
+  _origApplyFilter();
+  window.__FILTERED_ROWS__ = VIEW.detail;
+};
+
+load();
+</script>

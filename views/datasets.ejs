@@ -1,0 +1,335 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>数据集</h1>
+    <p class="sub">定义报表的数据来源 · 支持 SQL 查询、数据表、项目数据表</p>
+  </div>
+  <div class="head-actions">
+    <input class="input" id="kw" placeholder="搜索数据集" style="width:200px">
+    ${can('dataset:write') ? '<button class="btn btn-primary" onclick="openCreate()">+ 新建数据集</button>' : ''}
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="table table-fixed">
+      <thead>
+        <tr>
+          <th style="width:60px">ID</th>
+          <th style="width:180px">名称</th>
+          <th style="width:110px">来源类型</th>
+          <th style="width:160px">数据源</th>
+          <th>来源</th>
+          <th style="width:100px">状态</th>
+          <th style="width:230px">操作</th>
+        </tr>
+      </thead>
+      <tbody id="dsBody"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal-mask" id="dsModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="dsModalTitle">新建数据集</h3>
+      <button class="modal-close" onclick="closeModal('dsModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="f_id">
+      <div class="form-row">
+        <label class="field">
+          <span>数据集名称 <i class="req">*</i></span>
+          <input class="input" id="f_name" placeholder="例如：订单明细">
+        </label>
+        <label class="field">
+          <span>来源类型 <i class="req">*</i></span>
+          <select class="input" id="f_type" onchange="onTypeChange()">
+            <option value="sql">SQL 查询</option>
+            <option value="table">数据表</option>
+            <option value="project">项目数据表</option>
+          </select>
+        </label>
+      </div>
+      <label class="field">
+        <span>数据源 <i class="req">*</i></span>
+        <select class="input" id="f_datasource" onchange="onDsChange()"></select>
+      </label>
+
+      <div id="block_sql">
+        <label class="field">
+          <span>SQL 查询语句 <i class="req">*</i></span>
+          <textarea class="input mono" id="f_sql" rows="6" placeholder="SELECT * FROM your_table WHERE ..."></textarea>
+          <small class="hint">仅支持单条 SELECT / WITH 只读查询，不允许写操作</small>
+        </label>
+        <div class="form-actions" style="justify-content:flex-start;border:none;padding-top:0">
+          <button class="btn" onclick="testSql()">执行预览</button>
+          <span class="muted small" id="sqlResult" style="align-self:center"></span>
+        </div>
+      </div>
+
+      <div id="block_table" class="hidden">
+        <label class="field">
+          <span>选择数据表 <i class="req">*</i></span>
+          <select class="input" id="f_table"></select>
+          <small class="hint">切换数据源后需重新选择表</small>
+        </label>
+      </div>
+
+      <div id="block_project" class="hidden">
+        <div class="form-row">
+          <label class="field">
+            <span>项目 <i class="req">*</i></span>
+            <select class="input" id="f_project"></select>
+          </label>
+          <label class="field">
+            <span>数据表</span>
+            <select class="input" id="f_project_table">
+              <option value="raw">原始数据表（解析前）</option>
+              <option value="parsed">解析数据表（解析后）</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <label class="field">
+        <span>说明</span>
+        <textarea class="input" id="f_desc" rows="2" placeholder="可选"></textarea>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('dsModal')">取消</button>
+      <button class="btn btn-primary" id="saveBtn" onclick="save()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="previewModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3>数据预览</h3>
+      <button class="modal-close" onclick="closeModal('previewModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="muted small" id="previewInfo" style="margin-bottom:10px"></div>
+      <div class="table-wrap" style="max-height:420px;overflow:auto">
+        <table class="table table-fixed">
+          <thead id="previewHead"></thead>
+          <tbody id="previewBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('previewModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const CAN_WRITE = <%= can('dataset:write') ? 'true' : 'false' %>;
+let LIST = [];
+let DATASOURCES = [];
+let PROJECTS = [];
+
+async function load() {
+  const kw = document.getElementById('kw').value.trim();
+  const [lr, dr, pr] = await Promise.all([
+    api('/api/datasets?keyword=' + encodeURIComponent(kw)),
+    api('/api/datasources'),
+    api('/api/projects'),
+  ]);
+  if (!lr.ok) return toast(lr.message, 'error');
+  LIST = lr.data;
+  if (dr.ok) DATASOURCES = dr.data.list;
+  if (pr.ok) PROJECTS = pr.data;
+  render();
+}
+
+function render() {
+  const body = document.getElementById('dsBody');
+  if (!LIST.length) { body.innerHTML = '<tr><td colspan="7" class="empty">暂无数据集</td></tr>'; return; }
+
+  const typeName = { sql: 'SQL 查询', table: '数据表', project: '项目数据表' };
+
+  body.innerHTML = LIST.map(d => {
+    let source = '';
+    if (d.sourceType === 'sql') source = '<code class="mini">' + esc(String(d.sourceSql || '').slice(0, 60)) + '</code>';
+    else if (d.sourceType === 'table') source = '<code class="mini">' + esc(d.sourceTable) + '</code>';
+    else source = esc(d.projectName || '-') + ' / ' + (d.sourceTable === 'parsed' ? '解析表' : '原始表');
+
+    return '<tr>' +
+      '<td>' + d.id + '</td>' +
+      '<td><b>' + esc(d.name) + '</b><div class="muted small">' + esc(d.code) + '</div></td>' +
+      '<td><span class="tag tag-primary tag-sm">' + esc(typeName[d.sourceType] || d.sourceType) + '</span></td>' +
+      '<td class="small">' + esc(d.datasourceName || '本机数据库') + '</td>' +
+      '<td class="small">' + source + '</td>' +
+      '<td>' + (d.status ? '<span class="tag tag-ok">启用</span>' : '<span class="tag tag-off">停用</span>') + '</td>' +
+      '<td>' +
+        '<button class="btn btn-sm" data-prev="' + d.id + '">预览</button>' +
+        (CAN_WRITE ? '<button class="btn btn-sm" data-edit="' + d.id + '">编辑</button>' : '') +
+        (CAN_WRITE ? '<button class="btn btn-sm btn-danger" data-del="' + d.id + '">删除</button>' : '') +
+      '</td>' +
+    '</tr>';
+  }).join('');
+
+  body.querySelectorAll('button[data-prev]').forEach(b =>
+    b.addEventListener('click', () => preview(Number(b.dataset.prev))));
+  body.querySelectorAll('button[data-edit]').forEach(b =>
+    b.addEventListener('click', () => edit(Number(b.dataset.edit))));
+  body.querySelectorAll('button[data-del]').forEach(b =>
+    b.addEventListener('click', () => del(Number(b.dataset.del))));
+}
+
+function fillDatasources() {
+  document.getElementById('f_datasource').innerHTML = DATASOURCES.map(d =>
+    '<option value="' + d.id + '">' + esc(d.name) + '（' + esc(d.type) + '）</option>').join('');
+}
+
+function fillProjects() {
+  document.getElementById('f_project').innerHTML = PROJECTS.map(p =>
+    '<option value="' + p.id + '">' + esc(p.name) + '</option>').join('') ||
+    '<option value="">暂无项目</option>';
+}
+
+async function loadTables() {
+  const dsId = document.getElementById('f_datasource').value;
+  const sel = document.getElementById('f_table');
+  sel.innerHTML = '<option value="">加载中...</option>';
+  const r = await api('/api/datasources/' + dsId + '/tables');
+  if (!r.ok) { sel.innerHTML = '<option value="">加载失败</option>'; return; }
+  sel.innerHTML = r.data.map(t =>
+    '<option value="' + esc(t.name) + '">' + esc(t.name) + (t.comment ? ' — ' + esc(t.comment) : '') + '</option>').join('') ||
+    '<option value="">该数据源暂无数据表</option>';
+}
+
+function onDsChange() { loadTables(); }
+
+function onTypeChange() {
+  const t = document.getElementById('f_type').value;
+  document.getElementById('block_sql').classList.toggle('hidden', t !== 'sql');
+  document.getElementById('block_table').classList.toggle('hidden', t !== 'table');
+  document.getElementById('block_project').classList.toggle('hidden', t !== 'project');
+}
+
+function openCreate() {
+  document.getElementById('dsModalTitle').textContent = '新建数据集';
+  document.getElementById('f_id').value = '';
+  document.getElementById('f_name').value = '';
+  document.getElementById('f_sql').value = '';
+  document.getElementById('f_desc').value = '';
+  document.getElementById('sqlResult').textContent = '';
+  document.getElementById('f_type').value = 'sql';
+  fillDatasources();
+  fillProjects();
+  onTypeChange();
+  loadTables();
+  openModal('dsModal');
+}
+
+async function edit(id) {
+  const d = LIST.find(x => x.id === id);
+  if (!d) return;
+  document.getElementById('dsModalTitle').textContent = '编辑数据集：' + d.name;
+  document.getElementById('f_id').value = d.id;
+  document.getElementById('f_name').value = d.name;
+  document.getElementById('f_type').value = d.sourceType;
+  document.getElementById('f_sql').value = d.sourceSql || '';
+  document.getElementById('f_desc').value = d.description || '';
+  document.getElementById('sqlResult').textContent = '';
+  fillDatasources();
+  fillProjects();
+  document.getElementById('f_datasource').value = d.datasourceId;
+  onTypeChange();
+  await loadTables();
+  if (d.sourceTable) document.getElementById('f_table').value = d.sourceTable;
+  if (d.projectId) document.getElementById('f_project').value = d.projectId;
+  openModal('dsModal');
+}
+
+async function testSql() {
+  const sql = document.getElementById('f_sql').value.trim();
+  if (!sql) return toast('请填写 SQL 语句', 'error');
+  const el = document.getElementById('sqlResult');
+  el.textContent = '执行中...';
+  const r = await api('/api/datasets/test-sql', {
+    method: 'POST',
+    body: { sql, datasourceId: Number(document.getElementById('f_datasource').value), limit: 20 },
+  });
+  if (!r.ok) { el.textContent = r.message; el.style.color = 'var(--danger)'; return; }
+  el.textContent = '返回 ' + r.data.rowCount + ' 行，耗时 ' + r.data.elapsed + 'ms';
+  el.style.color = 'var(--success)';
+  showPreview(r.data);
+}
+
+async function save() {
+  const id = document.getElementById('f_id').value;
+  const type = document.getElementById('f_type').value;
+  const body = {
+    name: document.getElementById('f_name').value.trim(),
+    sourceType: type,
+    datasourceId: Number(document.getElementById('f_datasource').value),
+    description: document.getElementById('f_desc').value.trim(),
+  };
+  if (!body.name) return toast('请填写数据集名称', 'error');
+
+  if (type === 'sql') {
+    body.sourceSql = document.getElementById('f_sql').value.trim();
+    if (!body.sourceSql) return toast('请填写 SQL 语句', 'error');
+  } else if (type === 'table') {
+    body.sourceTable = document.getElementById('f_table').value;
+    if (!body.sourceTable) return toast('请选择数据表', 'error');
+  } else {
+    body.projectId = Number(document.getElementById('f_project').value);
+    body.sourceTable = document.getElementById('f_project_table').value;
+    if (!body.projectId) return toast('请选择项目', 'error');
+  }
+
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true; btn.textContent = '保存中...';
+  const r = id
+    ? await api('/api/datasets/' + id, { method: 'PUT', body })
+    : await api('/api/datasets', { method: 'POST', body });
+  btn.disabled = false; btn.textContent = '保存';
+
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast(r.message || '保存成功', 'success');
+  closeModal('dsModal');
+  load();
+}
+
+async function preview(id) {
+  const r = await api('/api/datasets/' + id + '/preview', { method: 'POST', body: { limit: 50 } });
+  if (!r.ok) return toast(r.message || '预览失败', 'error');
+  showPreview(r.data);
+}
+
+function showPreview(data) {
+  const cols = data.columns.map(c => c.name);
+  document.getElementById('previewInfo').textContent =
+    '共 ' + data.rowCount + ' 行，' + cols.length + ' 列，耗时 ' + data.elapsed + 'ms';
+  document.getElementById('previewHead').innerHTML = '<tr>' + cols.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>';
+  document.getElementById('previewBody').innerHTML = data.rows.map(row =>
+    '<tr>' + cols.map(c => {
+      const v = row[c];
+      const s = v === null || v === undefined ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+      return '<td title="' + esc(s) + '"><span class="cell-inner">' + esc(s.slice(0, 80)) + '</span></td>';
+    }).join('') + '</tr>'
+  ).join('') || '<tr><td colspan="' + cols.length + '" class="empty">无数据</td></tr>';
+  openModal('previewModal');
+}
+
+async function del(id) {
+  const d = LIST.find(x => x.id === id);
+  if (!confirm('确定删除数据集「' + (d ? d.name : id) + '」？')) return;
+  const r = await api('/api/datasets/' + id, { method: 'DELETE' });
+  if (!r.ok) return toast(r.message || '删除失败', 'error');
+  toast('已删除', 'success');
+  load();
+}
+
+document.getElementById('kw').addEventListener('input', debounce(load, 400));
+load();
+</script>

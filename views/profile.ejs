@@ -1,0 +1,269 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>个人中心</h1>
+    <p class="sub">管理个人资料、登录密码与登录设备</p>
+  </div>
+</div>
+
+<div class="profile-grid">
+  <div>
+    <div class="profile-card">
+      <div class="profile-avatar" id="avatarBox">${(currentUser.displayName || currentUser.username).slice(0, 1)}</div>
+      <div class="profile-name">${esc(currentUser.displayName || currentUser.username)}</div>
+      <div class="profile-role">
+        <span class="role-badge role-${currentUser.role}">${esc(currentUser.roleName)}</span>
+      </div>
+      <div class="profile-meta">
+        <div><span>账号</span><b>${esc(currentUser.username)}</b></div>
+        <div><span>邮箱</span><b id="p_email">${currentUser.email ? esc(currentUser.email) : '未设置'}</b></div>
+        <div><span>邮箱验证</span><b id="p_verified">${currentUser.emailVerified ? '已验证' : (currentUser.email ? '未验证' : '-')}</b></div>
+        <div><span>部门</span><b>${esc(currentUser.department || '未分配')}</b></div>
+        <div><span>职位</span><b>${esc(currentUser.position || '-')}</b></div>
+        <div><span>最后登录</span><b>${fmtTime(currentUser.lastLoginAt)}</b></div>
+        <div><span>登录 IP</span><b>${esc(currentUser.lastLoginIp || '-')}</b></div>
+        <div><span>注册时间</span><b>${fmtTime(currentUser.createdAt)}</b></div>
+      </div>
+      <button class="btn btn-block" style="margin-top:14px" onclick="openAvatar()">更换头像</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-header"><h3>个人资料</h3></div>
+      <div class="card-body">
+        <div class="form-row">
+          <label class="field">
+            <span>显示名称</span>
+            <input class="input" id="pf_display" value="${esc(currentUser.displayName || '')}">
+          </label>
+          <label class="field">
+            <span>邮箱</span>
+            <input class="input" id="pf_email" type="email" value="${esc(currentUser.email || '')}"
+                   placeholder="用于找回密码与接收通知">
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="field">
+            <span>手机号</span>
+            <input class="input" id="pf_phone" value="${esc(currentUser.phone || '')}" placeholder="可选">
+          </label>
+          <label class="field">
+            <span>职位</span>
+            <input class="input" id="pf_position" value="${esc(currentUser.position || '')}" placeholder="例如：数据分析师">
+          </label>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="saveProfile()">保存资料</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3>修改密码</h3></div>
+      <div class="card-body">
+        <div class="form-row">
+          <label class="field">
+            <span>当前密码</span>
+            <input class="input" id="pw_old" type="password" autocomplete="current-password">
+          </label>
+        </div>
+        <div class="form-row">
+          <label class="field">
+            <span>新密码</span>
+            <input class="input" id="pw_new" type="password" autocomplete="new-password">
+          </label>
+          <label class="field">
+            <span>确认新密码</span>
+            <input class="input" id="pw_confirm" type="password" autocomplete="new-password">
+          </label>
+        </div>
+        <div class="alert alert-warning" style="margin-top:4px">
+          修改密码后，所有设备的登录状态都会失效，需要重新登录。
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-primary" onclick="changePassword()">修改密码</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <h3>登录设备</h3>
+        <button class="btn btn-sm btn-danger" onclick="logoutOthers()">退出其他设备</button>
+      </div>
+      <div class="table-wrap">
+        <table class="table table-fixed">
+          <thead>
+            <tr><th style="width:110px">状态</th><th style="width:160px">IP</th><th>浏览器</th><th style="width:170px">登录时间</th><th style="width:170px">过期时间</th></tr>
+          </thead>
+          <tbody id="sessionBody"><tr><td colspan="5" class="empty">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="avatarModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>更换头像</h3>
+      <button class="modal-close" onclick="closeModal('avatarModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="avatar-upload">
+        <div class="avatar-preview" id="av_preview">?</div>
+        <div class="avatar-actions">
+          <div class="row">
+            <label class="btn btn-primary" style="cursor:pointer">
+              上传图片
+              <input type="file" id="av_file" accept="image/*" style="display:none" onchange="onAvatarFile(this)">
+            </label>
+            <button class="btn" onclick="removeAvatar()">恢复默认</button>
+          </div>
+          <div class="muted small">支持 JPG / PNG / GIF，建议 200×200，不超过 2MB</div>
+        </div>
+      </div>
+      <div style="margin-top:18px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:6px">或选择背景色</div>
+        <div class="avatar-colors" id="av_colors"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('avatarModal')">取消</button>
+      <button class="btn btn-primary" onclick="saveAvatar()">保存头像</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+async function saveProfile() {
+  const body = {
+    displayName: document.getElementById('pf_display').value.trim(),
+    email: document.getElementById('pf_email').value.trim(),
+    phone: document.getElementById('pf_phone').value.trim(),
+    position: document.getElementById('pf_position').value.trim(),
+  };
+  const r = await api('/api/me', { method: 'PUT', body });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast('个人资料已更新', 'success');
+  setTimeout(() => location.reload(), 600);
+}
+
+async function changePassword() {
+  const oldPassword = document.getElementById('pw_old').value;
+  const newPassword = document.getElementById('pw_new').value;
+  const confirmPassword = document.getElementById('pw_confirm').value;
+
+  if (!oldPassword) return toast('请输入当前密码', 'error');
+  if (!newPassword) return toast('请输入新密码', 'error');
+  if (newPassword !== confirmPassword) return toast('两次输入的新密码不一致', 'error');
+
+  const r = await api('/api/me/password', { method: 'POST', body: { oldPassword, newPassword, confirmPassword } });
+  if (!r.ok) return toast(r.message || '修改失败', 'error');
+  toast('密码修改成功，正在跳转登录...', 'success');
+  setTimeout(() => { location.href = '/login'; }, 1200);
+}
+
+async function loadSessions() {
+  const r = await api('/api/me/sessions');
+  if (!r.ok) return;
+  const body = document.getElementById('sessionBody');
+  if (!r.data.length) {
+    body.innerHTML = '<tr><td colspan="5" class="empty">暂无登录记录</td></tr>';
+    return;
+  }
+  body.innerHTML = r.data.map(s => '<tr>' +
+    '<td>' + (s.current ? '<span class="tag tag-ok">当前设备</span>' : '<span class="tag tag-off">其他设备</span>') + '</td>' +
+    '<td><code class="mini">' + esc(s.ip || '-') + '</code></td>' +
+    '<td class="small muted" title="' + esc(s.userAgent || '') + '">' + esc((s.userAgent || '-').slice(0, 70)) + '</td>' +
+    '<td class="small">' + fmtTime(s.createdAt) + '</td>' +
+    '<td class="small">' + fmtTime(s.expiresAt) + '</td>' +
+  '</tr>').join('');
+}
+
+async function logoutOthers() {
+  if (!confirm('退出除当前设备外的所有登录？')) return;
+  const r = await api('/api/me/sessions', { method: 'DELETE' });
+  if (!r.ok) return toast(r.message, 'error');
+  toast(r.message, 'success');
+  loadSessions();
+}
+
+/* ══════════ 头像 ══════════ */
+const AVATAR_COLORS = [
+  '#45B4FF', '#FFC000', '#3687FF', '#A2D73C', '#EC673C', '#73DBFF', '#003378', '#B5B5B6',
+  '#E86161', '#DCDDDD',
+];
+let PENDING_AVATAR = null;
+
+function openAvatar() {
+  PENDING_AVATAR = null;
+  const cur = window.__USER__ || {};
+  document.getElementById('av_preview').innerHTML = cur.avatar
+    ? '<img src="' + esc(cur.avatar) + '" alt="">'
+    : esc((cur.displayName || cur.username || '?').slice(0, 1));
+
+  document.getElementById('av_colors').innerHTML = AVATAR_COLORS.map(c =>
+    '<div class="avatar-color" data-color="' + c + '" style="background:' + c + '"></div>').join('');
+  document.querySelectorAll('.avatar-color').forEach(el => {
+    el.addEventListener('click', () => {
+      document.querySelectorAll('.avatar-color').forEach(x => x.classList.remove('active'));
+      el.classList.add('active');
+      PENDING_AVATAR = null;
+      const box = document.getElementById('av_preview');
+      box.innerHTML = esc((cur.displayName || cur.username || '?').slice(0, 1));
+      box.style.background = el.dataset.color;
+    });
+  });
+
+  document.getElementById('av_file').value = '';
+  openModal('avatarModal');
+}
+
+function onAvatarFile(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) return toast('图片不能超过 2MB', 'error');
+  if (!/^image\//.test(file.type)) return toast('请选择图片文件', 'error');
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    PENDING_AVATAR = e.target.result;
+    const box = document.getElementById('av_preview');
+    box.style.background = 'none';
+    box.innerHTML = '<img src="' + PENDING_AVATAR + '" alt="">';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function saveAvatar() {
+  const body = {};
+  if (PENDING_AVATAR) {
+    body.avatar = PENDING_AVATAR;
+  } else {
+    const active = document.querySelector('.avatar-color.active');
+    body.avatar = '';
+    body.avatarColor = active ? active.dataset.color : null;
+  }
+
+  const r = await api('/api/me/profile', { method: 'PUT', body });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast('头像已更新', 'success');
+  closeModal('avatarModal');
+  setTimeout(() => location.reload(), 600);
+}
+
+async function removeAvatar() {
+  const r = await api('/api/me/profile', { method: 'PUT', body: { avatar: '' } });
+  if (!r.ok) return toast(r.message || '操作失败', 'error');
+  toast('已恢复默认头像', 'success');
+  closeModal('avatarModal');
+  setTimeout(() => location.reload(), 600);
+}
+
+loadSessions();
+</script>

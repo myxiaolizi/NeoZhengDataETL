@@ -1,0 +1,375 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>系统设置</h1>
+    <p class="sub">平台配置中心 · 点击卡片切换设置分组</p>
+  </div>
+  <div class="head-actions">
+    <button class="btn btn-primary" onclick="saveAll()">保存当前分组</button>
+  </div>
+</div>
+
+<div class="settings-cards" id="settingsCards"></div>
+
+<div class="settings-panel">
+  <div class="settings-panel-head">
+    <div>
+      <h3 id="panelTitle">加载中...</h3>
+      <div class="desc" id="panelDesc"></div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap" id="panelActions"></div>
+  </div>
+  <div class="settings-panel-body" id="panelBody"></div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const CAN_WRITE = <%= can('settings:write') ? 'true' : 'false' %>;
+let GROUPS = [];
+let VALUES = {};
+let MAIL_READY = false;
+let DATASOURCES = [];
+let AI_PROVIDERS = [];
+let ACTIVE = 'site';
+
+async function load() {
+  const [sr, dr, pr] = await Promise.all([
+    api('/api/settings'),
+    api('/api/datasources').catch(() => ({ ok: false })),
+    api('/api/ai/providers').catch(() => ({ ok: false })),
+  ]);
+  if (!sr.ok) return toast(sr.message, 'error');
+
+  GROUPS = sr.data.groups;
+  VALUES = sr.data.values;
+  MAIL_READY = sr.data.mailReady;
+  if (dr.ok) DATASOURCES = dr.data.list;
+  if (pr.ok) AI_PROVIDERS = pr.data;
+
+  renderCards();
+  renderPanel();
+}
+
+function isOn(v) {
+  return ['1', 'true', 'yes', 'on'].includes(String(v || '').toLowerCase());
+}
+
+/** 内置的「工具型」卡片（非设置项，点击后展示表格） */
+const TOOL_CARDS = [
+  { key: 'tools_tables', title: '数据维护', desc: '数据表清单、行数与占用空间', icon: '⛁' },
+  { key: 'tools_logs', title: '登录日志', desc: '登录成功与失败记录', icon: '☰' },
+];
+
+function renderCards() {
+  const all = GROUPS.concat(TOOL_CARDS);
+  document.getElementById('settingsCards').innerHTML = all.map(g => {
+    const active = g.key === ACTIVE;
+    let badge = '';
+    if (g.key === 'smtp' && MAIL_READY) badge = '<span class="sc-badge">已配置</span>';
+    if (g.key === 'ai' && isOn(VALUES.ai_enabled)) badge = '<span class="sc-badge">已启用</span>';
+    if (g.key === 'tools_tables') badge = '<span class="sc-badge">工具</span>';
+    if (g.key === 'tools_logs') badge = '<span class="sc-badge">工具</span>';
+    return '<div class="settings-card' + (active ? ' active' : '') + '" data-g="' + esc(g.key) + '">' +
+      badge +
+      '<div class="sc-ico">' + g.icon + '</div>' +
+      '<div class="sc-body">' +
+        '<div class="sc-title">' + esc(g.title) + '</div>' +
+        '<div class="sc-desc">' + esc(g.desc) + '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  document.querySelectorAll('.settings-card').forEach(el => {
+    el.addEventListener('click', () => { ACTIVE = el.dataset.g; renderCards(); renderPanel(); });
+  });
+}
+
+function renderPanel() {
+  // 工具型卡片：渲染表格面板
+  if (ACTIVE === 'tools_tables') return renderTablesPanel();
+  if (ACTIVE === 'tools_logs') return renderLogsPanel();
+
+  const g = GROUPS.find(x => x.key === ACTIVE);
+  if (!g) return;
+
+  document.getElementById('panelTitle').textContent = g.title;
+  document.getElementById('panelDesc').textContent = g.desc;
+
+  let actions = '';
+  if (g.key === 'smtp') actions = '<button class="btn btn-sm" onclick="testMail()">发送测试邮件</button>';
+  else if (g.key === 'ai') actions = '<button class="btn btn-sm" onclick="testAi()">测试 AI 连接</button>';
+  else if (g.key === 'storage') actions = '<a class="btn btn-sm" href="/datasources">管理数据源</a>';
+  actions += '<button class="btn btn-sm btn-primary" onclick="saveAll()">保存本组</button>';
+  document.getElementById('panelActions').innerHTML = actions;
+
+  const items = g.fields.map(f => {
+    const val = VALUES[f.key] === undefined || VALUES[f.key] === null ? '' : String(VALUES[f.key]);
+    const dis = CAN_WRITE ? '' : ' disabled';
+    let control = '';
+
+    if (f.type === 'switch') {
+      control = '<label class="switch"><input type="checkbox" data-key="' + f.key + '"' +
+        (isOn(val) ? ' checked' : '') + dis + '><span class="track"></span></label>';
+    } else if (f.type === 'number') {
+      control = '<input class="input" type="number" data-key="' + f.key + '" value="' + esc(val) + '"' +
+        (f.min !== undefined ? ' min="' + f.min + '"' : '') +
+        (f.max !== undefined ? ' max="' + f.max + '"' : '') +
+        (f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : '') + dis + '>';
+    } else if (f.type === 'color') {
+      control = '<input class="input" type="color" data-key="' + f.key + '" value="' + esc(val || '#3687FF') +
+        '" style="height:40px;padding:4px"' + dis + '>';
+    } else if (f.type === 'password') {
+      const isSet = VALUES[f.key + '__set'] === '1';
+      control = '<input class="input" type="password" data-key="' + f.key + '" value=""' +
+        ' placeholder="' + (isSet ? '已设置（留空表示不修改）' : '请输入') + '" autocomplete="new-password"' + dis + '>';
+    } else if (f.type === 'select') {
+      control = '<select class="input" data-key="' + f.key + '"' + dis + '>' +
+        (f.options || []).map(o => '<option value="' + esc(o.value) + '"' +
+          (val === o.value ? ' selected' : '') + '>' + esc(o.label) + '</option>').join('') +
+        '</select>';
+    } else if (f.type === 'textarea') {
+      control = '<textarea class="input" data-key="' + f.key + '" rows="2"' +
+        (f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : '') + dis + '>' + esc(val) + '</textarea>';
+    } else if (f.type === 'datasource') {
+      control = '<select class="input" data-key="' + f.key + '"' + dis + '>' +
+        DATASOURCES.map(d => '<option value="' + d.id + '"' +
+          (String(val) === String(d.id) ? ' selected' : '') + '>' + esc(d.name) +
+          '（' + esc(d.type) + '）</option>').join('') +
+        '</select>';
+    } else if (f.type === 'aiprovider') {
+      control = '<select class="input" data-key="' + f.key + '" onchange="onProviderChange(this.value)"' + dis + '>' +
+        AI_PROVIDERS.map(p => '<option value="' + esc(p.key) + '"' +
+          (val === p.key ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') +
+        '</select>' +
+        '<div class="provider-note" id="providerNote"></div>';
+    } else if (f.type === 'aimodel') {
+      control = '<select class="input" data-key="' + f.key + '"' + dis + '>' +
+        renderModelOptions(val) + '</select>';
+    } else {
+      control = '<input class="input" type="text" data-key="' + f.key + '" value="' + esc(val) + '"' +
+        (f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : '') + dis + '>';
+    }
+
+    return '<div class="settings-item">' +
+      '<div>' +
+        '<div class="item-label">' + esc(f.label) + '</div>' +
+        (f.hint ? '<div class="item-hint">' + esc(f.hint) + '</div>' : '') +
+      '</div>' +
+      '<div class="item-control">' + control + '</div>' +
+    '</div>';
+  }).join('');
+
+  document.getElementById('panelBody').innerHTML = items ||
+    '<div class="empty-mini">该分组暂无设置项</div>';
+
+  // AI 分组：渲染供应商说明与快速申请链接
+  if (g.key === 'ai') renderProviderNote(VALUES.ai_provider || 'deepseek');
+}
+
+/** 渲染模型下拉选项 */
+function renderModelOptions(current) {
+  const p = AI_PROVIDERS.find(x => x.key === (VALUES.ai_provider || 'deepseek'));
+  if (!p || !p.models || !p.models.length) {
+    return '<option value="' + esc(current || '') + '">' + esc(current || '（请填写模型名称）') + '</option>';
+  }
+  const has = p.models.some(m => m.key === current);
+  return (has ? '' : '<option value="' + esc(current || '') + '" selected>' + esc(current || '自定义') + '</option>') +
+    p.models.map(m => '<option value="' + esc(m.key) + '"' +
+      (m.key === current ? ' selected' : '') + '>' + esc(m.name) + '</option>').join('');
+}
+
+/** 渲染供应商提示 */
+function renderProviderNote(key) {
+  const el = document.getElementById('providerNote');
+  if (!el) return;
+  const p = AI_PROVIDERS.find(x => x.key === key);
+  if (!p) { el.innerHTML = ''; return; }
+  el.innerHTML = esc(p.note || '') +
+    (p.keyUrl ? ' · <a href="' + esc(p.keyUrl) + '" target="_blank" rel="noopener">获取 API Key →</a>' : '');
+}
+
+/** 切换供应商：自动填充接口地址与默认模型 */
+function onProviderChange(key) {
+  const p = AI_PROVIDERS.find(x => x.key === key);
+  if (!p) return;
+  VALUES.ai_provider = key;
+
+  // 自动填充接口地址（自定义供应商保留用户输入）
+  const urlEl = document.querySelector('#panelBody [data-key="ai_base_url"]');
+  if (urlEl && p.baseUrl && !p.custom) urlEl.value = p.baseUrl;
+
+  // 自动选择默认模型
+  const modelEl = document.querySelector('#panelBody [data-key="ai_model"]');
+  if (modelEl) {
+    const def = (p.models || []).find(m => m.default) || (p.models || [])[0];
+    if (def) {
+      modelEl.innerHTML = renderModelOptions(def.key);
+      modelEl.value = def.key;
+    } else {
+      modelEl.innerHTML = renderModelOptions('');
+    }
+  }
+
+  renderProviderNote(key);
+}
+
+function collect() {
+  const out = {};
+  document.querySelectorAll('#panelBody [data-key]').forEach(el => {
+    const key = el.dataset.key;
+    out[key] = el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value;
+  });
+  return out;
+}
+
+async function saveAll() {
+  if (!CAN_WRITE) return toast('没有修改系统设置的权限', 'error');
+  const values = collect();
+  if (!Object.keys(values).length) return toast('没有可保存的设置项', 'error');
+
+  const r = await api('/api/settings', { method: 'PUT', body: { values } });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast(r.message || '设置已保存', 'success');
+
+  const sr = await api('/api/settings');
+  if (sr.ok) { VALUES = sr.data.values; MAIL_READY = sr.data.mailReady; renderCards(); renderPanel(); }
+}
+
+async function testMail() {
+  const to = prompt('发送测试邮件到哪个邮箱？', '');
+  if (to === null) return;
+  if (!to) return toast('请输入收件邮箱', 'error');
+  toast('正在发送...');
+  const r = await api('/api/settings/test-mail', { method: 'POST', body: { to } });
+  toast(r.message || (r.ok ? '已发送' : '发送失败'), r.ok ? 'success' : 'error');
+}
+
+async function testAi() {
+  toast('正在测试 AI 连接...');
+  const r = await api('/api/ai/test', { method: 'POST' });
+  toast(r.message || (r.ok ? '连接成功' : '连接失败'), r.ok ? 'success' : 'error');
+}
+
+async function loadTables() {
+  const r = await api('/api/system/tables');
+  if (!r.ok) return;
+  const body = document.getElementById('tableBody');
+  if (!r.data.length) { body.innerHTML = '<tr><td colspan="4" class="empty">暂无数据表</td></tr>'; return; }
+  body.innerHTML = r.data.map(t => '<tr>' +
+    '<td><code>' + esc(t.name) + '</code></td>' +
+    '<td class="small">' + esc(t.comment || '-') + '</td>' +
+    '<td>' + Number(t.rowCount || 0).toLocaleString() + '</td>' +
+    '<td>' + esc(t.sizeText) + '</td>' +
+  '</tr>').join('');
+}
+
+async function cleanup() {
+  const r = await api('/api/system/cleanup', { method: 'POST' });
+  toast(r.message || (r.ok ? '已清理' : '清理失败'), r.ok ? 'success' : 'error');
+}
+
+/* ══════════ 工具卡片：数据维护 ══════════ */
+
+function renderTablesPanel() {
+  document.getElementById('panelTitle').textContent = '数据维护';
+  document.getElementById('panelDesc').textContent = '数据表清单、行数与占用空间';
+  document.getElementById('panelActions').innerHTML =
+    '<button class="btn btn-sm" onclick="loadTables()">刷新表信息</button>' +
+    '<button class="btn btn-sm" onclick="cleanup()">清理过期会话</button>';
+
+  document.getElementById('panelBody').innerHTML =
+    '<div class="table-wrap">' +
+      '<table class="table table-fixed">' +
+        '<thead><tr>' +
+          '<th style="width:320px">表名</th>' +
+          '<th style="width:220px">说明</th>' +
+          '<th style="width:120px">行数</th>' +
+          '<th style="width:120px">大小</th>' +
+        '</tr></thead>' +
+        '<tbody id="tableBody"><tr><td colspan="4" class="empty">加载中...</td></tr></tbody>' +
+      '</table>' +
+    '</div>';
+
+  loadTables();
+}
+
+async function loadTables() {
+  const body = document.getElementById('tableBody');
+  if (!body) return;
+  const r = await api('/api/system/tables');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="4" class="empty">加载失败</td></tr>'; return; }
+  if (!r.data.length) { body.innerHTML = '<tr><td colspan="4" class="empty">暂无数据表</td></tr>'; return; }
+  body.innerHTML = r.data.map(t => '<tr>' +
+    '<td><code>' + esc(t.name) + '</code></td>' +
+    '<td class="small">' + esc(t.comment || '-') + '</td>' +
+    '<td>' + Number(t.rowCount || 0).toLocaleString() + '</td>' +
+    '<td>' + esc(t.sizeText) + '</td>' +
+  '</tr>').join('');
+}
+
+/* ══════════ 工具卡片：登录日志 ══════════ */
+
+function renderLogsPanel() {
+  document.getElementById('panelTitle').textContent = '登录日志';
+  document.getElementById('panelDesc').textContent = '登录成功与失败记录，可按账号或 IP 搜索';
+  document.getElementById('panelActions').innerHTML =
+    '<button class="btn btn-sm" onclick="loadLoginLogs(1)">刷新</button>';
+
+  document.getElementById('panelBody').innerHTML =
+    '<div class="toolbar" style="margin:-6px -22px 12px;border-top:none">' +
+      '<input class="input" id="log_kw" placeholder="搜索账号 / IP" style="width:240px">' +
+      '<button class="btn btn-primary btn-sm" onclick="loadLoginLogs(1)">查询</button>' +
+      '<div class="spacer"></div>' +
+      '<span class="muted small" id="logCount"></span>' +
+    '</div>' +
+    '<div class="table-wrap">' +
+      '<table class="table table-fixed">' +
+        '<thead><tr>' +
+          '<th style="width:70px">ID</th>' +
+          '<th style="width:150px">账号</th>' +
+          '<th style="width:90px">结果</th>' +
+          '<th style="width:200px">消息</th>' +
+          '<th style="width:140px">IP</th>' +
+          '<th>User-Agent</th>' +
+          '<th style="width:150px">时间</th>' +
+        '</tr></thead>' +
+        '<tbody id="loginLogBody"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>' +
+      '</table>' +
+    '</div>' +
+    '<div class="pager" id="loginLogPager"></div>';
+
+  const kw = document.getElementById('log_kw');
+  if (kw) kw.addEventListener('input', debounce(() => loadLoginLogs(1), 400));
+  loadLoginLogs(1);
+}
+
+async function loadLoginLogs(page) {
+  const body = document.getElementById('loginLogBody');
+  if (!body) return;
+  const kwEl = document.getElementById('log_kw');
+  const kw = kwEl ? kwEl.value.trim() : '';
+  const r = await api('/api/login-logs?page=' + page + '&pageSize=20&keyword=' + encodeURIComponent(kw));
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="7" class="empty">加载失败</td></tr>'; return; }
+
+  if (!r.data.list.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">暂无登录日志</td></tr>';
+  } else {
+    body.innerHTML = r.data.list.map(l => '<tr>' +
+      '<td>' + l.id + '</td>' +
+      '<td>' + esc(l.username || '-') + '</td>' +
+      '<td>' + (l.success ? '<span class="tag tag-ok">成功</span>' : '<span class="tag tag-err">失败</span>') + '</td>' +
+      '<td class="small">' + esc(l.message || '') + '</td>' +
+      '<td><code class="mini">' + esc(l.ip || '-') + '</code></td>' +
+      '<td class="small muted" title="' + esc(l.user_agent || '') + '">' + esc((l.user_agent || '').slice(0, 60)) + '</td>' +
+      '<td class="small">' + fmtTime(l.created_at) + '</td>' +
+    '</tr>').join('');
+  }
+  const cnt = document.getElementById('logCount');
+  if (cnt) cnt.textContent = '共 ' + r.data.total + ' 条';
+  renderPager('loginLogPager', r.data.total, r.data.page, r.data.pageSize, loadLoginLogs);
+}
+
+load();
+</script>

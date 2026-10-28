@@ -1,0 +1,386 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>字段设置</h1>
+    <p class="sub">
+      <a href="/projects/${project.id}">${esc(project.name)}</a>
+      <span class="muted">/ 字段定义与解析规则</span>
+    </p>
+  </div>
+  <div class="head-actions">
+    <button class="btn btn-primary" onclick="openImport()">导入简道云字段表</button>
+    <button class="btn" onclick="syncFields()">同步表结构</button>
+    <a class="btn btn-ghost" href="/projects/${project.id}">返回项目</a>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  <b>使用方式：</b>在简道云表单中打开「字段对照表及 JSON 样例」，全选表格内容（含表头）复制，
+  点击「导入简道云字段表」粘贴即可。系统会自动：
+  ① 把「字段名称」写入数据库列注释（保证明细可读性）；
+  ② 按「字段ID/别名」建立与推送数据的对应关系；
+  ③ 根据「字段类型」与「说明」推荐解析方式。
+</div>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-label">字段定义</div><div class="stat-value" id="f_total">-</div></div>
+  <div class="stat"><div class="stat-label">已建数据列</div><div class="stat-value" id="f_cols">-</div></div>
+  <div class="stat"><div class="stat-label">启用解析</div><div class="stat-value" id="f_parse">-</div></div>
+  <div class="stat"><div class="stat-label">展开子表</div><div class="stat-value" id="f_expand">-</div></div>
+</div>
+
+<div class="card">
+  <div class="toolbar">
+    <input class="input" id="kw" placeholder="搜索字段名称 / 字段ID" style="width:260px">
+    <select class="input" id="filter_mode" style="width:180px">
+      <option value="">全部解析方式</option>
+    </select>
+    <button class="btn btn-primary" onclick="render()">筛选</button>
+    <div class="spacer"></div>
+    <button class="btn btn-sm" onclick="bulkMode('name')">批量设为「取名称」</button>
+    <button class="btn btn-sm" onclick="bulkMode('none')">批量设为「不解析」</button>
+  </div>
+  <div class="table-wrap">
+    <table class="table table-fixed field-def-table">
+      <thead>
+        <tr>
+          <th style="width:50px">#</th>
+          <th style="width:200px">字段名称</th>
+          <th style="width:230px">字段ID / 别名</th>
+          <th style="width:90px">类型</th>
+          <th style="width:180px">数据库列名</th>
+          <th style="width:190px">解析方式</th>
+          <th style="width:170px">解析路径</th>
+          <th>说明</th>
+          <th style="width:70px">操作</th>
+        </tr>
+      </thead>
+      <tbody id="fieldBody"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 导入弹窗 -->
+<div class="modal-mask" id="importModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3>导入简道云字段表</h3>
+      <button class="modal-close" onclick="closeModal('importModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-info">
+        从简道云「字段对照表及 JSON 样例」中全选复制表格，粘贴到下方文本框。
+        支持 Markdown 表格（<code>| 字段名称 | 字段ID/字段别名 | 字段类型 | 说明 |</code>）与从网页直接复制的 Tab 分隔内容。
+      </div>
+
+      <label class="field">
+        <span>粘贴字段表格内容</span>
+        <textarea class="input" id="importText" rows="10"
+          placeholder="|字段名称|字段ID/字段别名|字段类型|说明|&#10;|---|---|---|---|&#10;|表单名称|formName|string||&#10;|数据ID|_id|string|数据的唯一ID|&#10;|销售|_widget_1791449342208|json|status -1 表示离职；0 表示未加入；1 表示已加入|"></textarea>
+      </label>
+
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="parsePreview()">解析预览</button>
+        <label class="switch">
+          <input type="checkbox" id="importReplace" checked>
+          <span class="track"></span>
+          <span class="label-text">覆盖已有字段定义</span>
+        </label>
+        <span class="muted small" id="parseInfo"></span>
+      </div>
+
+      <div id="previewWrap" class="hidden">
+        <div class="import-preview">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>字段名称</th><th>字段ID/别名</th><th>类型</th>
+                <th>数据库列名</th><th>解析方式</th><th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="previewBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('importModal')">取消</button>
+      <button class="btn btn-primary" id="importBtn" onclick="doImport()" disabled>确认导入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑字段弹窗 -->
+<div class="modal-mask" id="editModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>编辑字段</h3>
+      <button class="modal-close" onclick="closeModal('editModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="e_key">
+      <label class="field"><span>字段名称（写入列注释）</span><input class="input" id="e_name"></label>
+      <label class="field"><span>字段ID / 别名</span><input class="input" id="e_key_show" disabled></label>
+      <label class="field"><span>字段类型</span><input class="input" id="e_type"></label>
+      <label class="field">
+        <span>解析方式</span>
+        <select class="input" id="e_mode"></select>
+        <small class="hint" id="e_mode_hint"></small>
+      </label>
+      <label class="field">
+        <span>解析路径（仅「自定义路径」需要）</span>
+        <input class="input" id="e_path" placeholder="例如：user.name 或 data[0].name">
+      </label>
+      <label class="field"><span>字段说明</span><textarea class="input" id="e_remark" rows="2"></textarea></label>
+      <label class="field">
+        <span>启用</span>
+        <label class="switch">
+          <input type="checkbox" id="e_enabled">
+          <span class="track"></span>
+          <span class="label-text">停用后该字段不再写入数据</span>
+        </label>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('editModal')">取消</button>
+      <button class="btn btn-primary" onclick="saveField()">保存</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const PID = <%= project.id %>;
+let DEFS = [];
+let COLS = [];
+let MODES = [];
+let PREVIEW = null;
+
+async function load() {
+  const [fr, mr] = await Promise.all([
+    api('/api/projects/' + PID + '/fields'),
+    api('/api/field-modes'),
+  ]);
+  if (!fr.ok) return toast(fr.message, 'error');
+  DEFS = fr.data.fieldDefs || [];
+  COLS = fr.data.columns || [];
+  MODES = (mr.data && mr.data.modes) || [];
+
+  // 解析方式下拉
+  const modeOpts = MODES.map(m => '<option value="' + m.key + '">' + esc(m.name) + '</option>').join('') +
+    '<option value="expand">展开为子表</option>';
+  document.getElementById('e_mode').innerHTML = modeOpts;
+
+  const filterSel = document.getElementById('filter_mode');
+  filterSel.innerHTML = '<option value="">全部解析方式</option>' + modeOpts;
+
+  updateStats();
+  render();
+}
+
+function updateStats() {
+  document.getElementById('f_total').textContent = DEFS.length;
+  document.getElementById('f_cols').textContent = COLS.length;
+  document.getElementById('f_parse').textContent =
+    DEFS.filter(d => d.parse_mode && d.parse_mode !== 'none' && d.parse_mode !== 'expand').length;
+  document.getElementById('f_expand').textContent =
+    DEFS.filter(d => d.parse_mode === 'expand').length;
+}
+
+function modeName(key) {
+  if (key === 'expand') return '展开为子表';
+  const m = MODES.find(x => x.key === key);
+  return m ? m.name : (key || '不解析');
+}
+
+function render() {
+  const kw = document.getElementById('kw').value.trim().toLowerCase();
+  const fm = document.getElementById('filter_mode').value;
+
+  const list = DEFS.filter(d => {
+    if (fm && d.parse_mode !== fm) return false;
+    if (kw) {
+      const hay = (d.field_name + ' ' + d.field_key + ' ' + (d.remark || '')).toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    return true;
+  });
+
+  const body = document.getElementById('fieldBody');
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="9" class="empty">暂无字段定义，点击右上角「导入简道云字段表」开始</td></tr>';
+    return;
+  }
+
+  const colSet = new Set(COLS.map(c => c.name));
+
+  body.innerHTML = list.map((d, i) => {
+    const exists = colSet.has(d.column_name);
+    const isExpand = d.parse_mode === 'expand';
+    const isParse = d.parse_mode && d.parse_mode !== 'none' && !isExpand;
+
+    let tag = '<span class="tag tag-off tag-sm">不解析</span>';
+    if (isExpand) tag = '<span class="tag tag-warn tag-sm">展开子表</span>';
+    else if (isParse) tag = '<span class="tag tag-primary tag-sm">解析</span>';
+
+    return '<tr>' +
+      '<td>' + (i + 1) + '</td>' +
+      '<td>' + esc(d.field_name) + (d.is_system ? ' <span class="tag tag-off tag-sm">系统</span>' : '') + '</td>' +
+      '<td><code class="mini">' + esc(d.field_key) + '</code></td>' +
+      '<td>' + esc(d.field_type || '-') + '</td>' +
+      '<td><code class="mini">' + esc(d.column_name) + '</code>' +
+        (exists ? '' : ' <span class="tag tag-warn tag-sm">未建列</span>') +
+        (isParse ? '<br><code class="mini">' + esc(d.column_name) + '_p</code>' : '') + '</td>' +
+      '<td>' + tag + '<div class="small muted" style="margin-top:2px">' + esc(modeName(d.parse_mode)) + '</div></td>' +
+      '<td>' + (d.parse_path ? '<code class="mini">' + esc(d.parse_path) + '</code>' : '<span class="muted">-</span>') + '</td>' +
+      '<td class="small muted" title="' + esc(d.remark || '') + '">' + esc(d.remark || '') + '</td>' +
+      '<td><button class="btn btn-sm" data-edit="' + esc(d.field_key) + '">编辑</button></td>' +
+    '</tr>';
+  }).join('');
+
+  // 编辑按钮事件委托（避免内联 onclick 的引号转义问题）
+  document.querySelectorAll('#fieldBody button[data-edit]').forEach(btn => {
+    btn.addEventListener('click', () => editField(btn.dataset.edit));
+  });
+}
+
+/* ---- 导入 ---- */
+function openImport() {
+  document.getElementById('importText').value = '';
+  document.getElementById('previewWrap').classList.add('hidden');
+  document.getElementById('parseInfo').textContent = '';
+  document.getElementById('importBtn').disabled = true;
+  PREVIEW = null;
+  openModal('importModal');
+}
+
+async function parsePreview() {
+  const text = document.getElementById('importText').value;
+  if (!text.trim()) return toast('请先粘贴字段表格内容', 'error');
+
+  const r = await api('/api/projects/' + PID + '/fields/parse', { method: 'POST', body: { text } });
+  if (!r.ok) return toast(r.message, 'error');
+
+  PREVIEW = r.data;
+  const list = r.data.fields;
+
+  document.getElementById('previewBody').innerHTML = list.map((f, i) => {
+    const status = f.exists
+      ? '<span class="tag tag-ok tag-sm">已存在</span>'
+      : '<span class="tag tag-primary tag-sm">新建</span>';
+    return '<tr>' +
+      '<td>' + (i + 1) + '</td>' +
+      '<td>' + esc(f.fieldName) + '</td>' +
+      '<td><code class="mini">' + esc(f.fieldKey) + '</code></td>' +
+      '<td>' + esc(f.fieldType) + '</td>' +
+      '<td><code class="mini">' + esc(f.columnName) + '</code></td>' +
+      '<td>' + esc(modeName(f.parseMode)) + '</td>' +
+      '<td>' + status + '</td>' +
+    '</tr>';
+  }).join('');
+
+  document.getElementById('previewWrap').classList.remove('hidden');
+  document.getElementById('parseInfo').textContent =
+    '共解析 ' + r.data.total + ' 个字段（系统字段 ' + r.data.systemCount +
+    ' 个，需新建列 ' + r.data.newCount + ' 个，跳过 ' + r.data.skipped + ' 行）';
+  document.getElementById('importBtn').disabled = false;
+
+  if (r.data.errors && r.data.errors.length) toast(r.data.errors[0], 'error');
+}
+
+async function doImport() {
+  if (!PREVIEW) return toast('请先解析预览', 'error');
+  const btn = document.getElementById('importBtn');
+  btn.disabled = true; btn.textContent = '导入中...';
+
+  const r = await api('/api/projects/' + PID + '/fields/import', {
+    method: 'POST',
+    body: {
+      fields: PREVIEW.fields,
+      mode: document.getElementById('importReplace').checked ? 'replace' : 'merge',
+    },
+  });
+
+  btn.disabled = false; btn.textContent = '确认导入';
+  if (!r.ok) return toast(r.message || '导入失败', 'error');
+
+  toast(r.message || '导入成功', 'success');
+  closeModal('importModal');
+  load();
+}
+
+/* ---- 编辑 ---- */
+function editField(key) {
+  const d = DEFS.find(x => x.field_key === key);
+  if (!d) return;
+  document.getElementById('e_key').value = d.field_key;
+  document.getElementById('e_key_show').value = d.field_key;
+  document.getElementById('e_name').value = d.field_name || '';
+  document.getElementById('e_type').value = d.field_type || '';
+  document.getElementById('e_mode').value = d.parse_mode || 'none';
+  document.getElementById('e_path').value = d.parse_path || '';
+  document.getElementById('e_remark').value = d.remark || '';
+  document.getElementById('e_enabled').checked = Number(d.enabled) !== 0;
+  updateModeHint();
+  openModal('editModal');
+}
+
+function updateModeHint() {
+  const key = document.getElementById('e_mode').value;
+  const m = MODES.find(x => x.key === key);
+  const el = document.getElementById('e_mode_hint');
+  if (key === 'expand') {
+    el.textContent = '该数组字段的每一行会写入独立子表，可在项目详情「子表数据」页签查看';
+  } else if (m) {
+    el.textContent = m.desc || '';
+  } else {
+    el.textContent = '';
+  }
+}
+document.getElementById('e_mode').addEventListener('change', updateModeHint);
+
+async function saveField() {
+  const key = document.getElementById('e_key').value;
+  const body = {
+    fieldName: document.getElementById('e_name').value.trim(),
+    fieldType: document.getElementById('e_type').value.trim(),
+    parseMode: document.getElementById('e_mode').value,
+    parsePath: document.getElementById('e_path').value.trim(),
+    remark: document.getElementById('e_remark').value.trim(),
+    enabled: document.getElementById('e_enabled').checked,
+  };
+  const r = await api('/api/projects/' + PID + '/fields/' + encodeURIComponent(key), {
+    method: 'PUT', body,
+  });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast('字段已更新', 'success');
+  closeModal('editModal');
+  load();
+}
+
+/* ---- 批量 ---- */
+async function bulkMode(mode) {
+  if (!confirm('把当前所有字段的解析方式批量设为「' + modeName(mode) + '」？')) return;
+  const items = DEFS.map(d => ({ fieldKey: d.field_key, parseMode: mode, parsePath: null }));
+  const r = await api('/api/projects/' + PID + '/fields/parse-mode', { method: 'POST', body: { items } });
+  if (!r.ok) return toast(r.message, 'error');
+  toast(r.message, 'success');
+  load();
+}
+
+/* ---- 同步结构 ---- */
+async function syncFields() {
+  if (!confirm('按字段定义重新同步数据库表结构？\\n\\n将新建缺失的列（含解析列），并回填历史数据的解析值。')) return;
+  toast('正在同步，请稍候...');
+  const r = await api('/api/projects/' + PID + '/fields/sync', { method: 'POST' });
+  if (!r.ok) return toast(r.message || '同步失败', 'error');
+  toast(r.message || '同步完成', 'success');
+  load();
+}
+
+document.getElementById('kw').addEventListener('input', debounce(render, 300));
+document.getElementById('filter_mode').addEventListener('change', render);
+load();
+</script>

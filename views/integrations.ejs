@@ -1,0 +1,496 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>数据集成</h1>
+    <p class="sub">两种数据接收方式：第三方推送（生成接收地址）与接口采集（填写接口信息）</p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" onclick="load()">刷新</button>
+  </div>
+</div>
+
+<div class="collect-modes">
+  <div class="collect-card" data-mode="push">
+    <div class="cc-head">
+      <div class="cc-ico">⇣</div>
+      <div>
+        <div class="cc-title">接收第三方推送</div>
+        <div class="cc-sub">简道云 / 表单 / 其他应用主动推送</div>
+      </div>
+    </div>
+    <div class="cc-desc">
+      平台为每个项目生成唯一的<b>接收地址</b>，把它填入第三方应用的「数据推送 / Webhook」配置中即可。
+      无需填写任何接口信息，第三方有数据变动时会自动推送到本平台。
+    </div>
+    <button class="btn btn-primary" onclick="showPushUrl()">查看接收地址</button>
+  </div>
+
+  <div class="collect-card" data-mode="pull">
+    <div class="cc-head">
+      <div class="cc-ico">⇡</div>
+      <div>
+        <div class="cc-title">接口采集数据</div>
+        <div class="cc-sub">平台主动调用第三方接口拉取</div>
+      </div>
+    </div>
+    <div class="cc-desc">
+      填写第三方接口的<b>地址、鉴权方式、响应数据路径</b>，平台按需调用接口把数据拉取回来。
+      适合对方没有推送能力、或需要按条件批量拉取的场景。
+    </div>
+    ${can('integration:write') ? '<button class="btn btn-primary" data-create="pull">新建采集任务</button>' : ''}
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-label">任务总数</div><div class="stat-value" id="s_total">-</div></div>
+  <div class="stat"><div class="stat-label">采集任务</div><div class="stat-value" id="s_pull">-</div></div>
+  <div class="stat"><div class="stat-label">推送任务</div><div class="stat-value" id="s_push">-</div></div>
+  <div class="stat"><div class="stat-label">执行次数</div><div class="stat-value" id="s_run">-</div></div>
+  <div class="stat"><div class="stat-label">成功次数</div><div class="stat-value" id="s_ok">-</div></div>
+  <div class="stat"><div class="stat-label">累计处理行数</div><div class="stat-value" id="s_rows">-</div></div>
+</div>
+
+<div class="flow-diagram">
+  <div class="flow-node active">外部系统 / 简道云</div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node">接口采集（Pull）</div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node active">数据中台</div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node">接口推送（Push）</div>
+  <span class="flow-arrow">→</span>
+  <div class="flow-node active">目标服务器</div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="table table-fixed">
+      <thead>
+        <tr>
+          <th style="width:60px">ID</th>
+          <th style="width:170px">任务名称</th>
+          <th style="width:90px">方向</th>
+          <th style="width:140px">关联项目</th>
+          <th>接口地址</th>
+          <th style="width:110px">执行/成功</th>
+          <th style="width:160px">最近执行</th>
+          <th style="width:90px">状态</th>
+          <th style="width:250px">操作</th>
+        </tr>
+      </thead>
+      <tbody id="taskBody"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 任务编辑弹窗 -->
+<div class="modal-mask" id="taskModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="taskModalTitle">新建集成任务</h3>
+      <button class="modal-close" onclick="closeModal('taskModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="t_id">
+      <input type="hidden" id="t_direction">
+      <div class="form-row">
+        <label class="field">
+          <span>任务名称 <i class="req">*</i></span>
+          <input class="input" id="t_name" placeholder="例如：订单数据采集">
+        </label>
+        <label class="field">
+          <span>关联项目 <i class="req">*</i></span>
+          <select class="input" id="t_project"></select>
+          <small class="hint" id="t_project_hint"></small>
+        </label>
+      </div>
+
+      <div class="form-row">
+        <label class="field">
+          <span>协议</span>
+          <select class="input" id="t_protocol">
+            <option value="https">HTTPS</option>
+            <option value="http">HTTP</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>请求方法</span>
+          <select class="input" id="t_method">
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="field">
+        <span>接口地址 <i class="req">*</i></span>
+        <input class="input mono" id="t_url" placeholder="https://api.example.com/data">
+      </label>
+
+      <label class="field">
+        <span>鉴权方式</span>
+        <select class="input" id="t_auth" onchange="onAuthChange()">
+          <option value="none">无</option>
+          <option value="bearer">Bearer Token</option>
+          <option value="basic">Basic 认证</option>
+          <option value="apikey">API Key</option>
+        </select>
+      </label>
+
+      <div id="auth_bearer" class="hidden">
+        <label class="field"><span>Token</span><input class="input mono" id="t_token" placeholder="Bearer Token"></label>
+      </div>
+      <div id="auth_basic" class="hidden">
+        <div class="form-row">
+          <label class="field"><span>用户名</span><input class="input" id="t_basic_user"></label>
+          <label class="field"><span>密码</span><input class="input" type="password" id="t_basic_pass"></label>
+        </div>
+      </div>
+      <div id="auth_apikey" class="hidden">
+        <div class="form-row">
+          <label class="field"><span>Header 名称</span><input class="input" id="t_apikey_header" placeholder="X-API-Key"></label>
+          <label class="field"><span>Key 值</span><input class="input mono" id="t_apikey_value"></label>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <label class="field">
+          <span>请求头（JSON）</span>
+          <textarea class="input mono" id="t_headers" rows="3" placeholder='{"X-Custom": "value"}'></textarea>
+        </label>
+        <label class="field">
+          <span>查询参数（JSON）</span>
+          <textarea class="input mono" id="t_params" rows="3" placeholder='{"page": "1"}'></textarea>
+        </label>
+      </div>
+
+      <div id="block_pull">
+        <label class="field">
+          <span>响应数据路径</span>
+          <input class="input mono" id="t_datapath" placeholder="data.list">
+          <small class="hint">从接口返回的 JSON 中提取数据数组的路径，留空表示根节点</small>
+        </label>
+        <label class="field">
+          <span>字段映射（JSON）</span>
+          <textarea class="input mono" id="t_fieldmap" rows="3" placeholder='{"字段名": "源字段路径"}'></textarea>
+          <small class="hint">把接口字段映射到项目字段；留空则按同名字段自动映射</small>
+        </label>
+      </div>
+
+      <div id="block_push">
+        <label class="field">
+          <span>请求体模板</span>
+          <textarea class="input mono" id="t_body" rows="3" placeholder='{"data": {{rows}}}'></textarea>
+          <small class="hint">使用 <code>{{rows}}</code> 占位符插入数据数组；留空则直接发送 JSON 数组</small>
+        </label>
+        <label class="field">
+          <span>推送数据源</span>
+          <select class="input" id="t_source">
+            <option value="parsed">解析数据表（解析后，推荐）</option>
+            <option value="raw">原始数据表（解析前）</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="field">
+        <span>备注</span>
+        <input class="input" id="t_remark" placeholder="可选">
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('taskModal')">取消</button>
+      <button class="btn btn-primary" id="saveTaskBtn" onclick="saveTask()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="pushUrlModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>数据接收地址</h3>
+      <button class="modal-close" onclick="closeModal('pushUrlModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-info" style="margin-bottom:16px">
+        把下面的地址复制到第三方应用（简道云 / 表单 / 其他系统）的「数据推送」或「Webhook」配置中，
+        对方有数据变动时会自动推送到本平台，无需填写任何接口信息。
+      </div>
+      <div id="pushUrlBody"><div class="empty-mini">加载中...</div></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('pushUrlModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const CAN_WRITE = <%= can('integration:write') ? 'true' : 'false' %>;
+let TASKS = [];
+let PROJECTS = [];
+
+async function load() {
+  const [tr, pr] = await Promise.all([api('/api/integrations'), api('/api/projects')]);
+  if (!tr.ok) return toast(tr.message, 'error');
+  TASKS = tr.data.list;
+  if (pr.ok) PROJECTS = pr.data;
+
+  const s = tr.data.stats;
+  document.getElementById('s_total').textContent = s.total;
+  document.getElementById('s_pull').textContent = s.pullCount;
+  document.getElementById('s_push').textContent = s.pushCount;
+  document.getElementById('s_run').textContent = s.runTotal;
+  document.getElementById('s_ok').textContent = s.runOk;
+  document.getElementById('s_rows').textContent = Number(s.rowsTotal || 0).toLocaleString();
+
+  render();
+}
+
+function render() {
+  const body = document.getElementById('taskBody');
+  if (!TASKS.length) { body.innerHTML = '<tr><td colspan="9" class="empty">暂无集成任务</td></tr>'; return; }
+
+  body.innerHTML = TASKS.map(t => {
+    const dirTag = t.direction === 'pull'
+      ? '<span class="dir-badge dir-pull">⇣ 采集</span>'
+      : '<span class="dir-badge dir-push">⇡ 推送</span>';
+    const runTag = t.lastRunOk === null || t.lastRunOk === undefined
+      ? '<span class="tag tag-off tag-sm">未执行</span>'
+      : (t.lastRunOk ? '<span class="tag tag-ok tag-sm">成功</span>' : '<span class="tag tag-err tag-sm">失败</span>');
+
+    return '<tr>' +
+      '<td>' + t.id + '</td>' +
+      '<td><b>' + esc(t.name) + '</b><div class="muted small">' + esc(t.code) + '</div></td>' +
+      '<td>' + dirTag + '</td>' +
+      '<td class="small">' + esc(t.projectName || '-') + '</td>' +
+      '<td class="small"><code class="mini">' + esc(String(t.url || '').slice(0, 50)) + '</code></td>' +
+      '<td class="small">' + t.runCount + ' / ' + t.successCount + '</td>' +
+      '<td class="small">' + fmtTime(t.lastRunAt) + '<div>' + runTag + '</div></td>' +
+      '<td>' + (t.status ? '<span class="tag tag-ok">启用</span>' : '<span class="tag tag-off">停用</span>') + '</td>' +
+      '<td>' +
+        (CAN_WRITE ? '<button class="btn btn-sm btn-primary" data-run="' + t.id + '">执行</button>' : '') +
+        '<button class="btn btn-sm" data-logs="' + t.id + '">日志</button>' +
+        (CAN_WRITE ? '<button class="btn btn-sm" data-edit="' + t.id + '">编辑</button>' : '') +
+        (CAN_WRITE ? '<button class="btn btn-sm btn-danger" data-del="' + t.id + '">删除</button>' : '') +
+      '</td>' +
+    '</tr>';
+  }).join('');
+
+  body.querySelectorAll('button[data-run]').forEach(b =>
+    b.addEventListener('click', () => runTask(Number(b.dataset.run))));
+  body.querySelectorAll('button[data-logs]').forEach(b =>
+    b.addEventListener('click', () => { location.href = '/integrations/' + b.dataset.logs; }));
+  body.querySelectorAll('button[data-edit]').forEach(b =>
+    b.addEventListener('click', () => editTask(Number(b.dataset.edit))));
+  body.querySelectorAll('button[data-del]').forEach(b =>
+    b.addEventListener('click', () => delTask(Number(b.dataset.del))));
+}
+
+function fillProjects() {
+  document.getElementById('t_project').innerHTML = PROJECTS.map(p =>
+    '<option value="' + p.id + '">' + esc(p.name) + '（' + esc(p.code) + '）</option>').join('') ||
+    '<option value="">暂无项目</option>';
+}
+
+function onAuthChange() {
+  const a = document.getElementById('t_auth').value;
+  document.getElementById('auth_bearer').classList.toggle('hidden', a !== 'bearer');
+  document.getElementById('auth_basic').classList.toggle('hidden', a !== 'basic');
+  document.getElementById('auth_apikey').classList.toggle('hidden', a !== 'apikey');
+}
+
+function openCreate(direction) {
+  document.getElementById('taskModalTitle').textContent = direction === 'pull' ? '新建接口采集任务' : '新建接口推送任务';
+  document.getElementById('t_id').value = '';
+  document.getElementById('t_direction').value = direction;
+  ['t_name','t_url','t_token','t_basic_user','t_basic_pass','t_apikey_header','t_apikey_value',
+   't_headers','t_params','t_datapath','t_fieldmap','t_body','t_remark'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('t_protocol').value = 'https';
+  document.getElementById('t_method').value = direction === 'push' ? 'POST' : 'GET';
+  document.getElementById('t_auth').value = 'none';
+  document.getElementById('t_apikey_header').value = 'X-API-Key';
+
+  document.getElementById('block_pull').classList.toggle('hidden', direction !== 'pull');
+  document.getElementById('block_push').classList.toggle('hidden', direction !== 'push');
+  document.getElementById('t_project_hint').textContent =
+    direction === 'pull' ? '采集到的数据将写入该项目的解析数据表' : '将从该项目的解析数据表读取数据';
+
+  fillProjects();
+  onAuthChange();
+  openModal('taskModal');
+}
+
+function editTask(id) {
+  const t = TASKS.find(x => x.id === id);
+  if (!t) return;
+  document.getElementById('taskModalTitle').textContent = '编辑任务：' + t.name;
+  document.getElementById('t_id').value = t.id;
+  document.getElementById('t_direction').value = t.direction;
+  document.getElementById('t_name').value = t.name;
+  document.getElementById('t_protocol').value = t.protocol;
+  document.getElementById('t_method').value = t.method;
+  document.getElementById('t_url').value = t.url || '';
+  document.getElementById('t_auth').value = t.authType || 'none';
+
+  const ac = t.authConfig || {};
+  document.getElementById('t_token').value = ac.token || '';
+  document.getElementById('t_basic_user').value = ac.username || '';
+  document.getElementById('t_basic_pass').value = ac.password || '';
+  document.getElementById('t_apikey_header').value = ac.header || 'X-API-Key';
+  document.getElementById('t_apikey_value').value = ac.value || ac.key || '';
+
+  document.getElementById('t_headers').value = Object.keys(t.headers || {}).length ? JSON.stringify(t.headers, null, 2) : '';
+  document.getElementById('t_params').value = Object.keys(t.params || {}).length ? JSON.stringify(t.params, null, 2) : '';
+  document.getElementById('t_datapath').value = t.dataPath || '';
+  document.getElementById('t_fieldmap').value = Object.keys(t.fieldMap || {}).length ? JSON.stringify(t.fieldMap, null, 2) : '';
+  document.getElementById('t_body').value = t.body || '';
+  document.getElementById('t_remark').value = '';
+
+  document.getElementById('block_pull').classList.toggle('hidden', t.direction !== 'pull');
+  document.getElementById('block_push').classList.toggle('hidden', t.direction !== 'push');
+
+  fillProjects();
+  document.getElementById('t_project').value = t.projectId || '';
+  onAuthChange();
+  openModal('taskModal');
+}
+
+function parseJsonField(id, label) {
+  const v = document.getElementById(id).value.trim();
+  if (!v) return null;
+  try { return JSON.parse(v); } catch (e) { throw new Error(label + ' 不是合法的 JSON'); }
+}
+
+async function saveTask() {
+  const id = document.getElementById('t_id').value;
+  const direction = document.getElementById('t_direction').value;
+
+  let headers, params, fieldMap;
+  try {
+    headers = parseJsonField('t_headers', '请求头');
+    params = parseJsonField('t_params', '查询参数');
+    fieldMap = parseJsonField('t_fieldmap', '字段映射');
+  } catch (e) { return toast(e.message, 'error'); }
+
+  const authType = document.getElementById('t_auth').value;
+  let authConfig = null;
+  if (authType === 'bearer') authConfig = { token: document.getElementById('t_token').value };
+  else if (authType === 'basic') authConfig = {
+    username: document.getElementById('t_basic_user').value,
+    password: document.getElementById('t_basic_pass').value,
+  };
+  else if (authType === 'apikey') authConfig = {
+    header: document.getElementById('t_apikey_header').value || 'X-API-Key',
+    value: document.getElementById('t_apikey_value').value,
+  };
+
+  const body = {
+    name: document.getElementById('t_name').value.trim(),
+    direction,
+    projectId: Number(document.getElementById('t_project').value) || null,
+    protocol: document.getElementById('t_protocol').value,
+    method: document.getElementById('t_method').value,
+    url: document.getElementById('t_url').value.trim(),
+    headers, params,
+    body: document.getElementById('t_body').value.trim() || null,
+    authType, authConfig,
+    dataPath: document.getElementById('t_datapath').value.trim() || null,
+    fieldMap,
+  };
+
+  if (!body.name) return toast('请填写任务名称', 'error');
+  if (!body.projectId) return toast('请选择关联项目', 'error');
+  if (!body.url) return toast('请填写接口地址', 'error');
+
+  const btn = document.getElementById('saveTaskBtn');
+  btn.disabled = true; btn.textContent = '保存中...';
+  const r = id
+    ? await api('/api/integrations/' + id, { method: 'PUT', body })
+    : await api('/api/integrations', { method: 'POST', body });
+  btn.disabled = false; btn.textContent = '保存';
+
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast(r.message || '保存成功', 'success');
+  closeModal('taskModal');
+  load();
+}
+
+async function runTask(id) {
+  const t = TASKS.find(x => x.id === id);
+  if (!confirm('立即执行任务「' + (t ? t.name : id) + '」？')) return;
+  toast('正在执行...');
+  const r = await api('/api/integrations/' + id + '/run', { method: 'POST', body: {} });
+  toast(r.message || (r.ok ? '执行成功' : '执行失败'), r.ok ? 'success' : 'error');
+  load();
+}
+
+async function delTask(id) {
+  const t = TASKS.find(x => x.id === id);
+  if (!confirm('确定删除任务「' + (t ? t.name : id) + '」？')) return;
+  const r = await api('/api/integrations/' + id, { method: 'DELETE' });
+  if (!r.ok) return toast(r.message || '删除失败', 'error');
+  toast('已删除', 'success');
+  load();
+}
+
+// 新建按钮事件绑定（避免内联 onclick 的引号转义问题）
+document.querySelectorAll('button[data-create]').forEach(b => {
+  b.addEventListener('click', () => openCreate(b.dataset.create));
+});
+
+/* ══════════ 接收地址（第三方推送） ══════════ */
+async function showPushUrl() {
+  const r = await api('/api/projects');
+  if (!r.ok) return toast(r.message, 'error');
+
+  const list = r.data;
+  if (!list.length) {
+    toast('还没有项目，请先创建数据项目', 'error');
+    return;
+  }
+
+  const base = window.location.origin;
+  document.getElementById('pushUrlBody').innerHTML = list.map(p => {
+    const url = base + '/jdy/push/' + p.push_token;
+    return '<div class="card" style="margin-bottom:12px">' +
+      '<div class="card-header">' +
+        '<h3>' + esc(p.name) + ' <code class="mini">' + esc(p.code) + '</code></h3>' +
+        (p.jdy_secret
+          ? '<span class="tag tag-ok tag-sm">Secret 已配置</span>'
+          : '<span class="tag tag-warn tag-sm">Secret 未配置</span>') +
+      '</div>' +
+      '<div class="card-body">' +
+        '<div style="font-size:12.5px;font-weight:600;margin-bottom:6px">接收地址（填入第三方的数据推送配置）</div>' +
+        '<div class="url-box">' +
+          '<code>' + esc(url) + '</code>' +
+          '<button class="btn btn-sm" data-copy="' + esc(url) + '">复制</button>' +
+        '</div>' +
+        '<div class="kv" style="margin-top:12px;font-size:12px">' +
+          '<div><span>请求方法</span><code>POST</code></div>' +
+          '<div><span>内容类型</span><code>application/json</code></div>' +
+          '<div><span>签名算法</span><code>sha1("{nonce}:{payload}:{secret}:{timestamp}")</code></div>' +
+          '<div><span>签名请求头</span><code>X-JDY-Signature</code></div>' +
+        '</div>' +
+        '<div class="alert alert-info" style="margin-top:12px;margin-bottom:0;font-size:12px">' +
+          '<b>配置步骤：</b>① 复制上面的接收地址；' +
+          '② 在第三方应用中选择「数据推送 / Webhook / 自定义服务器」；' +
+          '③ 粘贴地址并保存；' +
+          '④ 若第三方支持签名校验，把生成的 Secret 填入项目的「项目设置」中。' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  document.querySelectorAll('#pushUrlBody button[data-copy]').forEach(b =>
+    b.addEventListener('click', () => copyText(b.dataset.copy)));
+
+  openModal('pushUrlModal');
+}
+
+load();
+</script>

@@ -1,0 +1,797 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>邮箱推送</h1>
+    <p class="sub">管理多个邮箱账户 · 接收附件自动建表入库 · 在线查看邮件</p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" id="btn-run">全部拉取</button>
+    <a class="btn btn-primary" href="/mail-push/accounts/new">+ 添加邮箱</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="tabs">
+    <button class="tab active" data-tab="overview" onclick="switchTab('overview')">概览</button>
+    <button class="tab" data-tab="projects" onclick="switchTab('projects')">数据项目</button>
+    <button class="tab" data-tab="logs" onclick="switchTab('logs')">导入日志</button>
+    <button class="tab" data-tab="accounts" onclick="switchTab('accounts')">邮箱账户</button>
+    <button class="tab" data-tab="settings" onclick="switchTab('settings')">设置</button>
+  </div>
+
+  <!-- ══════════ 概览 ══════════ -->
+  <div class="tab-panel" id="panel-overview">
+    <div class="card-body">
+      <div class="stat-row">
+        <div class="stat">
+          <div class="stat-label">自动推送</div>
+          <div class="stat-value small" id="ov-enabled">—</div>
+          <div class="muted small" id="ov-enabled-sub">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">轮询周期</div>
+          <div class="stat-value small" id="ov-interval">—</div>
+          <div class="muted small">分钟 / 次</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">邮箱账户</div>
+          <div class="stat-value small" id="ov-accounts">—</div>
+          <div class="muted small">启用 / 总数</div>
+        </div>
+      </div>
+
+      <div class="stat-row" style="margin-top:18px">
+        <div class="stat">
+          <div class="stat-label">账户数</div>
+          <div class="stat-value" id="ov-s-accounts">-</div>
+          <div class="muted small" id="ov-s-accounts-sub">—</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">项目数</div>
+          <div class="stat-value" id="ov-s-projects">-</div>
+          <div class="muted small">数据项目</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">总行数</div>
+          <div class="stat-value" id="ov-s-rows">-</div>
+          <div class="muted small">累计入库</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">今日导入</div>
+          <div class="stat-value" id="ov-s-today">-</div>
+          <div class="muted small" id="ov-s-today-sub">—</div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin:24px 0 10px;flex-wrap:wrap">
+        <h3 style="margin:0;font-size:15px;font-weight:600">最近导入</h3>
+        <div class="head-actions">
+          <button class="btn btn-sm" id="btn-run-ov">全部拉取</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table table-fixed" id="ov-recent-table">
+          <thead>
+            <tr>
+              <th style="width:150px">时间</th>
+              <th>项目</th>
+              <th>附件名</th>
+              <th style="width:80px">行数</th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="4" class="empty">加载中…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 数据项目 ══════════ -->
+  <div class="tab-panel hidden" id="panel-projects">
+    <div class="toolbar">
+      <span class="muted small" id="proj-count">共 0 个数据项目</span>
+      <span class="muted small">点击卡片进入项目详情</span>
+      <div class="spacer"></div>
+      <button class="btn btn-sm" id="btn-proj-refresh">刷新</button>
+    </div>
+    <div class="card-body">
+      <div id="proj-list" class="mail-proj-list">
+        <div class="empty">加载中…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 导入日志 ══════════ -->
+  <div class="tab-panel hidden" id="panel-logs">
+    <div class="toolbar">
+      <select class="input" id="log-result" style="width:130px">
+        <option value="">全部结果</option>
+        <option value="success">成功</option>
+        <option value="skipped">跳过</option>
+        <option value="failed">失败</option>
+      </select>
+      <select class="input" id="log-project" style="width:190px">
+        <option value="">全部项目</option>
+      </select>
+      <input type="text" class="input" id="log-keyword" placeholder="搜索附件名 / 主题 / 说明" style="width:230px">
+      <button class="btn btn-sm" id="btn-log-search">搜索</button>
+      <button class="btn btn-sm btn-ghost" id="btn-log-reset">重置</button>
+      <div class="spacer"></div>
+      <span class="muted small" id="log-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed" id="log-table">
+        <thead>
+          <tr>
+            <th style="width:150px">时间</th>
+            <th style="width:150px">项目</th>
+            <th>附件名</th>
+            <th style="width:70px">行数</th>
+            <th style="width:70px">列数</th>
+            <th style="width:90px">结果</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══════════ 邮箱账户 ══════════ -->
+  <div class="tab-panel hidden" id="panel-accounts">
+    <div class="toolbar">
+      <span class="muted small">管理收件邮箱，支持多账户与附件自动导入</span>
+      <div class="spacer"></div>
+      <a class="btn btn-sm btn-primary" href="/mail-push/accounts/new">+ 添加邮箱</a>
+    </div>
+    <div class="card-body">
+      <div id="account-list" class="acct-list">
+        <div class="empty">加载中…</div>
+      </div>
+
+      <div class="card" id="msgs-card" style="display:none;margin-top:18px">
+        <div class="card-header">
+          <h3 id="msgs-title">邮件列表</h3>
+          <div class="head-actions">
+            <label class="muted small" style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="msgs-only-att"> 只看带附件
+            </label>
+            <button class="btn btn-sm" id="btn-msgs-refresh">刷新</button>
+            <button class="btn btn-sm" id="btn-msgs-close">关闭</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="table-wrap">
+            <table class="table" id="msgs-table">
+              <thead>
+                <tr>
+                  <th style="width:150px">时间</th>
+                  <th style="width:180px">发件人</th>
+                  <th>主题</th>
+                  <th style="width:90px">附件</th>
+                  <th style="width:80px">大小</th>
+                </tr>
+              </thead>
+              <tbody><tr><td colspan="5" class="empty">加载中…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="pager" id="msgs-pager"></div>
+        </div>
+      </div>
+
+      <div class="card" id="msg-card" style="display:none;margin-top:18px">
+        <div class="card-header">
+          <h3 id="msg-subject">邮件详情</h3>
+          <button class="btn btn-sm" id="btn-msg-close">关闭</button>
+        </div>
+        <div class="card-body">
+          <div class="msg-meta" id="msg-meta"></div>
+          <div class="msg-att" id="msg-att"></div>
+          <div class="msg-body" id="msg-body"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 设置 ══════════ -->
+  <div class="tab-panel hidden" id="panel-settings">
+    <div class="card-body">
+      <div class="form-row">
+        <div class="field">
+          <span>自动推送</span>
+          <label class="switch">
+            <input type="checkbox" id="set-enabled">
+            <span class="track"></span>
+            <span class="label-text" id="set-enabled-text">关闭</span>
+          </label>
+          <div class="hint">开启后按轮询周期自动拉取所有启用账户的邮件</div>
+        </div>
+        <div class="field">
+          <span>轮询周期（分钟）</span>
+          <input type="number" class="input" id="set-interval" min="1" max="1440" value="5">
+          <div class="hint">建议 5–30 分钟，过短会增加邮箱服务器压力</div>
+        </div>
+        <div class="field">
+          <span>首次回溯天数</span>
+          <input type="number" class="input" id="set-days" min="1" max="365" value="7">
+          <div class="hint">首次启用账户时回溯多少天内的历史邮件</div>
+        </div>
+        <div class="field">
+          <span>单次最多邮件数</span>
+          <input type="number" class="input" id="set-max" min="1" max="500" value="50">
+          <div class="hint">每次拉取时单个账户最多处理的邮件数量</div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn" id="btn-set-reset">重新读取</button>
+        <button class="btn btn-primary" id="btn-set-save">保存设置</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+.tab-panel { display: block; }
+.tab-panel.hidden { display: none; }
+.card-body .empty, .acct-list .empty, .mail-proj-list .empty { text-align: center; color: var(--text-muted); padding: 36px 10px; font-size: 13px; }
+.acct-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px; }
+.acct { border:1px solid var(--border); border-radius:10px; padding:14px 16px; background:var(--surface); transition:.15s; }
+.acct:hover { border-color:var(--primary); box-shadow:0 2px 10px rgba(54,135,255,.14); }
+.acct-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+.acct-email { font-weight:600; font-size:14px; word-break:break-all; }
+.acct-name { font-size:12px; color:var(--text-muted); margin-bottom:8px; word-break:break-all; }
+.acct-meta { font-size:12px; color:var(--text-muted); line-height:1.9; word-break:break-all; }
+.acct-meta b { color:var(--text); }
+.acct-actions { display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; }
+.acct-auto { display:flex; align-items:center; gap:6px; margin-top:8px; }
+.mail-proj-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:14px; }
+.mail-proj { display:block; border:1px solid var(--border); border-radius:10px; padding:14px 16px; background:var(--surface); cursor:pointer; transition:.15s; text-decoration:none; color:inherit; }
+.mail-proj:hover { border-color:var(--primary); box-shadow:0 2px 10px rgba(54,135,255,.14); text-decoration:none; color:inherit; }
+.mail-proj h4 { margin:0 0 8px; font-size:15px; font-weight:600; word-break:break-all; color:var(--text); }
+.mail-proj .meta { font-size:12px; color:var(--text-muted); line-height:1.9; word-break:break-all; }
+.mail-proj .meta b { color:var(--text); font-weight:600; }
+.msg-meta { font-size:13px; color:var(--text-muted); line-height:2; margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border); }
+.msg-meta b { color:var(--text); }
+.msg-att { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+.msg-att .att { font-size:12px; padding:4px 10px; border-radius:6px; background:rgba(54,135,255,.10); border:1px solid rgba(54,135,255,.25); color:var(--primary); }
+.msg-att .att.excel { background:rgba(162,215,60,.12); border-color:rgba(162,215,60,.35); color:#000000; font-weight:600; }
+.msg-body { font-size:13.5px; line-height:1.8; white-space:pre-wrap; word-break:break-word; max-height:420px; overflow:auto; }
+</style>
+
+<script>
+(function () {
+  // 本页脚本内联在 body 中，早于 layout 末尾的 app.js 执行，
+  // 必须等 DOMContentLoaded（此时 app.js 已加载）再初始化。
+  function boot() {
+  var TABS = ['overview', 'projects', 'logs', 'accounts', 'settings'];
+
+  function esc(v) {
+    if (v === null || v === undefined) return '';
+    return String(v).replace(/[&<>"']/g, function (c) {
+      return { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c];
+    });
+  }
+  function fmt(v) {
+    if (!v) return '—';
+    var d = new Date(String(v).replace(' ', 'T'));
+    if (isNaN(d.getTime())) return String(v);
+    var p = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + ' ' +
+           p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  function sizeFmt(n) {
+    n = Number(n) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+    return (n/1024/1024).toFixed(1) + ' MB';
+  }
+  function $(id) { return document.getElementById(id); }
+  function setText(id, txt) { var el = $(id); if (el) el.textContent = txt; }
+
+  var state = {
+    accounts: [], projects: [], settings: null,
+    msgAccountId: null, msgOffset: 0, msgLimit: 30
+  };
+
+  /* ══════════ 标签页 ══════════ */
+  function tabFromHash() {
+    var h = String(location.hash || '').replace('#', '');
+    return TABS.indexOf(h) >= 0 ? h : '';
+  }
+
+  function switchTab(key, skipHash) {
+    if (TABS.indexOf(key) < 0) key = 'overview';
+    var i, el;
+    var tabs = document.querySelectorAll('.tab');
+    for (i = 0; i < tabs.length; i++) {
+      if (tabs[i].getAttribute('data-tab') === key) tabs[i].classList.add('active');
+      else tabs[i].classList.remove('active');
+    }
+    for (i = 0; i < TABS.length; i++) {
+      el = $('panel-' + TABS[i]);
+      if (!el) continue;
+      if (TABS[i] === key) el.classList.remove('hidden');
+      else el.classList.add('hidden');
+    }
+    if (!skipHash) {
+      try { history.replaceState(null, '', '#' + key); } catch (e) { location.hash = key; }
+    }
+    if (key === 'overview') loadOverview();
+    else if (key === 'projects') loadProjects();
+    else if (key === 'logs') loadLogs();
+    else if (key === 'accounts') loadAccounts();
+    else if (key === 'settings') loadSettings();
+  }
+  window.switchTab = switchTab;
+
+  /* ══════════ 概览 ══════════ */
+  function loadOverview() {
+    Promise.all([
+      api('/api/mail-push/overview'),
+      api('/api/mail-push/status')
+    ]).then(function (rs) {
+      var ov = rs[0] || { ok: false };
+      var st = rs[1] || { ok: false };
+      var d = ov.ok ? (ov.data || {}) : {};
+      var s = st.ok ? (st.data || {}) : {};
+
+      var accounts = d.accounts || {};
+      var projects = d.projects || {};
+      var logs = d.logs || {};
+
+      // 状态卡
+      if (st.ok) {
+        setText('ov-enabled', s.enabled ? '已启用' : '未启用');
+        setText('ov-enabled-sub', s.running ? '正在运行' : (s.scheduled ? '已排程' : '空闲'));
+        setText('ov-interval', s.interval ? ('每 ' + s.interval + ' 分钟') : '—');
+        setText('ov-accounts', (s.enabledCount || 0) + ' / ' + (s.accountCount || 0));
+      } else {
+        setText('ov-enabled', '—');
+        setText('ov-enabled-sub', '状态读取失败');
+        setText('ov-interval', '—');
+        setText('ov-accounts', '—');
+      }
+
+      // 统计卡
+      if (ov.ok) {
+        setText('ov-s-accounts', String(accounts.total === undefined ? '-' : accounts.total));
+        setText('ov-s-accounts-sub', '启用 ' + (accounts.enabled === undefined ? '-' : accounts.enabled));
+        setText('ov-s-projects', String(projects.total === undefined ? '-' : projects.total));
+        setText('ov-s-rows', String(projects.rows === undefined ? '-' : projects.rows));
+        setText('ov-s-today', String(logs.today === undefined ? '-' : logs.today));
+        setText('ov-s-today-sub', '成功 ' + (logs.success || 0) + ' / 跳过 ' + (logs.skipped || 0) + ' / 失败 ' + (logs.failed || 0));
+        renderRecent(d.recentImports || []);
+      } else {
+        setText('ov-s-accounts', '-');
+        setText('ov-s-accounts-sub', '—');
+        setText('ov-s-projects', '-');
+        setText('ov-s-rows', '-');
+        setText('ov-s-today', '-');
+        setText('ov-s-today-sub', '—');
+        var tb = document.querySelector('#ov-recent-table tbody');
+        if (tb) tb.innerHTML = '<tr><td colspan="4" class="empty">' + esc(ov.message || '概览数据读取失败') + '</td></tr>';
+      }
+    });
+  }
+
+  function renderRecent(list) {
+    var tb = document.querySelector('#ov-recent-table tbody');
+    if (!tb) return;
+    if (!list.length) {
+      tb.innerHTML = '<tr><td colspan="4" class="empty">暂无导入记录</td></tr>';
+      return;
+    }
+    tb.innerHTML = list.map(function (x) {
+      return '<tr>' +
+        '<td>' + fmt(x.created_at) + '</td>' +
+        '<td class="ellipsis" title="' + esc(x.project_name) + '">' + esc(x.project_name || '—') + '</td>' +
+        '<td class="ellipsis" title="' + esc(x.filename) + '">' + esc(x.filename || '—') + '</td>' +
+        '<td>' + (x.rows_total || 0) + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  /* ══════════ 数据项目 ══════════ */
+  function loadProjects() {
+    var box = $('proj-list');
+    if (!box) return;
+    api('/api/mail-push/projects').then(function (r) {
+      if (!r.ok) { box.innerHTML = '<div class="empty">' + esc(r.message) + '</div>'; return; }
+      var list = r.data || [];
+      state.projects = list;
+      setText('proj-count', '共 ' + list.length + ' 个数据项目');
+      fillProjectFilter(list);
+      if (!list.length) {
+        box.innerHTML = '<div class="empty">还没有数据项目。收到带 Excel 附件的邮件后会自动创建。</div>';
+        return;
+      }
+      box.innerHTML = list.map(function (p) {
+        return '<a class="mail-proj" href="/mail-push/projects/' + p.id + '">' +
+          '<h4>' + esc(p.name) + '</h4>' +
+          '<div class="meta">' +
+            '数据表：<b>' + esc(p.data_table) + '</b><br>' +
+            '累计行数：<b>' + (p.row_count || 0) + '</b><br>' +
+            '最近导入：<b>' + fmt(p.last_import_at) + '</b><br>' +
+            '最近文件：' + esc(p.last_file || '—') +
+          '</div></a>';
+      }).join('');
+    }).catch(function (e) {
+      box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>';
+    });
+  }
+
+  /* ══════════ 导入日志 ══════════ */
+  function fillProjectFilter(list) {
+    var sel = $('log-project');
+    if (!sel) return;
+    var cur = sel.value;
+    var opts = '<option value="">全部项目</option>' + list.map(function (p) {
+      return '<option value="' + p.id + '">' + esc(p.name) + '</option>';
+    }).join('');
+    sel.innerHTML = opts;
+    if (cur) sel.value = cur;
+  }
+
+  function loadLogs() {
+    var tb = document.querySelector('#log-table tbody');
+    if (!tb) return;
+    var result = ($('log-result') || {}).value || '';
+    var projectId = ($('log-project') || {}).value || '';
+    var keyword = (($('log-keyword') || {}).value || '').trim();
+    var q = '?limit=100' +
+      '&result=' + encodeURIComponent(result) +
+      '&projectId=' + encodeURIComponent(projectId) +
+      '&keyword=' + encodeURIComponent(keyword);
+    tb.innerHTML = '<tr><td colspan="7" class="empty">加载中…</td></tr>';
+    var jobs = [api('/api/mail-push/logs' + q)];
+    if (!state.projects.length) jobs.push(api('/api/mail-push/projects'));
+    Promise.all(jobs).then(function (rs) {
+      var r = rs[0];
+      if (rs[1] && rs[1].ok) { state.projects = rs[1].data || []; fillProjectFilter(state.projects); }
+      if (!r.ok) { tb.innerHTML = '<tr><td colspan="7" class="empty">' + esc(r.message) + '</td></tr>'; return; }
+      var rows = r.data || [];
+      setText('log-count', '共 ' + rows.length + ' 条');
+      if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="empty">没有符合条件的导入记录</td></tr>'; return; }
+      tb.innerHTML = rows.map(function (x) {
+        var cls = x.result === 'success' ? 'tag tag-ok tag-sm'
+                : (x.result === 'skipped' ? 'tag tag-warn tag-sm' : 'tag tag-err tag-sm');
+        var label = x.result === 'success' ? '成功'
+                  : (x.result === 'skipped' ? '跳过' : (x.result === 'failed' ? '失败' : (x.result || '—')));
+        return '<tr>' +
+          '<td>' + fmt(x.created_at) + '</td>' +
+          '<td class="ellipsis" title="' + esc(x.project_name) + '">' + esc(x.project_name || '—') + '</td>' +
+          '<td class="ellipsis" title="' + esc(x.filename) + '">' + esc(x.filename || '—') + '</td>' +
+          '<td>' + (x.rows_total || 0) + '</td>' +
+          '<td>' + (x.columns_total || 0) + '</td>' +
+          '<td><span class="' + cls + '">' + esc(label) + '</span></td>' +
+          '<td class="muted small ellipsis" title="' + esc(x.message) + '">' + esc(x.message || '') + '</td>' +
+        '</tr>';
+      }).join('');
+    }).catch(function (e) {
+      tb.innerHTML = '<tr><td colspan="7" class="empty">' + esc(e.message) + '</td></tr>';
+    });
+  }
+
+  /* ══════════ 邮箱账户 ══════════ */
+  function loadAccounts() {
+    var box = $('account-list');
+    if (!box) return;
+    api('/api/mail-push/accounts').then(function (r) {
+      if (!r.ok) { box.innerHTML = '<div class="empty">' + esc(r.message) + '</div>'; return; }
+      state.accounts = r.data || [];
+      if (!state.accounts.length) {
+        box.innerHTML = '<div class="empty">还没有邮箱账户，点击右上角「+ 添加邮箱」开始配置。</div>';
+        return;
+      }
+      box.innerHTML = state.accounts.map(function (a) {
+        var on = Number(a.enabled) === 1;
+        var autoOn = Number(a.auto_import) === 1;
+        var statusTag = a.last_status === 'ok' ? '<span class="tag tag-ok tag-sm">正常</span>'
+                      : a.last_status === 'fail' ? '<span class="tag tag-err tag-sm">异常</span>'
+                      : '<span class="tag tag-off tag-sm">未检测</span>';
+        var errLine = a.last_error
+          ? '<div style="color:var(--danger);margin-top:6px;font-size:12px;word-break:break-all">' + esc(a.last_error) + '</div>' : '';
+        return '<div class="acct" data-id="' + a.id + '">' +
+          '<div class="acct-head">' +
+            '<span class="acct-email">' + esc(a.email) + '</span>' +
+            (on ? '<span class="tag tag-ok tag-sm">已启用</span>' : '<span class="tag tag-off tag-sm">已停用</span>') +
+          '</div>' +
+          (a.name && a.name !== a.email ? '<div class="acct-name">' + esc(a.name) + '</div>' : '') +
+          '<div class="acct-meta">' +
+            '服务器：<b>' + esc(a.imap_host) + ':' + esc(a.imap_port) + '</b><br>' +
+            '文件夹：<b>' + esc(a.mailbox) + '</b><br>' +
+            '最近检查：<b>' + fmt(a.last_check_at) + '</b>　' + statusTag +
+          '</div>' + errLine +
+          '<div class="acct-auto">' +
+            '<label class="switch switch-sm">' +
+              '<input type="checkbox" data-act="auto" data-id="' + a.id + '"' + (autoOn ? ' checked' : '') + '>' +
+              '<span class="track"></span>' +
+              '<span class="label-text">自动导入</span>' +
+            '</label>' +
+          '</div>' +
+          '<div class="acct-actions">' +
+            '<button class="btn btn-sm" data-act="messages" data-id="' + a.id + '">查看邮件</button>' +
+            '<a class="btn btn-sm" href="/mail-push/accounts/' + a.id + '/edit">编辑</a>' +
+            '<button class="btn btn-sm" data-act="toggle" data-id="' + a.id + '" data-on="' + (on?1:0) + '">' + (on?'停用':'启用') + '</button>' +
+            '<button class="btn btn-sm btn-danger" data-act="delete" data-id="' + a.id + '">删除</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }).catch(function (e) { box.innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+  }
+
+  function bindAccountEvents() {
+    var box = $('account-list');
+    if (!box) return;
+    box.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('button[data-act]');
+      if (!btn) return;
+      var act = btn.getAttribute('data-act');
+      var id = Number(btn.getAttribute('data-id'));
+      if (act === 'messages') openMessages(id);
+      else if (act === 'toggle') toggleAccount(id, Number(btn.getAttribute('data-on')) ? 0 : 1);
+      else if (act === 'delete') deleteAccount(id);
+    });
+    box.addEventListener('change', function (ev) {
+      var cb = ev.target;
+      if (!cb || cb.getAttribute('data-act') !== 'auto') return;
+      var id = Number(cb.getAttribute('data-id'));
+      var val = cb.checked ? 1 : 0;
+      api('/api/mail-push/accounts/' + id, { method: 'PUT', body: { auto_import: val } })
+        .then(function (r) {
+          toast(r.message || (r.ok ? '已更新' : '更新失败'), r.ok ? 'success' : 'error');
+          if (!r.ok) cb.checked = !cb.checked;
+        }).catch(function (e) { toast(e.message, 'error'); cb.checked = !cb.checked; });
+    });
+  }
+
+  function toggleAccount(id, enabled) {
+    api('/api/mail-push/accounts/' + id + '/toggle', { method: 'POST', body: { enabled: enabled } })
+      .then(function (r) {
+        toast(r.message || '已更新', r.ok ? 'success' : 'error');
+        loadAccounts(); loadOverview();
+      }).catch(function (e) { toast(e.message, 'error'); });
+  }
+
+  function deleteAccount(id) {
+    var a = state.accounts.find(function (x) { return x.id === id; });
+    if (!confirm('确定删除邮箱账户「' + (a ? a.email : id) + '」？已导入的数据不会受影响。')) return;
+    api('/api/mail-push/accounts/' + id, { method: 'DELETE' }).then(function (r) {
+      toast(r.message || '已删除', r.ok ? 'success' : 'error');
+      loadAccounts(); loadOverview();
+      if (state.msgAccountId === id) {
+        $('msgs-card').style.display = 'none';
+        $('msg-card').style.display = 'none';
+        state.msgAccountId = null;
+      }
+    }).catch(function (e) { toast(e.message, 'error'); });
+  }
+
+  /* ══════════ 邮件（页内展开） ══════════ */
+  function openMessages(accountId) {
+    state.msgAccountId = accountId;
+    state.msgOffset = 0;
+    var a = state.accounts.find(function (x) { return x.id === accountId; });
+    setText('msgs-title', '邮件列表 · ' + (a ? a.email : ''));
+    $('msgs-card').style.display = '';
+    $('msg-card').style.display = 'none';
+    loadMessages();
+    $('msgs-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function loadMessages() {
+    if (!state.msgAccountId) return;
+    var tb = document.querySelector('#msgs-table tbody');
+    if (!tb) return;
+    tb.innerHTML = '<tr><td colspan="5" class="empty">加载中…</td></tr>';
+    var onlyAtt = $('msgs-only-att').checked ? '&onlyAttachments=1' : '';
+    api('/api/mail-push/accounts/' + state.msgAccountId + '/messages?limit=' + state.msgLimit +
+        '&offset=' + state.msgOffset + onlyAtt)
+      .then(function (r) {
+        if (!r.ok) { tb.innerHTML = '<tr><td colspan="5" class="empty">' + esc(r.message) + '</td></tr>'; return; }
+        var d = r.data || {};
+        var list = d.messages || [];
+        if (!list.length) {
+          tb.innerHTML = '<tr><td colspan="5" class="empty">没有邮件</td></tr>';
+        } else {
+          tb.innerHTML = list.map(function (m) {
+            var attTag = m.hasExcel
+              ? '<span class="tag tag-ok tag-sm">Excel</span>'
+              : (m.hasAttachment ? '<span class="tag tag-warn tag-sm">附件</span>' : '<span class="muted small">—</span>');
+            return '<tr class="msg-row" data-uid="' + m.uid + '" style="cursor:pointer">' +
+              '<td>' + fmt(m.date) + '</td>' +
+              '<td class="ellipsis" title="' + esc(m.from) + '">' + esc(m.from || '—') + '</td>' +
+              '<td class="ellipsis" title="' + esc(m.subject) + '">' +
+                (m.seen ? '' : '<span class="tag tag-primary tag-sm" style="margin-right:6px">新</span>') +
+                esc(m.subject) + '</td>' +
+              '<td>' + attTag + '</td>' +
+              '<td class="muted small">' + sizeFmt(m.size) + '</td>' +
+            '</tr>';
+          }).join('');
+        }
+        var total = Number(d.total || 0);
+        var from = total ? state.msgOffset + 1 : 0;
+        var to = Math.min(state.msgOffset + list.length, total);
+        var hasPrev = state.msgOffset > 0;
+        var hasNext = to < total;
+        $('msgs-pager').innerHTML =
+          '<button class="btn btn-sm" id="msg-prev"' + (hasPrev?'':' disabled') + '>较新</button>' +
+          '<span class="muted small">' + from + '–' + to + ' / 共 ' + total + ' 封</span>' +
+          '<button class="btn btn-sm" id="msg-next"' + (hasNext?'':' disabled') + '>更早</button>';
+        var pv = $('msg-prev'), nx = $('msg-next');
+        if (pv) pv.addEventListener('click', function () { state.msgOffset = Math.max(0, state.msgOffset - state.msgLimit); loadMessages(); });
+        if (nx) nx.addEventListener('click', function () { state.msgOffset += state.msgLimit; loadMessages(); });
+      }).catch(function (e) {
+        tb.innerHTML = '<tr><td colspan="5" class="empty">' + esc(e.message) + '</td></tr>';
+      });
+  }
+
+  function openMessage(uid) {
+    var card = $('msg-card');
+    card.style.display = '';
+    setText('msg-subject', '加载中…');
+    $('msg-meta').innerHTML = '';
+    $('msg-att').innerHTML = '';
+    $('msg-body').textContent = '';
+    api('/api/mail-push/accounts/' + state.msgAccountId + '/messages/' + uid)
+      .then(function (r) {
+        if (!r.ok) { setText('msg-subject', r.message || '读取失败'); return; }
+        var d = r.data || {};
+        setText('msg-subject', d.subject || '(无主题)');
+        $('msg-meta').innerHTML =
+          '<div>发件人：<b>' + esc(d.from) + '</b></div>' +
+          '<div>收件人：' + esc(d.to) + '</div>' +
+          (d.cc ? '<div>抄送：' + esc(d.cc) + '</div>' : '') +
+          '<div>时间：' + fmt(d.date) + '</div>';
+        var atts = d.attachments || [];
+        $('msg-att').innerHTML = atts.length
+          ? atts.map(function (a) {
+              return '<span class="att' + (a.isExcel ? ' excel' : '') + '">' +
+                (a.isExcel ? 'Excel ' : '') + esc(a.filename) + ' (' + sizeFmt(a.size) + ')</span>';
+            }).join('')
+          : '<span class="muted small">无附件</span>';
+        var body = d.text || (d.html ? String(d.html).replace(/<[^>]+>/g, '') : '');
+        $('msg-body').textContent = body || '（无正文内容）';
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }).catch(function (e) {
+        setText('msg-subject', e.message);
+      });
+  }
+
+  /* ══════════ 设置 ══════════ */
+  function loadSettings() {
+    api('/api/mail-push/settings').then(function (r) {
+      if (!r.ok) { toast(r.message || '设置读取失败', 'error'); return; }
+      var d = r.data || {};
+      var on = d.enabled === true || Number(d.enabled) === 1 || String(d.enabled) === 'true';
+      $('set-enabled').checked = on;
+      setText('set-enabled-text', on ? '已开启' : '已关闭');
+      $('set-interval').value = Number(d.interval) || 5;
+      $('set-days').value = Number(d.initial_days) || 7;
+      $('set-max').value = Number(d.max_per_run) || 50;
+      // 保留 require_signature 原值，保存时原样回传，避免被重置
+      state.settings = { require_signature: d.require_signature };
+    }).catch(function (e) { toast(e.message, 'error'); });
+  }
+
+  function saveSettings() {
+    var b = $('btn-set-save');
+    var payload = {
+      enabled: $('set-enabled').checked ? 1 : 0,
+      interval: Number($('set-interval').value) || 5,
+      initial_days: Number($('set-days').value) || 7,
+      max_per_run: Number($('set-max').value) || 50
+    };
+    if (state.settings && state.settings.require_signature !== undefined) {
+      payload.require_signature = state.settings.require_signature;
+    }
+    b.disabled = true; b.textContent = '保存中…';
+    api('/api/mail-push/settings', { method: 'PUT', body: payload }).then(function (r) {
+      toast(r.message || (r.ok ? '设置已保存' : '保存失败'), r.ok ? 'success' : 'error');
+      if (r.ok) loadOverview();
+    }).catch(function (e) { toast(e.message, 'error'); })
+      .then(function () { b.disabled = false; b.textContent = '保存设置'; });
+  }
+
+  /* ══════════ 绑定 ══════════ */
+  function runAll() {
+    toast('正在拉取…', 'info');
+    api('/api/mail-push/run', { method: 'POST', body: {} }).then(function (r) {
+      toast(r.message || '完成', r.ok ? 'success' : 'error');
+      loadOverview(); loadProjects(); loadLogs(); loadAccounts();
+    }).catch(function (e) { toast(e.message, 'error'); });
+  }
+
+  var btnRun = $('btn-run');
+  if (btnRun) btnRun.addEventListener('click', function () {
+    var b = this;
+    b.disabled = true; b.textContent = '拉取中…';
+    api('/api/mail-push/run', { method: 'POST', body: {} }).then(function (r) {
+      toast(r.message || '完成', r.ok ? 'success' : 'error');
+      loadOverview(); loadProjects(); loadLogs(); loadAccounts();
+    }).catch(function (e) { toast(e.message, 'error'); })
+      .then(function () { b.disabled = false; b.textContent = '全部拉取'; });
+  });
+
+  var btnRunOv = $('btn-run-ov');
+  if (btnRunOv) btnRunOv.addEventListener('click', runAll);
+
+  var btnProjRefresh = $('btn-proj-refresh');
+  if (btnProjRefresh) btnProjRefresh.addEventListener('click', loadProjects);
+
+  var btnLogSearch = $('btn-log-search');
+  if (btnLogSearch) btnLogSearch.addEventListener('click', loadLogs);
+
+  var btnLogReset = $('btn-log-reset');
+  if (btnLogReset) btnLogReset.addEventListener('click', function () {
+    $('log-result').value = '';
+    $('log-project').value = '';
+    $('log-keyword').value = '';
+    loadLogs();
+  });
+
+  var logResult = $('log-result');
+  if (logResult) logResult.addEventListener('change', loadLogs);
+  var logProject = $('log-project');
+  if (logProject) logProject.addEventListener('change', loadLogs);
+  var logKeyword = $('log-keyword');
+  if (logKeyword) logKeyword.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') loadLogs();
+  });
+
+  var setEnabled = $('set-enabled');
+  if (setEnabled) setEnabled.addEventListener('change', function () {
+    setText('set-enabled-text', this.checked ? '已开启' : '已关闭');
+  });
+  var btnSetSave = $('btn-set-save');
+  if (btnSetSave) btnSetSave.addEventListener('click', saveSettings);
+  var btnSetReset = $('btn-set-reset');
+  if (btnSetReset) btnSetReset.addEventListener('click', loadSettings);
+
+  bindAccountEvents();
+
+  var msgsTbody = document.querySelector('#msgs-table tbody');
+  if (msgsTbody) msgsTbody.addEventListener('click', function (ev) {
+    var tr = ev.target.closest('tr.msg-row');
+    if (!tr) return;
+    openMessage(Number(tr.getAttribute('data-uid')));
+  });
+
+  var btnMsgsRefresh = $('btn-msgs-refresh');
+  if (btnMsgsRefresh) btnMsgsRefresh.addEventListener('click', function () { state.msgOffset = 0; loadMessages(); });
+  var msgsOnlyAtt = $('msgs-only-att');
+  if (msgsOnlyAtt) msgsOnlyAtt.addEventListener('change', function () { state.msgOffset = 0; loadMessages(); });
+  var btnMsgsClose = $('btn-msgs-close');
+  if (btnMsgsClose) btnMsgsClose.addEventListener('click', function () {
+    $('msgs-card').style.display = 'none';
+    $('msg-card').style.display = 'none';
+    state.msgAccountId = null;
+  });
+  var btnMsgClose = $('btn-msg-close');
+  if (btnMsgClose) btnMsgClose.addEventListener('click', function () {
+    $('msg-card').style.display = 'none';
+  });
+
+  /* ══════════ 启动 ══════════ */
+  var initTab = tabFromHash() || 'overview';
+  switchTab(initTab);
+
+  window.addEventListener('hashchange', function () {
+    var h = tabFromHash();
+    if (h) switchTab(h, true);
+  });
+
+  setInterval(function () {
+    if (!document.getElementById('panel-overview').classList.contains('hidden')) loadOverview();
+  }, 30000);
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', boot);
+  } else {
+    boot();
+  }
+})();
+</script>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>

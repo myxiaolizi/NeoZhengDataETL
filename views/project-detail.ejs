@@ -1,0 +1,1712 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>${esc(project.name)}</h1>
+    <p class="sub">
+      <code>${esc(project.code)}</code>
+      <span class="tag ${project.status ? 'tag-ok' : 'tag-off'}">${project.status ? '启用' : '停用'}</span>
+      ${project.jdy_secret ? '<span class="tag tag-ok">Secret 已配置</span>' : '<span class="tag tag-warn">Secret 未配置</span>'}
+      ${Number(project.parse_enabled) ? '<span class="tag tag-primary">字段解析开启</span>' : '<span class="tag tag-off">字段解析关闭</span>'}
+    </p>
+  </div>
+  <div class="head-actions">
+    ${can('project:write') ? '<button class="btn" onclick="simulate()">模拟推送</button>' : ''}
+    <a class="btn" href="/api/projects/${project.id}/export">导出 CSV</a>
+    <a class="btn btn-ghost" href="/projects">返回列表</a>
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-label">数据总条数</div><div class="stat-value" id="s_total">-</div></div>
+  <div class="stat"><div class="stat-label">今日新增</div><div class="stat-value" id="s_today">-</div></div>
+  <div class="stat"><div class="stat-label">字段定义</div><div class="stat-value" id="s_fields">-</div></div>
+  <div class="stat"><div class="stat-label">数据列数</div><div class="stat-value" id="s_cols">-</div></div>
+  <div class="stat"><div class="stat-label">接收日志</div><div class="stat-value" id="s_logs">-</div></div>
+  <div class="stat"><div class="stat-label">失败日志</div><div class="stat-value" id="s_fail">-</div></div>
+</div>
+
+<div class="card">
+  <div class="tabs">
+    <button class="tab active" data-tab="home" onclick="switchTab('home')">项目首页</button>
+    <button class="tab" data-tab="records" onclick="switchTab('records')">原始数据</button>
+    <button class="tab" data-tab="parsed" onclick="switchTab('parsed')">解析后数据</button>
+    <button class="tab" data-tab="logs" onclick="switchTab('logs')">接收日志</button>
+    <button class="tab" data-tab="fields" onclick="switchTab('fields')">字段结构</button>
+    <button class="tab" data-tab="sub" onclick="switchTab('sub')">子表数据</button>
+    <button class="tab" data-tab="settings" onclick="switchTab('settings')">字段设置</button>
+  </div>
+
+  <!-- ══════════ 项目首页 ══════════ -->
+  <div class="tab-panel" id="panel-home">
+    <div class="toolbar" style="border-top:none">
+      <span class="muted small">项目配置、推送地址与数据表信息</span>
+      <div class="spacer"></div>
+      <span class="tag tag-off" id="homeMode">只读</span>
+      ${can('project:write') ? '<button class="btn btn-primary btn-sm" id="homeEditBtn" onclick="toggleHomeEdit()">修改</button>' : ''}
+    </div>
+
+    <div class="card-body" style="padding-top:4px">
+      <!-- 推送地址 -->
+      <div class="home-section">
+        <div class="home-section-title">
+          <span class="hs-ico">⇣</span> 推送地址
+          <span class="muted small">把该地址填入简道云等第三方应用的「数据推送 / Webhook」配置中</span>
+        </div>
+        <div class="url-box">
+          <code id="pushUrlText">-</code>
+          <button class="btn btn-sm" onclick="copyPushUrl()">复制</button>
+          <button class="btn btn-sm" onclick="openPushInfo()">配置说明</button>
+        </div>
+        <div class="kv" style="margin-top:12px">
+          <div><span>请求方法</span><code>POST</code></div>
+          <div><span>内容类型</span><code>application/json</code></div>
+          <div><span>签名算法</span><code>sha1("{nonce}:{payload}:{secret}:{timestamp}")</code></div>
+          <div><span>签名请求头</span><code>X-JDY-Signature</code></div>
+        </div>
+      </div>
+
+      <!-- 数据表信息 -->
+      <div class="home-section">
+        <div class="home-section-title">
+          <span class="hs-ico">⛁</span> 数据表信息
+          <span class="muted small">每个项目独立一套数据表，解析前后分离存储</span>
+        </div>
+        <div class="kv">
+          <div><span>存储数据源</span>
+            <b>${esc(project.datasource_name || '本机数据库')}</b>
+            <span class="tag tag-primary tag-sm">${esc(project.datasource_type || 'mysql')}</span>
+          </div>
+          <div><span>原始数据表</span><code>${esc(project.data_table || '-')}</code>
+            <button class="btn btn-sm" data-copy="${esc(project.data_table || '')}">复制</button></div>
+          <div><span>解析数据表</span><code>${esc(project.parsed_table || '-')}</code>
+            <button class="btn btn-sm" data-copy="${esc(project.parsed_table || '')}">复制</button></div>
+          <div><span>接收日志表</span><code>${esc(project.log_table || '-')}</code></div>
+        </div>
+      </div>
+
+      <!-- 项目设置 -->
+      <div class="home-section">
+        <div class="home-section-title">
+          <span class="hs-ico">⚙</span> 项目设置
+          <span class="muted small">点击右上角「修改」后可编辑</span>
+        </div>
+        <div id="homeView">
+          <div class="kv">
+            <div><span>项目名称</span><b>${esc(project.name)}</b></div>
+            <div><span>项目编码</span><code>${esc(project.code)}</code></div>
+            <div><span>项目分类</span>${project.category ? esc(project.category) : '<span class="muted">未设置</span>'}</div>
+            <div><span>Secret</span>${project.jdy_secret ? '<span class="tag tag-ok tag-sm">已配置</span>' : '<span class="tag tag-warn tag-sm">未配置</span>'}</div>
+            <div><span>字段解析</span>${Number(project.parse_enabled) ? '<span class="tag tag-ok tag-sm">开启</span>' : '<span class="tag tag-off tag-sm">关闭</span>'}</div>
+            <div><span>项目状态</span>${project.status ? '<span class="tag tag-ok tag-sm">启用</span>' : '<span class="tag tag-off tag-sm">停用</span>'}</div>
+            <div><span>项目说明</span>${project.description ? esc(project.description) : '<span class="muted">暂无</span>'}</div>
+            <div><span>备注</span>${project.remark ? esc(project.remark) : '<span class="muted">暂无</span>'}</div>
+            <div><span>创建时间</span>${fmtTime(project.created_at)}</div>
+            <div><span>最近推送</span>${fmtTime(project.last_push_at)}</div>
+          </div>
+        </div>
+
+        <div id="homeEdit" class="hidden">
+          <div class="form-row">
+            <label class="field">
+              <span>项目名称 <i class="req">*</i></span>
+              <input class="input" id="h_name" value="${esc(project.name)}">
+            </label>
+            <label class="field">
+              <span>项目分类</span>
+              <input class="input" id="h_category" value="${esc(project.category || '')}" placeholder="例如：客户管理">
+            </label>
+          </div>
+          <div class="form-row">
+            <label class="field">
+              <span>Secret</span>
+              <input class="input" id="h_secret" value="${esc(project.jdy_secret || '')}" placeholder="简道云生成的 Secret">
+              <small class="hint">用于校验推送签名，留空表示不校验</small>
+            </label>
+            <label class="field">
+              <span>存储数据源</span>
+              <select class="input" id="h_datasource"><option value="0">本机数据库</option></select>
+              <small class="hint">项目已有数据时无法切换数据源</small>
+            </label>
+          </div>
+          <div class="form-row">
+            <label class="field">
+              <span>字段解析</span>
+              <label class="switch">
+                <input type="checkbox" id="h_parse" ${Number(project.parse_enabled) ? 'checked' : ''}>
+                <span class="track"></span>
+                <span class="label-text">开启后 JSON 字段自动解析为可读值</span>
+              </label>
+            </label>
+            <label class="field">
+              <span>项目状态</span>
+              <label class="switch">
+                <input type="checkbox" id="h_status" ${project.status ? 'checked' : ''}>
+                <span class="track"></span>
+                <span class="label-text">启用该项目</span>
+              </label>
+            </label>
+          </div>
+          <label class="field">
+            <span>项目说明</span>
+            <textarea class="input" id="h_desc" rows="2">${esc(project.description || '')}</textarea>
+          </label>
+          <label class="field">
+            <span>备注</span>
+            <textarea class="input" id="h_remark" rows="2">${esc(project.remark || '')}</textarea>
+          </label>
+          <div class="form-actions">
+            <button class="btn btn-primary" onclick="saveHome()">保存修改</button>
+            <button class="btn btn-ghost" onclick="toggleHomeEdit(false)">取消</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-panel hidden" id="panel-records">
+    <div class="toolbar">
+      <select class="input" id="r_field" style="width:200px" onchange="loadRecords(1)">
+        <option value="">全部字段</option>
+      </select>
+      <input class="input" id="r_kw" placeholder="搜索内容" style="width:240px">
+      <select class="input" id="r_op" style="width:150px">
+        <option value="">全部事件</option>
+        <option value="data_create">数据提交</option>
+        <option value="data_update">数据修改</option>
+        <option value="data_recover">数据恢复</option>
+        <option value="task_update">流程待办变更</option>
+        <option value="flow_state_change">流程状态变更</option>
+        <option value="flow_instance_create">流程发起</option>
+        <option value="flow_instance_finish">流程完成</option>
+        <option value="cc_create">产生抄送</option>
+      </select>
+      <button class="btn btn-primary" onclick="loadRecords(1)">查询</button>
+      <button class="btn" onclick="resetRecordFilter()">重置</button>
+      <button class="btn" onclick="toggleColMenu('records')">列设置</button>
+      <div class="spacer"></div>
+      <span class="muted small" id="r_count"></span>
+      <div class="col-menu hidden" id="r_colMenu"></div>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed" id="recordTable">
+        <thead id="recordHead"></thead>
+        <tbody id="recordBody"><tr><td class="empty">加载中...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager" id="recordPager"></div>
+  </div>
+
+  <div class="tab-panel hidden" id="panel-parsed">
+    <div class="toolbar">
+      <span class="muted small">
+        解析后数据表 <code>${esc(project.parsed_table || '-')}</code> —— 存放加工后的可读值
+      </span>
+      <div class="spacer"></div>
+      <select class="input" id="p_field" style="width:200px" onchange="loadParsed(1)">
+        <option value="">全部字段</option>
+      </select>
+      <input class="input" id="p_kw" placeholder="搜索内容" style="width:220px">
+      <button class="btn btn-primary" onclick="loadParsed(1)">查询</button>
+      <button class="btn" onclick="resetParsedFilter()">重置</button>
+      <button class="btn" onclick="toggleColMenu('parsed')">列设置</button>
+      <div class="spacer"></div>
+      <span class="muted small" id="p_count"></span>
+      <div class="col-menu hidden" id="p_colMenu"></div>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed">
+        <thead id="parsedHead"></thead>
+        <tbody id="parsedBody"><tr><td class="empty">加载中...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager" id="parsedPager"></div>
+  </div>
+
+  <div class="tab-panel hidden" id="panel-logs">
+    <div class="toolbar">
+      <input class="input" id="l_kw" placeholder="搜索数据ID / 表单名称 / 消息" style="width:260px">
+      <select class="input" id="l_op" style="width:180px"><option value="">全部事件</option></select>
+      <select class="input" id="l_result" style="width:160px">
+        <option value="">全部结果</option>
+        <option value="success">成功</option>
+        <option value="error">失败</option>
+        <option value="signature_failed">签名校验失败</option>
+      </select>
+      <button class="btn btn-primary" onclick="loadLogs(1)">查询</button>
+      <div class="spacer"></div>
+      ${can('log:clear') ? '<button class="btn btn-danger btn-sm" onclick="clearLogs()">清空日志</button>' : ''}
+      <span class="muted small" id="l_count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed">
+        <thead>
+          <tr>
+            <th style="width:70px">ID</th>
+            <th style="width:130px">事件</th>
+            <th style="width:160px">数据ID</th>
+            <th style="width:150px">表单名称</th>
+            <th>变更摘要</th>
+            <th style="width:70px">字段数</th>
+            <th style="width:100px">签名</th>
+            <th style="width:80px">结果</th>
+            <th>消息</th>
+            <th style="width:150px">接收时间</th>
+            <th style="width:70px">详情</th>
+          </tr>
+        </thead>
+        <tbody id="logBody"><tr><td colspan="11" class="empty">加载中...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager" id="logPager"></div>
+  </div>
+
+  <div class="tab-panel hidden" id="panel-fields">
+    <div class="toolbar">
+      <span class="muted small">数据列以简道云「字段名称」作为注释；带 <span class="tag tag-primary tag-sm">解析</span> 标记的列存放加工后的可读值；<span class="tag tag-warn tag-sm">空列</span> 表示该列尚无数据（历史遗留列，可忽略）</span>
+      <div class="spacer"></div>
+      ${can('field:write') ? '<button class="btn btn-sm" onclick="switchTab(\'settings\')">前往字段设置</button>' : ''}
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed">
+        <thead>
+          <tr>
+            <th style="width:60px">#</th>
+            <th style="width:220px">数据库列名</th>
+            <th style="width:240px">字段名称（列注释）</th>
+            <th style="width:150px">列类型</th>
+            <th style="width:110px">类型</th>
+            <th style="width:120px">数据</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody id="fieldBody"><tr><td colspan="7" class="empty">加载中...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="tab-panel hidden" id="panel-sub">
+    <div class="toolbar">
+      <select class="input" id="sub_table" style="width:320px" onchange="loadSubRows(1)"></select>
+      <button class="btn btn-primary" onclick="loadSubRows(1)">查询</button>
+      <div class="spacer"></div>
+      <span class="muted small" id="sub_count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed" id="subTable">
+        <thead id="subHead"></thead>
+        <tbody id="subBody"><tr><td class="empty">请选择子表</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager" id="subPager"></div>
+  </div>
+
+  <!-- ══════════ 字段设置 ══════════ -->
+  <div class="tab-panel hidden" id="panel-settings">
+    <div class="toolbar" style="border-top:none">
+      <span class="muted small">字段定义 ↔ 数据库列一一对应；解析方式可直接在行内修改并立即生效</span>
+      <div class="spacer"></div>
+      ${can('field:write') ? '<button class="btn btn-sm btn-primary" onclick="toggleFieldImport()">导入字段表</button>' : ''}
+      ${can('field:write') ? '<button class="btn btn-sm" onclick="syncFields()">同步表结构</button>' : ''}
+      <button class="btn btn-sm" onclick="loadFieldSettings()">刷新</button>
+    </div>
+
+    <!-- 内嵌导入区：在当前标签页内完成，不跳页、不弹窗 -->
+    <div class="field-import hidden" id="fieldImportBox">
+      <div class="fi-head">
+        <b>导入简道云字段表</b>
+        <span class="muted small">支持 Markdown 表格 / 网页复制 / Excel 粘贴；单元格内的换行与 JSON 样例会自动合并</span>
+        <div class="spacer"></div>
+        <button class="btn btn-sm btn-ghost" onclick="toggleFieldImport(false)">收起</button>
+      </div>
+      <textarea class="input mono" id="fieldImportText" rows="7"
+        placeholder="|字段名称|字段ID/字段别名|字段类型|说明|&#10;|---|---|---|---|&#10;|表单名称|formName|string||&#10;|销售|_widget_1791449342208|json|status -1 表示离职；0 表示未加入；1 表示已加入|"></textarea>
+      <div class="fi-actions">
+        <button class="btn btn-sm" onclick="parseFieldPreview()">解析预览</button>
+        <label class="switch">
+          <input type="checkbox" id="fieldImportReplace" checked>
+          <span class="track"></span>
+          <span class="label-text">覆盖已有字段定义</span>
+        </label>
+        <button class="btn btn-sm btn-primary" id="fieldImportBtn" onclick="doFieldImport()" disabled>确认导入</button>
+        <span class="muted small" id="fieldImportInfo"></span>
+      </div>
+      <div class="fi-preview hidden" id="fieldPreviewWrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th style="width:44px">#</th>
+              <th style="width:170px">字段名称</th>
+              <th style="width:190px">字段ID</th>
+              <th style="width:80px">类型</th>
+              <th style="width:150px">数据库列名</th>
+              <th style="width:120px">解析方式</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody id="fieldPreviewBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <input class="input" id="fs_kw" placeholder="搜索字段名称 / 字段ID / 列名" style="width:240px">
+      <select class="input" id="fs_mode" style="width:160px">
+        <option value="">全部解析方式</option>
+      </select>
+      <select class="input" id="fs_state" style="width:150px">
+        <option value="">全部状态</option>
+        <option value="missing">未建列</option>
+        <option value="empty">列内无数据</option>
+        <option value="ok">列内已有数据</option>
+      </select>
+      <div class="spacer"></div>
+      <span class="muted small" id="fs_stat"></span>
+    </div>
+
+    <div class="table-wrap">
+      <table class="table table-fixed">
+        <thead>
+          <tr>
+            <th style="width:52px">#</th>
+            <th style="width:170px">字段名称</th>
+            <th style="width:186px">字段ID</th>
+            <th style="width:180px">数据库列名</th>
+            <th style="width:170px">解析方式</th>
+            <th>说明 / 解析路径</th>
+            <th style="width:78px">启用</th>
+            <th style="width:96px">操作</th>
+          </tr>
+        </thead>
+        <tbody id="fieldSetBody"><tr><td colspan="8" class="empty">加载中...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager" id="fieldSetPager"></div>
+  </div>
+</div>
+
+<div class="modal-mask" id="pushModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>简道云推送配置</h3>
+      <button class="modal-close" onclick="closeModal('pushModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="alert alert-info">
+        在简道云「扩展功能 → 数据推送 → 新建数据推送」中，目标服务器选择「<b>自定义服务器</b>」，
+        把下面的地址填入「服务器地址」，然后点击「生成 Secret」并把 Secret 回填到本项目。
+      </div>
+      <label class="field">
+        <span>推送地址（填入简道云「服务器地址」）</span>
+        <div class="copy-row">
+          <input class="input mono" id="pushUrl" readonly>
+          <button class="btn" onclick="copyText(document.getElementById('pushUrl').value)">复制</button>
+        </div>
+      </label>
+      ${can('project:write') ? `
+      <label class="field">
+        <span>Secret（简道云「生成 Secret」后复制并粘贴到下方保存）</span>
+        <div class="copy-row">
+          <input class="input mono" id="pushSecret" placeholder="粘贴简道云生成的 Secret">
+          <button class="btn btn-primary" onclick="saveSecret()">保存 Secret</button>
+        </div>
+      </label>` : ''}
+      <div class="kv">
+        <div><span>数据表</span><code>${esc(project.data_table)}</code></div>
+        <div><span>日志表</span><code>${esc(project.log_table)}</code></div>
+      </div>
+      <details class="details">
+        <summary>签名校验算法（简道云开发指南）</summary>
+        <pre class="pre">signature = sha1( "{nonce}:{payload}:{secret}:{timestamp}" )
+payload   = HTTP 请求体原始字符串
+nonce     = URL 查询参数 nonce
+timestamp = URL 查询参数 timestamp
+比较对象   = 请求头 X-JDY-Signature（十六进制小写）
+请求头 X-JDY-DeliverId 为每次推送的唯一 ID，可用于去重</pre>
+      </details>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('pushModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="fieldEditModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>编辑字段</h3>
+      <button class="modal-close" onclick="closeModal('fieldEditModal')">×</button>
+    </div>
+    <div class="modal-body" id="fieldEditBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('fieldEditModal')">取消</button>
+      <button class="btn btn-primary" id="fieldEditSave">保存</button>
+    </div>
+  </div>
+</div>
+
+${can('project:write') ? `
+<div class="modal-mask" id="settingModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>项目设置</h3>
+      <button class="modal-close" onclick="closeModal('settingModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <label class="field"><span>项目名称</span><input class="input" id="s_name"></label>
+      <label class="field"><span>简道云服务器地址</span><input class="input" id="s_base"></label>
+      <label class="field"><span>Secret</span><input class="input" id="s_secret"></label>
+      <label class="field"><span>状态</span>
+        <select class="input" id="s_status"><option value="1">启用</option><option value="0">停用</option></select>
+      </label>
+      <label class="field">
+        <span>字段自动解析</span>
+        <label class="switch">
+          <input type="checkbox" id="s_parse">
+          <span class="track"></span>
+          <span class="label-text">开启后 JSON 结构字段自动解析为可读值</span>
+        </label>
+      </label>
+      <label class="field">
+        <span>数据ID 展示字段</span>
+        <select class="input" id="s_idfield"><option value="">默认（简道云 _id）</option></select>
+        <small class="hint">选择业务字段（如「流水号」）后，列表、搜索、导出都用该字段值替代简道云 _id 作为数据标识。</small>
+      </label>
+      <label class="field"><span>项目说明</span><textarea class="input" id="s_desc" rows="2"></textarea></label>
+      <label class="field"><span>备注</span><textarea class="input" id="s_remark" rows="2"></textarea></label>
+      <hr>
+      <div class="danger-zone">
+        <div>
+          <strong>重新生成推送令牌</strong>
+          <p class="muted small">生成后旧推送地址立即失效，需要同步更新简道云中的服务器地址。</p>
+        </div>
+        <button class="btn" onclick="regenToken()">重新生成</button>
+      </div>
+      <div class="danger-zone">
+        <div>
+          <strong>删除项目</strong>
+          <p class="muted small">将同时删除数据表、日志表、子表与字段定义，不可恢复。</p>
+        </div>
+        <button class="btn btn-danger" onclick="delProject()">删除项目</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('settingModal')">取消</button>
+      <button class="btn btn-primary" onclick="saveSetting()">保存</button>
+    </div>
+  </div>
+</div>` : ''}
+
+<div class="modal-mask" id="logModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>推送详情</h3>
+      <button class="modal-close" onclick="closeModal('logModal')">×</button>
+    </div>
+    <div class="modal-body" id="logDetail"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('logModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="recordModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>数据详情</h3>
+      <button class="modal-close" onclick="closeModal('recordModal')">×</button>
+    </div>
+    <div class="modal-body" id="recordDetail"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('recordModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 单元格完整内容查看（长文本/JSON 完整可复制） -->
+<div class="modal-mask" id="cellViewModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3 id="cellViewTitle">单元格内容</h3>
+      <button class="modal-close" onclick="closeModal('cellViewModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="cell-view-toolbar">
+        <span class="muted small" id="cellViewMeta"></span>
+        <div class="spacer"></div>
+        <button class="btn btn-sm" onclick="copyCellValue(false)">复制全部</button>
+        <button class="btn btn-sm btn-ghost" id="cellViewSelectAll">全选</button>
+      </div>
+      <pre class="pre" id="cellViewBody" style="max-height:52vh;overflow:auto;user-select:text"></pre>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('cellViewModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const PID = <%= project.id %>;
+const PROJECT = <%- JSON.stringify({ id: project.id, name: project.name, code: project.code, push_token: project.push_token, jdy_base_url: project.jdy_base_url, jdy_secret: project.jdy_secret, status: project.status, parse_enabled: project.parse_enabled, remark: project.remark, description: project.description, category: project.category, datasource_id: project.datasource_id, data_table: project.data_table, parsed_table: project.parsed_table, log_table: project.log_table, id_field_key: project.id_field_key || '' }) %>;
+const CAN_WRITE = <%= can('project:write') ? 'true' : 'false' %>;
+const CAN_FIELD_WRITE = <%= can('field:write') ? 'true' : 'false' %>;
+const CAN_DELETE = <%= can('data:delete') ? 'true' : 'false' %>;
+
+let COLUMNS = [];
+let PARSED_COLUMNS = [];
+
+/* 表格状态：排序与列显隐（按项目持久化到 localStorage） */
+const SORT_STATE = { records: { key: '', dir: 'desc' }, parsed: { key: '', dir: 'desc' } };
+const HIDDEN_COLS = { records: new Set(), parsed: new Set() };
+const COL_PREF_PREFIX = 'jdy.cols.' + PID + '.';
+
+function loadColPref(kind) {
+  try {
+    const raw = localStorage.getItem(COL_PREF_PREFIX + kind);
+    if (raw) HIDDEN_COLS[kind] = new Set(JSON.parse(raw));
+  } catch (e) { /* 忽略损坏的本地存储 */ }
+}
+
+function saveColPref(kind) {
+  try {
+    localStorage.setItem(COL_PREF_PREFIX + kind, JSON.stringify(Array.from(HIDDEN_COLS[kind])));
+  } catch (e) { /* 隐私模式下写入失败，忽略 */ }
+}
+
+/** 可排序表头：点击切换升/降序 */
+function sortableTh(kind, c) {
+  const cur = SORT_STATE[kind];
+  const on = cur.key === c.name;
+  const ind = on ? (cur.dir === 'asc' ? '▲' : '▼') : '↕';
+  return '<th class="sortable' + (on ? ' sorted' : '') + '" title="' + esc(c.name) + '"' +
+    ' data-sort="' + esc(c.name) + '" data-kind="' + kind + '">' +
+    esc(c.comment || c.name) + '<span class="sort-ind">' + ind + '</span></th>';
+}
+
+function bindSortHeaders(scope) {
+  scope.querySelectorAll('th[data-sort]').forEach(th => {
+    th.addEventListener('click', () => {
+      const kind = th.dataset.kind;
+      const key = th.dataset.sort;
+      const st = SORT_STATE[kind];
+      if (st.key === key) st.dir = st.dir === 'asc' ? 'desc' : 'asc';
+      else { st.key = key; st.dir = 'asc'; }
+      if (kind === 'records') loadRecords(1);
+      else loadParsed(1);
+    });
+  });
+}
+
+/** 列设置面板 */
+function toggleColMenu(kind) {
+  const el = document.getElementById(kind === 'records' ? 'r_colMenu' : 'p_colMenu');
+  if (!el) return;
+  el.classList.toggle('hidden');
+}
+
+function renderColMenu(kind, cols) {
+  const el = document.getElementById(kind === 'records' ? 'r_colMenu' : 'p_colMenu');
+  if (!el) return;
+  if (!cols.length) { el.innerHTML = ''; return; }
+
+  const items = cols.map(c =>
+    '<label class="cm-item"><input type="checkbox" data-col="' + esc(c.name) + '"' +
+    (HIDDEN_COLS[kind].has(c.name) ? '' : ' checked') + '> ' +
+    esc(c.comment || c.name) + '</label>'
+  ).join('');
+
+  el.innerHTML = items +
+    '<div class="cm-actions">' +
+      '<button class="btn btn-sm" data-cm="all">全选</button>' +
+      '<button class="btn btn-sm" data-cm="none">全不选</button>' +
+      '<button class="btn btn-sm" data-cm="reset">重置</button>' +
+    '</div>';
+
+  el.querySelectorAll('input[data-col]').forEach(chk => {
+    chk.addEventListener('change', () => {
+      if (chk.checked) HIDDEN_COLS[kind].delete(chk.dataset.col);
+      else HIDDEN_COLS[kind].add(chk.dataset.col);
+      saveColPref(kind);
+      if (kind === 'records') loadRecords(1); else loadParsed(1);
+    });
+  });
+
+  el.querySelectorAll('button[data-cm]').forEach(b => {
+    b.addEventListener('click', () => {
+      const act = b.dataset.cm;
+      if (act === 'all') cols.forEach(c => HIDDEN_COLS[kind].delete(c.name));
+      else if (act === 'none') cols.forEach(c => HIDDEN_COLS[kind].add(c.name));
+      else HIDDEN_COLS[kind].clear();
+      saveColPref(kind);
+      renderColMenu(kind, cols);
+      if (kind === 'records') loadRecords(1); else loadParsed(1);
+    });
+  });
+}
+let FIELDS = [];
+let SUBTABLES = [];
+const META_COLS = ['id','jdy_data_id','jdy_form_name','jdy_op','jdy_op_time','raw_json','received_at','updated_at'];
+const OP_LABEL = { data_create:'数据提交', data_update:'数据修改', data_remove:'数据删除', data_recover:'数据恢复', form_update:'表单结构变更', api_pull:'接口采集', task_update:'流程待办变更', flow_state_change:'流程状态变更', flow_instance_create:'流程发起', flow_instance_finish:'流程完成', flow_instance_delete:'流程删除', cc_create:'产生抄送' };
+
+// 表名复制按钮
+document.querySelectorAll('button[data-copy]').forEach(b => {
+  b.addEventListener('click', () => copyText(b.dataset.copy));
+});
+
+function pushUrl() {
+  const raw = PROJECT.jdy_base_url || window.location.origin;
+  const base = String(raw).replace(/[/]+$/, '');
+  return base + '/jdy/push/' + PROJECT.push_token;
+}
+
+/* ══════════ 项目首页 ══════════ */
+
+let HOME_EDITING = false;
+
+function initHome() {
+  const el = document.getElementById('pushUrlText');
+  if (el) el.textContent = pushUrl();
+  loadHomeDatasources();
+}
+
+async function loadHomeDatasources() {
+  const sel = document.getElementById('h_datasource');
+  if (!sel) return;
+  const r = await api('/api/datasources');
+  if (!r.ok) return;
+  sel.innerHTML = r.data.list.map(d =>
+    '<option value="' + d.id + '"' +
+    (String(d.id) === String(PROJECT.datasource_id || 0) ? ' selected' : '') + '>' +
+    esc(d.name) + '（' + esc(d.type) + '）</option>').join('');
+}
+
+function copyPushUrl() {
+  copyText(pushUrl());
+}
+
+function toggleHomeEdit(force) {
+  HOME_EDITING = force === undefined ? !HOME_EDITING : !!force;
+  document.getElementById('homeView').classList.toggle('hidden', HOME_EDITING);
+  document.getElementById('homeEdit').classList.toggle('hidden', !HOME_EDITING);
+  document.getElementById('homeMode').textContent = HOME_EDITING ? '编辑中' : '只读';
+  document.getElementById('homeMode').className = 'tag ' + (HOME_EDITING ? 'tag-warn' : 'tag-off');
+  const btn = document.getElementById('homeEditBtn');
+  if (btn) btn.textContent = HOME_EDITING ? '取消' : '修改';
+}
+
+async function saveHome() {
+  const name = document.getElementById('h_name').value.trim();
+  if (!name) return toast('项目名称不能为空', 'error');
+
+  const body = {
+    name,
+    category: document.getElementById('h_category').value.trim(),
+    jdySecret: document.getElementById('h_secret').value.trim(),
+    parseEnabled: document.getElementById('h_parse').checked,
+    status: document.getElementById('h_status').checked ? 1 : 0,
+    description: document.getElementById('h_desc').value.trim(),
+    remark: document.getElementById('h_remark').value.trim(),
+  };
+
+  const dsId = Number(document.getElementById('h_datasource').value) || 0;
+  if (dsId !== Number(PROJECT.datasource_id || 0)) body.datasourceId = dsId;
+
+  const r = await api('/api/projects/' + PID, { method: 'PUT', body });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast('项目设置已保存', 'success');
+  setTimeout(() => location.reload(), 600);
+}
+
+function openPushInfo() {
+  const el = document.getElementById('pushUrl');
+  if (el) el.value = pushUrl();
+  const sec = document.getElementById('pushSecret');
+  if (sec) sec.value = PROJECT.jdy_secret || '';
+  openModal('pushModal');
+}
+
+async function saveSecret() {
+  const secret = document.getElementById('pushSecret').value.trim();
+  const r = await api('/api/projects/' + PID, { method: 'PUT', body: { jdySecret: secret } });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  PROJECT.jdy_secret = secret;
+  toast('Secret 已保存', 'success');
+}
+
+/** 填充「数据ID 展示字段」下拉：只列可作为标识的普通字段 */
+function fillIdFieldOptions(current) {
+  const sel = document.getElementById('s_idfield');
+  if (!sel) return;
+  const opts = FIELDS.filter(f =>
+    Number(f.is_system) === 0 &&
+    f.field_type !== 'array' &&
+    f.parse_mode !== 'expand'
+  ).map(f =>
+    '<option value="' + esc(f.field_key) + '"' +
+    (f.field_key === current ? ' selected' : '') + '>' +
+    esc(f.field_name || f.field_key) + '</option>'
+  ).join('');
+  sel.innerHTML = '<option value=""' + (!current ? ' selected' : '') +
+    '>默认（简道云 _id）</option>' + opts;
+}
+
+function openSetting() {
+  document.getElementById('s_name').value = PROJECT.name || '';
+  document.getElementById('s_base').value = PROJECT.jdy_base_url || '';
+  document.getElementById('s_secret').value = PROJECT.jdy_secret || '';
+  document.getElementById('s_status').value = String(PROJECT.status);
+  document.getElementById('s_parse').checked = Number(PROJECT.parse_enabled) === 1;
+  fillIdFieldOptions(PROJECT.id_field_key || '');
+  document.getElementById('s_desc').value = PROJECT.description || '';
+  document.getElementById('s_remark').value = PROJECT.remark || '';
+  openModal('settingModal');
+}
+
+async function saveSetting() {
+  const body = {
+    name: document.getElementById('s_name').value.trim(),
+    jdyBaseUrl: document.getElementById('s_base').value.trim(),
+    jdySecret: document.getElementById('s_secret').value.trim(),
+    status: Number(document.getElementById('s_status').value),
+    parseEnabled: document.getElementById('s_parse').checked,
+    idFieldKey: document.getElementById('s_idfield') ? document.getElementById('s_idfield').value : undefined,
+    description: document.getElementById('s_desc').value.trim(),
+    remark: document.getElementById('s_remark').value.trim(),
+  };
+  const r = await api('/api/projects/' + PID, { method: 'PUT', body });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast('保存成功', 'success');
+  setTimeout(() => location.reload(), 500);
+}
+
+async function regenToken() {
+  if (!confirm('重新生成推送令牌？旧地址将立即失效。')) return;
+  const r = await api('/api/projects/' + PID + '/regenerate-token', { method: 'POST' });
+  if (!r.ok) return toast(r.message || '操作失败', 'error');
+  PROJECT.push_token = r.data.push_token;
+  toast('已重新生成，请更新简道云推送地址', 'success');
+  document.getElementById('pushUrl').value = pushUrl();
+}
+
+async function delProject() {
+  if (!confirm('确定删除项目「' + PROJECT.name + '」？\\n\\n数据表、日志表、子表与字段定义都会一并删除！')) return;
+  const r = await api('/api/projects/' + PID, { method: 'DELETE' });
+  if (!r.ok) return toast(r.message || '删除失败', 'error');
+  location.href = '/';
+}
+
+async function simulate() {
+  if (!confirm('向本项目发送一条模拟推送数据（用于联调自测）？')) return;
+  const r = await api('/api/projects/' + PID + '/simulate', { method: 'POST', body: {} });
+  if (!r.ok) return toast(r.message || '模拟失败', 'error');
+  toast('模拟推送成功，已写入数据与日志', 'success');
+  setTimeout(() => location.reload(), 700);
+}
+
+/* ---- 概览 ---- */
+async function loadOverview() {
+  const r = await api('/api/projects/' + PID);
+  if (!r.ok) return toast(r.message, 'error');
+
+  COLUMNS = r.data.columns || [];
+  FIELDS = r.data.fieldDefs || [];
+  SUBTABLES = r.data.subTables || [];
+  if (r.data.columnStats) FIELD_STATS = r.data.columnStats;
+
+  document.getElementById('s_total').textContent = (r.data.stats.dataTotal || 0).toLocaleString();
+  document.getElementById('s_today').textContent = r.data.stats.dataToday || 0;
+  document.getElementById('s_fields').textContent = FIELDS.length;
+  document.getElementById('s_cols').textContent = COLUMNS.length;
+  document.getElementById('s_logs').textContent = (r.data.stats.logTotal || 0).toLocaleString();
+  document.getElementById('s_fail').textContent = r.data.stats.logFailed || 0;
+
+  renderFields();
+  buildFieldFilter();
+  buildSubTableSelect();
+}
+
+/** 字段结构表：展示「数据库列名 ↔ 简道云字段名称」 */
+function renderFields() {
+  const defByCol = {};
+  FIELDS.forEach(f => { defByCol[f.column_name] = f; });
+
+  const body = document.getElementById('fieldBody');
+  if (!COLUMNS.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">暂无字段，等待简道云推送后自动创建</td></tr>';
+    return;
+  }
+
+  body.innerHTML = COLUMNS.map((c, i) => {
+    const isMeta = META_COLS.includes(c.name);
+    const isParsed = c.name.endsWith('_p');
+    const def = defByCol[c.name] || (isParsed ? defByCol[c.name.slice(0, -2)] : null);
+    const filled = Number((FIELD_STATS && FIELD_STATS[c.name]) || 0);
+
+    let typeTag = '';
+    if (isParsed) typeTag = '<span class="tag tag-primary tag-sm">解析</span>';
+    else if (def && def.parse_mode && def.parse_mode !== 'none') {
+      typeTag = '<span class="tag tag-warn tag-sm">原始</span>';
+    } else if (isMeta) typeTag = '<span class="tag tag-off tag-sm">系统</span>';
+
+    // 无字段定义且无数据 → 标记为历史遗留列，避免「字段结构与原始表对不上」的困惑
+    const orphan = !isMeta && !def && !isParsed && filled === 0;
+
+    const nameCell = c.comment
+      ? esc(c.comment)
+      : (def ? esc(def.field_name) : '<span class="muted">-</span>');
+
+    const dataCell = isMeta
+      ? '<span class="muted small">-</span>'
+      : (filled > 0
+        ? '<span class="tag tag-ok tag-sm">' + filled + ' 行</span>'
+        : '<span class="tag tag-warn tag-sm">空列</span>');
+
+    return '<tr class="' + (isMeta ? 'row-meta' : '') + '">' +
+      '<td>' + (i + 1) + '</td>' +
+      '<td><code>' + esc(c.name) + '</code></td>' +
+      '<td>' + nameCell + (orphan ? ' <span class="tag tag-off tag-sm">无定义</span>' : '') + '</td>' +
+      '<td><code>' + esc(c.columnType) + '</code></td>' +
+      '<td>' + typeTag + '</td>' +
+      '<td>' + dataCell + '</td>' +
+      '<td class="small muted">' + (def && def.remark ? esc(def.remark) : '') + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+/** 字段筛选下拉 */
+function buildFieldFilter() {
+  const sel = document.getElementById('r_field');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全部字段</option>' +
+    COLUMNS.filter(c => !['raw_json','updated_at'].includes(c.name))
+      .map(c => '<option value="' + esc(c.name) + '">' + esc(c.comment || c.name) + '</option>')
+      .join('');
+  sel.value = cur;
+}
+
+function buildSubTableSelect() {
+  const sel = document.getElementById('sub_table');
+  if (!SUBTABLES.length) {
+    sel.innerHTML = '<option value="">暂无子表（数组字段需在「字段设置」中设为展开）</option>';
+    return;
+  }
+  sel.innerHTML = SUBTABLES.map(t =>
+    '<option value="' + esc(t.name) + '">' + esc(t.comment || t.name) + '</option>'
+  ).join('');
+  loadSubRows(1);
+}
+
+/* ---- 数据明细（行高固定 50px，单元格可点开查看完整内容） ---- */
+function bindCellClicks(scope) {
+  (scope || document).querySelectorAll('td.cell-click').forEach(td => {
+    td.addEventListener('click', () => openCellView(td.dataset.label, td.dataset.cell));
+  });
+}
+
+let RECORD_CACHE = {};
+
+async function copyRecordById(id) {
+  const r = await api('/api/projects/' + PID + '/records/' + id);
+  if (!r.ok) return toast(r.message || '读取失败', 'error');
+  const row = r.data;
+  const cols = COLUMNS.filter(c => c.name !== 'raw_json');
+  const lines = cols.map(c => (c.comment || c.name) + '\t' + cellText(row[c.name]));
+  CELL_VIEW = { title: '整行数据', text: lines.join('\n') };
+  copyCellValue(false);
+}
+
+async function loadRecords(page) {
+  const kw = document.getElementById('r_kw').value.trim();
+  const op = document.getElementById('r_op').value;
+  const field = document.getElementById('r_field').value;
+  const sort = SORT_STATE.records;
+  const q = 'page=' + page + '&pageSize=20&keyword=' + encodeURIComponent(kw) +
+            '&op=' + encodeURIComponent(op) + '&field=' + encodeURIComponent(field) +
+            '&sort=' + encodeURIComponent(sort.key) + '&dir=' + sort.dir;
+  const r = await api('/api/projects/' + PID + '/records?' + q);
+  if (!r.ok) return toast(r.message, 'error');
+
+  const idField = r.data.idField || {};
+  // 配置了「数据ID 展示字段」时，用该字段替换简道云 _id 列，避免出现两列重复
+  const idCol = idField.column || null;
+  let cols = COLUMNS.filter(c => {
+    if (['raw_json','updated_at'].includes(c.name)) return false;
+    if (idCol && c.name === 'jdy_data_id') return false;
+    return true;
+  });
+  // 数据ID 来源字段置顶，并标注为「数据ID」
+  if (idCol) {
+    const i = cols.findIndex(c => c.name === idCol);
+    if (i > 0) {
+      const picked = cols.splice(i, 1)[0];
+      cols.unshift(Object.assign({}, picked, { comment: idField.label || '数据ID' }));
+    } else if (i === 0) {
+      cols[0] = Object.assign({}, cols[0], { comment: idField.label || '数据ID' });
+    }
+  }
+  renderColMenu('records', cols);
+  cols = cols.filter(c => !HIDDEN_COLS.records.has(c.name));
+
+  const rHead = document.getElementById('recordHead');
+  rHead.innerHTML = '<tr>' +
+    cols.map(c => sortableTh('records', c)).join('') +
+    '<th style="width:90px">操作</th></tr>';
+  bindSortHeaders(rHead);
+
+  const body = document.getElementById('recordBody');
+  if (!r.data.list.length) {
+    body.innerHTML = '<tr><td colspan="' + (cols.length + 1) + '" class="empty">暂无数据，等待简道云推送</td></tr>';
+  } else {
+    body.innerHTML = r.data.list.map(row => '<tr>' +
+      cols.map(c => {
+        let v = row[c.name];
+        if (c.name === 'jdy_op') v = OP_LABEL[v] || v;
+        if (c.name === 'received_at') v = fmtTime(v);
+        if (c.name === 'jdy_op_time') v = fmtTime(v ? Number(v) : null);
+        const full = cellText(v);
+        const label = c.comment || c.name;
+        // 单元格可点：弹出完整内容并支持一键复制
+        return '<td class="cell-click" title="点击查看完整内容" data-cell="' + esc(full) + '" data-label="' + esc(label) + '">' +
+               '<span class="cell-inner">' + renderCell(v) + '</span></td>';
+      }).join('') +
+      '<td style="white-space:nowrap">' +
+        '<button class="btn btn-sm" onclick="viewRecord(' + row.id + ')">查看</button>' +
+        '<button class="btn btn-sm" style="margin-left:4px" onclick="copyRecordById(' + row.id + ')">复制</button>' +
+        (CAN_DELETE ? '<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="delRecord(' + row.id + ')">删</button>' : '') +
+      '</td></tr>').join('');
+
+    bindCellClicks(body);
+  }
+  document.getElementById('r_count').textContent = '共 ' + r.data.total + ' 条';
+  renderPager('recordPager', r.data.total, r.data.page, r.data.pageSize, loadRecords);
+}
+
+function renderCell(v) {
+  if (v === null || v === undefined || v === '') return '<span class="muted">-</span>';
+  if (typeof v === 'object') return '<code class="mini">' + esc(JSON.stringify(v)) + '</code>';
+  return esc(String(v));
+}
+
+/** 单元格纯文本（用于查看/复制，保留完整内容，不做长度截断） */
+function cellText(v) {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) return fmtTime(v);
+  if (typeof v === 'object') {
+    try { return JSON.stringify(v, null, 2); } catch (e) { return String(v); }
+  }
+  return String(v);
+}
+
+let CELL_VIEW = { title: '', text: '' };
+
+/** 查看单元格完整内容（长文本/JSON 不再被省略号截断） */
+function openCellView(title, text) {
+  CELL_VIEW = { title: title || '单元格内容', text: text || '' };
+  const head = document.getElementById('cellViewTitle');
+  const body = document.getElementById('cellViewBody');
+  const meta = document.getElementById('cellViewMeta');
+  if (head) head.textContent = CELL_VIEW.title;
+  if (body) body.textContent = CELL_VIEW.text || '（空）';
+  if (meta) meta.textContent = CELL_VIEW.text ? CELL_VIEW.text.length + ' 个字符' : '';
+  openModal('cellViewModal');
+}
+
+/** 复制单元格完整内容 */
+function copyCellValue(silent) {
+  const text = (CELL_VIEW && CELL_VIEW.text) || '';
+  if (!text) { if (!silent) toast('内容为空', 'error'); return; }
+  const done = () => { if (!silent) toast('已复制 ' + text.length + ' 个字符', 'success'); };
+  const fallback = () => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) { toast('复制失败，请手动全选复制', 'error'); }
+    document.body.removeChild(ta);
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done).catch(fallback);
+  } else {
+    fallback();
+  }
+}
+
+/** 从行数据直接复制整行（含完整字段值） */
+function copyRow(row) {
+  const cols = COLUMNS.filter(c => c.name !== 'raw_json');
+  const lines = cols.map(c => {
+    const label = c.comment || c.name;
+    return label + '\t' + cellText(row[c.name]);
+  });
+  CELL_VIEW = { title: '整行数据', text: lines.join('\n') };
+  copyCellValue(false);
+}
+
+function resetRecordFilter() {
+  document.getElementById('r_kw').value = '';
+  document.getElementById('r_op').value = '';
+  document.getElementById('r_field').value = '';
+  loadRecords(1);
+}
+
+async function viewRecord(id) {
+  const r = await api('/api/projects/' + PID + '/records/' + id);
+  if (!r.ok) return toast(r.message, 'error');
+  const row = r.data;
+  const defByCol = {};
+  FIELDS.forEach(f => { defByCol[f.column_name] = f; });
+
+  const items = COLUMNS.map(c => {
+    let v = row[c.name];
+    if (c.name === 'raw_json') return '';
+    if (v === null || v === undefined || v === '') return '';
+    const label = c.comment || c.name;
+    const full = cellText(v);
+    let display;
+    if (typeof v === 'object') {
+      display = '<pre class="pre pre-light" style="margin:6px 0">' + esc(full) + '</pre>';
+    } else {
+      display = '<b style="word-break:break-all;white-space:pre-wrap">' + esc(full) + '</b>';
+    }
+    return '<div style="padding:8px 0;border-bottom:1px solid var(--border)">' +
+      '<div class="muted small" style="display:flex;align-items:center;gap:6px">' +
+        '<span>' + esc(label) + ' <code>' + esc(c.name) + '</code></span>' +
+        '<span class="spacer" style="flex:1"></span>' +
+        '<button class="btn btn-sm btn-ghost" data-copyval="' + esc(full) + '">复制</button>' +
+      '</div>' +
+      '<div style="margin-top:3px">' + display + '</div></div>';
+  }).filter(Boolean).join('');
+
+  let raw = '';
+  try { raw = JSON.stringify(JSON.parse(row.raw_json), null, 2); } catch (e) { raw = row.raw_json || ''; }
+
+  document.getElementById('recordDetail').innerHTML =
+    '<div class="kv">' +
+      '<div><span>' + esc(row.id_label || '数据ID') + '</span><code>' + esc(row.display_id || row.jdy_data_id || '-') + '</code></div>' +
+      '<div><span>表单名称</span>' + esc(row.jdy_form_name || '-') + '</div>' +
+      '<div><span>事件</span>' + esc(OP_LABEL[row.jdy_op] || row.jdy_op || '-') + '</div>' +
+      '<div><span>接收时间</span>' + fmtTime(row.received_at) + '</div>' +
+    '</div>' +
+    '<h4 style="margin:16px 0 6px;font-size:14px">字段值</h4>' + items +
+    '<div style="margin-top:16px;display:flex;align-items:center;gap:8px">' +
+      '<h4 style="margin:0;font-size:14px">原始推送报文</h4>' +
+      '<span class="muted small">' + raw.length + ' 个字符</span>' +
+      '<span style="flex:1"></span>' +
+      '<button class="btn btn-sm" id="copyRawBtn">复制完整报文</button>' +
+    '</div>' +
+    '<pre class="pre" id="rawPayloadPre" style="max-height:360px;overflow:auto">' + esc(raw) + '</pre>';
+
+  const detail = document.getElementById('recordDetail');
+  detail.querySelectorAll('button[data-copyval]').forEach(b => {
+    b.addEventListener('click', () => { CELL_VIEW = { title: b.dataset.copyval ? '字段值' : '', text: b.dataset.copyval || '' }; copyCellValue(false); });
+  });
+  const rawBtn = document.getElementById('copyRawBtn');
+  if (rawBtn) {
+    rawBtn.addEventListener('click', () => {
+      CELL_VIEW = { title: '原始推送报文', text: raw };
+      copyCellValue(false);
+    });
+  }
+
+  openModal('recordModal');
+}
+
+async function delRecord(id) {
+  if (!confirm('删除这条数据？')) return;
+  const r = await api('/api/projects/' + PID + '/records/' + id, { method: 'DELETE' });
+  if (!r.ok) return toast(r.message, 'error');
+  toast('已删除', 'success');
+  loadRecords(1);
+  loadOverview();
+}
+
+/* ---- 接收日志 ---- */
+async function loadLogs(page) {
+  const kw = document.getElementById('l_kw').value.trim();
+  const op = document.getElementById('l_op').value;
+  const result = document.getElementById('l_result').value;
+  const q = 'page=' + page + '&pageSize=20&keyword=' + encodeURIComponent(kw) +
+            '&op=' + encodeURIComponent(op) + '&result=' + encodeURIComponent(result);
+  const r = await api('/api/projects/' + PID + '/logs?' + q);
+  if (!r.ok) return toast(r.message, 'error');
+
+  const sel = document.getElementById('l_op');
+  if (sel.options.length <= 1 && r.data.ops) {
+    r.data.ops.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o.op;
+      opt.textContent = (OP_LABEL[o.op] || o.op) + ' (' + o.c + ')';
+      sel.appendChild(opt);
+    });
+  }
+
+  const body = document.getElementById('logBody');
+  if (!r.data.list.length) {
+    body.innerHTML = '<tr><td colspan="11" class="empty">暂无接收日志</td></tr>';
+  } else {
+    body.innerHTML = r.data.list.map(l => '<tr>' +
+      '<td>' + l.id + '</td>' +
+      '<td>' + esc(l.op_label || OP_LABEL[l.op] || l.op || '-') + '</td>' +
+      '<td><code class="mini">' + esc(l.data_id || '-') + '</code></td>' +
+      '<td>' + esc(l.form_name || '-') + '</td>' +
+      '<td class="small" title="' + esc(l.change_summary || '') + '">' +
+        (l.change_summary
+          ? esc(l.change_summary.length > 46 ? l.change_summary.slice(0, 46) + '…' : l.change_summary)
+          : '<span class="muted">—</span>') + '</td>' +
+      '<td>' + (l.field_count || 0) + '</td>' +
+      '<td>' + (l.signature_ok ? '<span class="tag tag-ok">通过</span>'
+        : '<span class="tag tag-warn" title="' + esc(l.signature_msg || '') + '">' + esc(l.signature_msg || '未通过') + '</span>') + '</td>' +
+      '<td>' + (l.result === 'success' ? '<span class="tag tag-ok">成功</span>'
+        : '<span class="tag tag-err">' + esc(l.result) + '</span>') + '</td>' +
+      '<td class="small" title="' + esc(l.message || '') + '">' + esc(l.message || '') + '</td>' +
+      '<td class="small">' + fmtTime(l.created_at) + '</td>' +
+      '<td><button class="btn btn-sm" onclick="viewLog(' + l.id + ')">查看</button></td></tr>').join('');
+  }
+  document.getElementById('l_count').textContent = '共 ' + r.data.total + ' 条';
+  renderPager('logPager', r.data.total, r.data.page, r.data.pageSize, loadLogs);
+}
+
+async function viewLog(id) {
+  const r = await api('/api/projects/' + PID + '/logs/' + id);
+  if (!r.ok) return toast(r.message, 'error');
+  const l = r.data;
+  let pretty = l.payload || '';
+  try { pretty = JSON.stringify(JSON.parse(l.payload), null, 2); } catch (e) { /* 保留原文 */ }
+
+  // 变更描述：优先用入库时生成的，历史日志由后端即时补算
+  let summaryHtml = '';
+  if (l.change_summary) {
+    summaryHtml =
+      '<div class="alert alert-info" style="margin-bottom:14px">' +
+        '<b style="display:block;margin-bottom:6px">本次变更说明</b>' +
+        '<div style="line-height:1.85">' + esc(l.change_summary) + '</div>' +
+      '</div>';
+  }
+
+  document.getElementById('logDetail').innerHTML =
+    '<div class="kv">' +
+      '<div><span>事件</span><b>' + esc(l.op_label || l.op || '-') + '</b> <code>' + esc(l.op || '') + '</code></div>' +
+      '<div><span>结果</span><b>' + esc(l.result) + '</b></div>' +
+      '<div><span>数据ID</span><code>' + esc(l.data_id || '-') + '</code></div>' +
+      '<div><span>表单名称</span>' + esc(l.form_name || '-') + '</div>' +
+      '<div><span>DeliverId</span><code class="mini">' + esc(l.deliver_id || '-') + '</code></div>' +
+      '<div><span>来源IP</span><code>' + esc(l.source_ip || '-') + '</code></div>' +
+      '<div><span>签名校验</span><b>' + (l.signature_ok ? '通过' : '未通过') + '</b> ' + esc(l.signature_msg || '') + '</div>' +
+      '<div><span>字段数</span>' + (l.field_count || 0) + '</div>' +
+      '<div><span>接收时间</span>' + fmtTime(l.created_at) + '</div>' +
+    '</div>' +
+    summaryHtml +
+    (l.message ? '<div class="alert" style="background:rgba(220,221,221,.25)">' + esc(l.message) + '</div>' : '') +
+    '<h4 style="margin:16px 0 6px;font-size:14px">原始推送内容</h4>' +
+    '<pre class="pre">' + esc(pretty) + '</pre>';
+  openModal('logModal');
+}
+
+async function clearLogs() {
+  if (!confirm('清空本项目全部接收日志？')) return;
+  const r = await api('/api/projects/' + PID + '/logs', { method: 'DELETE' });
+  if (!r.ok) return toast(r.message, 'error');
+  toast('已清空', 'success');
+  loadLogs(1);
+  loadOverview();
+}
+
+/* ---- 子表 ---- */
+async function loadSubRows(page) {
+  const table = document.getElementById('sub_table').value;
+  if (!table) {
+    document.getElementById('subBody').innerHTML = '<tr><td class="empty">暂无子表</td></tr>';
+    document.getElementById('subHead').innerHTML = '';
+    return;
+  }
+  const r = await api('/api/projects/' + PID + '/subtables/' + encodeURIComponent(table) + '/rows?page=' + page + '&pageSize=50');
+  if (!r.ok) return toast(r.message, 'error');
+
+  document.getElementById('subHead').innerHTML =
+    '<tr><th style="width:70px">ID</th><th style="width:180px">主表数据ID</th><th style="width:80px">行号</th>' +
+    '<th style="width:200px">子表字段</th><th style="width:200px">字段名称</th><th>值</th>' +
+    '<th style="width:200px">解析值</th></tr>';
+
+  const body = document.getElementById('subBody');
+  if (!r.data.list.length) {
+    body.innerHTML = '<tr><td colspan="7" class="empty">暂无子表数据</td></tr>';
+  } else {
+    body.innerHTML = r.data.list.map(x => '<tr>' +
+      '<td>' + x.id + '</td>' +
+      '<td><code class="mini">' + esc(x.jdy_data_id || '-') + '</code></td>' +
+      '<td>' + (x.row_index + 1) + '</td>' +
+      '<td><code class="mini">' + esc(x.sub_key || '-') + '</code></td>' +
+      '<td>' + esc(x.sub_name || '-') + '</td>' +
+      '<td title="' + esc(x.sub_value || '') + '"><span class="cell-inner">' + esc(x.sub_value || '-') + '</span></td>' +
+      '<td><span class="cell-inner">' + esc(x.sub_text || '-') + '</span></td>' +
+    '</tr>').join('');
+  }
+  document.getElementById('sub_count').textContent = '共 ' + r.data.total + ' 条';
+  renderPager('subPager', r.data.total, r.data.page, r.data.pageSize, loadSubRows);
+}
+
+/* ---- 解析后数据 ---- */
+async function loadParsed(page) {
+  const kw = document.getElementById('p_kw').value.trim();
+  const pField = document.getElementById('p_field');
+  const field = pField ? pField.value : '';
+  const sort = SORT_STATE.parsed;
+  const q = 'page=' + page + '&pageSize=20&keyword=' + encodeURIComponent(kw) +
+            '&field=' + encodeURIComponent(field) +
+            '&sort=' + encodeURIComponent(sort.key) + '&dir=' + sort.dir;
+  const r = await api('/api/projects/' + PID + '/parsed?' + q);
+  if (!r.ok) return toast(r.message, 'error');
+
+  const idFieldP = r.data.idField || {};
+  const idColP = idFieldP.column || null;
+  let cols = (r.data.columns || []).filter(c => {
+    if (['raw_json','updated_at'].includes(c.name)) return false;
+    if (idColP && c.name === 'jdy_data_id') return false;
+    return true;
+  });
+  // 数据ID 来源字段置顶并标注为「数据ID」
+  if (idColP) {
+    const i = cols.findIndex(c => c.name === idColP);
+    if (i > 0) {
+      const picked = cols.splice(i, 1)[0];
+      cols.unshift(Object.assign({}, picked, { comment: idFieldP.label || '数据ID' }));
+    } else if (i === 0) {
+      cols[0] = Object.assign({}, cols[0], { comment: idFieldP.label || '数据ID' });
+    }
+  }
+  buildParsedFieldFilter(cols);
+  renderColMenu('parsed', cols);
+  cols = cols.filter(c => !HIDDEN_COLS.parsed.has(c.name));
+
+  const pHead = document.getElementById('parsedHead');
+  pHead.innerHTML = '<tr>' +
+    cols.map(c => sortableTh('parsed', c)).join('') +
+    '</tr>';
+  bindSortHeaders(pHead);
+
+  const body = document.getElementById('parsedBody');
+  if (!r.data.list.length) {
+    body.innerHTML = '<tr><td colspan="' + Math.max(1, cols.length) + '" class="empty">暂无解析数据，等待推送或点击「字段设置 → 同步表结构」回填</td></tr>';
+  } else {
+    body.innerHTML = r.data.list.map(row => '<tr>' +
+      cols.map(c => {
+        let v = row[c.name];
+        if (c.name === 'jdy_op') v = OP_LABEL[v] || v;
+        if (c.name === 'received_at') v = fmtTime(v);
+        if (c.name === 'jdy_op_time') v = fmtTime(v ? Number(v) : null);
+        const title = typeof v === 'object' ? JSON.stringify(v) : (v === null || v === undefined ? '' : v);
+        return '<td title="' + esc(title) + '"><span class="cell-inner">' + renderCell(v) + '</span></td>';
+      }).join('') +
+    '</tr>').join('');
+  }
+  document.getElementById('p_count').textContent = '共 ' + r.data.total + ' 条';
+  renderPager('parsedPager', r.data.total, r.data.page, r.data.pageSize, loadParsed);
+}
+
+/** 解析表字段下拉（筛选用） */
+function buildParsedFieldFilter(cols) {
+  const sel = document.getElementById('p_field');
+  if (!sel) return;
+  const cur = sel.value;
+  const list = (cols || []).filter(c => !['raw_json', 'updated_at'].includes(c.name));
+  sel.innerHTML = '<option value="">全部字段</option>' + list.map(c =>
+    '<option value="' + esc(c.name) + '">' + esc(c.comment || c.name) + '</option>').join('');
+  if (list.some(c => c.name === cur)) sel.value = cur;
+}
+
+function resetParsedFilter() {
+  const kw = document.getElementById('p_kw');
+  const f = document.getElementById('p_field');
+  if (kw) kw.value = '';
+  if (f) f.value = '';
+  SORT_STATE.parsed = { key: '', dir: 'desc' };
+  loadParsed(1);
+}
+
+/* ══════════ 字段设置（全部在当前标签页内完成） ══════════ */
+
+const PARSE_MODES = [
+  { key: 'none', name: '不解析' },
+  { key: 'name', name: '取名称' },
+  { key: 'member_full', name: '成员完整信息' },
+  { key: 'username', name: '取账号' },
+  { key: 'phone', name: '取手机号' },
+  { key: 'id', name: '取关联数据ID' },
+  { key: 'text', name: '取文本值' },
+  { key: 'address', name: '地址拼接' },
+  { key: 'timestamp', name: '时间格式化' },
+  { key: 'array_join', name: '数组拼接' },
+  { key: 'array_names', name: '数组取名称' },
+  { key: 'array_count', name: '数组计数' },
+  { key: 'path', name: '自定义路径' },
+  { key: 'expand', name: '展开为子表' },
+];
+
+let FIELD_DEFS = [];
+let FIELD_COLS = [];
+const FIELD_PAGE_SIZE = 50;
+let FIELD_PAGE = 1;
+let FIELD_STATS = {};
+let FIELD_PREVIEW = null;
+
+function modeLabel(key) {
+  const m = PARSE_MODES.find(x => x.key === key);
+  return m ? m.name : (key || '不解析');
+}
+
+function modeOptions(cur) {
+  return PARSE_MODES.map(m =>
+    '<option value="' + m.key + '"' + (m.key === cur ? ' selected' : '') + '>' + m.name + '</option>'
+  ).join('');
+}
+
+function toggleFieldImport(force) {
+  const box = document.getElementById('fieldImportBox');
+  if (!box) return;
+  const show = force === undefined ? box.classList.contains('hidden') : !!force;
+  box.classList.toggle('hidden', !show);
+  if (show) {
+    const ta = document.getElementById('fieldImportText');
+    if (ta) ta.focus();
+  }
+}
+
+async function loadFieldSettings() {
+  const body = document.getElementById('fieldSetBody');
+  if (!body) return;
+  body.innerHTML = '<tr><td colspan="8" class="empty">加载中...</td></tr>';
+
+  const r = await api('/api/projects/' + PID + '/fields');
+  if (!r.ok) {
+    body.innerHTML = '<tr><td colspan="8" class="empty">' + esc(r.message) + '</td></tr>';
+    return;
+  }
+
+  FIELD_DEFS = r.data.fieldDefs || [];
+  FIELD_COLS = r.data.columns || [];
+  FIELD_STATS = r.data.stats || {};
+
+  renderFieldSettings();
+  buildModeFilter();
+}
+
+function buildModeFilter() {
+  const sel = document.getElementById('fs_mode');
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全部解析方式</option>' + PARSE_MODES.map(m =>
+    '<option value="' + m.key + '">' + m.name + '</option>').join('');
+  sel.value = cur;
+}
+
+function renderFieldSettings() {
+  const body = document.getElementById('fieldSetBody');
+  if (!body) return;
+
+  const kw = (document.getElementById('fs_kw').value || '').trim().toLowerCase();
+  const fm = document.getElementById('fs_mode').value;
+  const fs = document.getElementById('fs_state').value;
+  const colSet = new Set(FIELD_COLS.map(c => c.name));
+
+  const list = FIELD_DEFS.filter(d => {
+    if (fm && d.parse_mode !== fm) return false;
+    if (kw) {
+      const hay = [d.field_name, d.field_key, d.column_name, d.remark]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    if (fs) {
+      const exists = colSet.has(d.column_name);
+      if (fs === 'missing' && exists) return false;
+      if (fs === 'empty' && (!exists || Number(d.rows || 0) > 0)) return false;
+      if (fs === 'ok' && (!exists || Number(d.rows || 0) === 0)) return false;
+    }
+    return true;
+  });
+
+  // 分页：字段过多时翻页查看，页面本身不出现滚动条
+  const totalPages = Math.max(1, Math.ceil(list.length / FIELD_PAGE_SIZE));
+  if (FIELD_PAGE > totalPages) FIELD_PAGE = totalPages;
+  if (FIELD_PAGE < 1) FIELD_PAGE = 1;
+  const pageStart = (FIELD_PAGE - 1) * FIELD_PAGE_SIZE;
+  const pageList = list.slice(pageStart, pageStart + FIELD_PAGE_SIZE);
+
+  if (!FIELD_DEFS.length) {
+    body.innerHTML = '<tr><td colspan="8" class="empty">暂无字段定义，请点「导入字段表」或在下方粘贴简道云字段表</td></tr>';
+  } else if (!list.length) {
+    body.innerHTML = '<tr><td colspan="8" class="empty">没有符合筛选条件的字段</td></tr>';
+  } else {
+    body.innerHTML = pageList.map((f, i) => {
+      const exists = colSet.has(f.column_name);
+      const rows = Number(f.rows || 0);
+      const parseOn = f.parse_mode && f.parse_mode !== 'none';
+
+      let colCell = '<code class="mini">' + esc(f.column_name || '-') + '</code>';
+      if (!exists) colCell += ' <span class="tag tag-err tag-sm">未建列</span>';
+      else if (rows > 0) colCell += ' <span class="tag tag-ok tag-sm">' + rows + ' 行</span>';
+      else colCell += ' <span class="tag tag-warn tag-sm">空列</span>';
+
+      return '<tr>' +
+        '<td>' + (pageStart + i + 1) + '</td>' +
+        '<td><b>' + esc(f.field_name || '-') + '</b>' +
+          (Number(f.is_system) ? ' <span class="tag tag-off tag-sm">系统</span>' : '') + '</td>' +
+        '<td><code class="mini">' + esc(f.field_key || '-') + '</code></td>' +
+        '<td>' + colCell + '</td>' +
+        '<td>' + (CAN_FIELD_WRITE
+          ? '<select class="input input-sm" data-fmode="' + esc(f.field_key) + '">' + modeOptions(f.parse_mode) + '</select>'
+          : '<span class="tag ' + (parseOn ? 'tag-primary' : 'tag-off') + ' tag-sm">' + esc(modeLabel(f.parse_mode)) + '</span>') + '</td>' +
+        '<td class="small muted" title="' + esc(f.remark || '') + '">' +
+          esc(f.parse_path || f.remark || '-') + '</td>' +
+        '<td>' + (CAN_FIELD_WRITE
+          ? '<label class="switch switch-sm"><input type="checkbox" data-fen="' + esc(f.field_key) + '"' +
+            (Number(f.enabled) !== 0 ? ' checked' : '') + '><span class="track"></span></label>'
+          : (Number(f.enabled) !== 0 ? '<span class="tag tag-ok tag-sm">启用</span>' : '<span class="tag tag-off tag-sm">停用</span>')) + '</td>' +
+        '<td>' + (CAN_FIELD_WRITE
+          ? '<button class="btn btn-sm" data-fedit="' + esc(f.field_key) + '">编辑</button>'
+          : '') + '</td>' +
+      '</tr>';
+    }).join('');
+  }
+
+  const total = FIELD_DEFS.length;
+  const withData = FIELD_DEFS.filter(d => colSet.has(d.column_name) && Number(d.rows || 0) > 0).length;
+  const missing = FIELD_DEFS.filter(d => !colSet.has(d.column_name)).length;
+  const stat = document.getElementById('fs_stat');
+  if (stat) {
+    stat.textContent = '共 ' + total + ' 个字段 · 有数据 ' + withData +
+      (missing ? ' · 未建列 ' + missing : '') + (list.length !== total ? ' · 已筛出 ' + list.length : '');
+  }
+
+  renderPager('fieldSetPager', list.length, FIELD_PAGE, FIELD_PAGE_SIZE, (p) => {
+    FIELD_PAGE = p;
+    renderFieldSettings();
+  });
+
+  // 行内解析方式：改动即保存
+  body.querySelectorAll('select[data-fmode]').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const key = sel.dataset.fmode;
+      const val = sel.value;
+      sel.disabled = true;
+      const r2 = await api('/api/projects/' + PID + '/fields/' + encodeURIComponent(key), {
+        method: 'PUT', body: { parseMode: val },
+      });
+      sel.disabled = false;
+      if (!r2.ok) return toast(r2.message || '保存失败', 'error');
+      const d = FIELD_DEFS.find(x => x.field_key === key);
+      if (d) d.parse_mode = val;
+      toast('已设为「' + modeLabel(val) + '」，点「同步表结构」可回填历史数据', 'success');
+    });
+  });
+
+  // 行内启用开关
+  body.querySelectorAll('input[data-fen]').forEach(chk => {
+    chk.addEventListener('change', async () => {
+      const key = chk.dataset.fen;
+      const r2 = await api('/api/projects/' + PID + '/fields/' + encodeURIComponent(key), {
+        method: 'PUT', body: { enabled: chk.checked },
+      });
+      if (!r2.ok) { chk.checked = !chk.checked; return toast(r2.message || '保存失败', 'error'); }
+      const d = FIELD_DEFS.find(x => x.field_key === key);
+      if (d) d.enabled = chk.checked ? 1 : 0;
+      toast(chk.checked ? '已启用' : '已停用', 'success');
+    });
+  });
+
+  body.querySelectorAll('button[data-fedit]').forEach(b => {
+    b.addEventListener('click', () => editFieldSetting(b.dataset.fedit));
+  });
+}
+
+/* ---- 导入（当前标签页内联） ---- */
+async function parseFieldPreview() {
+  const text = document.getElementById('fieldImportText').value;
+  if (!text.trim()) return toast('请先粘贴字段表格内容', 'error');
+
+  const r = await api('/api/projects/' + PID + '/fields/parse', { method: 'POST', body: { text } });
+  if (!r.ok) return toast(r.message, 'error');
+
+  FIELD_PREVIEW = r.data;
+  const list = r.data.fields || [];
+
+  document.getElementById('fieldPreviewBody').innerHTML = list.map((f, i) => {
+    const status = f.exists
+      ? (Number(f.rows || 0) > 0
+        ? '<span class="tag tag-ok tag-sm">复用 ' + f.rows + ' 行</span>'
+        : '<span class="tag tag-warn tag-sm">复用空列</span>')
+      : '<span class="tag tag-primary tag-sm">新建</span>';
+    return '<tr>' +
+      '<td>' + (i + 1) + '</td>' +
+      '<td>' + esc(f.fieldName) + '</td>' +
+      '<td><code class="mini">' + esc(f.fieldKey) + '</code></td>' +
+      '<td>' + esc(f.fieldType) + '</td>' +
+      '<td><code class="mini">' + esc(f.columnName) + '</code></td>' +
+      '<td>' + esc(modeLabel(f.parseMode)) + '</td>' +
+      '<td>' + status + '</td>' +
+    '</tr>';
+  }).join('');
+
+  document.getElementById('fieldPreviewWrap').classList.remove('hidden');
+  const warn = (r.data.warnings && r.data.warnings.length) ? '，' + r.data.warnings[0] : '';
+  document.getElementById('fieldImportInfo').textContent =
+    '共解析 ' + r.data.total + ' 个字段（系统字段 ' + r.data.systemCount +
+    ' 个，需新建列 ' + r.data.newCount + ' 个，跳过 ' + r.data.skipped + ' 行）' + warn;
+  document.getElementById('fieldImportBtn').disabled = false;
+
+  if (r.data.errors && r.data.errors.length) toast(r.data.errors[0], 'error');
+}
+
+async function doFieldImport() {
+  if (!FIELD_PREVIEW) return toast('请先解析预览', 'error');
+  const btn = document.getElementById('fieldImportBtn');
+  btn.disabled = true; btn.textContent = '导入中...';
+
+  const r = await api('/api/projects/' + PID + '/fields/import', {
+    method: 'POST',
+    body: {
+      fields: FIELD_PREVIEW.fields,
+      mode: document.getElementById('fieldImportReplace').checked ? 'replace' : 'merge',
+    },
+  });
+
+  btn.disabled = false; btn.textContent = '确认导入';
+  if (!r.ok) return toast(r.message || '导入失败', 'error');
+
+  toast(r.message || '导入成功', 'success');
+  FIELD_PREVIEW = null;
+  document.getElementById('fieldPreviewWrap').classList.add('hidden');
+  document.getElementById('fieldImportText').value = '';
+  document.getElementById('fieldImportInfo').textContent = '';
+  toggleFieldImport(false);
+  loadFieldSettings();
+  loadOverview();
+}
+
+/* ---- 编辑字段（弹窗，非跳页） ---- */
+function editFieldSetting(key) {
+  const f = FIELD_DEFS.find(x => x.field_key === key);
+  if (!f) return;
+
+  document.getElementById('fieldEditBody').innerHTML =
+    '<div class="kv">' +
+      '<div><span>字段ID</span><code>' + esc(f.field_key) + '</code></div>' +
+      '<div><span>数据库列名</span><code>' + esc(f.column_name) + '</code></div>' +
+    '</div>' +
+    '<label class="field" style="margin-top:14px"><span>字段名称</span>' +
+      '<input class="input" id="fe_name" value="' + esc(f.field_name || '') + '"></label>' +
+    '<label class="field"><span>解析方式</span>' +
+      '<select class="input" id="fe_mode">' + modeOptions(f.parse_mode) + '</select></label>' +
+    '<label class="field"><span>解析路径（仅「自定义路径」需要）</span>' +
+      '<input class="input mono" id="fe_path" value="' + esc(f.parse_path || '') + '" placeholder="例如 user.name 或 data[0].name"></label>' +
+    '<label class="field"><span>备注</span>' +
+      '<input class="input" id="fe_remark" value="' + esc(f.remark || '') + '"></label>' +
+    '<label class="field"><span>启用</span>' +
+      '<label class="switch"><input type="checkbox" id="fe_enabled"' + (Number(f.enabled) !== 0 ? ' checked' : '') + '>' +
+      '<span class="track"></span><span class="label-text">参与解析与展示</span></label></label>';
+
+  document.getElementById('fieldEditSave').onclick = () => saveFieldSetting(f.field_key);
+  openModal('fieldEditModal');
+}
+
+async function saveFieldSetting(key) {
+  const body = {
+    fieldName: document.getElementById('fe_name').value.trim(),
+    parseMode: document.getElementById('fe_mode').value,
+    parsePath: document.getElementById('fe_path').value.trim(),
+    remark: document.getElementById('fe_remark').value.trim(),
+    enabled: document.getElementById('fe_enabled').checked ? 1 : 0,
+  };
+  const r = await api('/api/projects/' + PID + '/fields/' + encodeURIComponent(key), { method: 'PUT', body });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast('字段已更新', 'success');
+  closeModal('fieldEditModal');
+  loadFieldSettings();
+}
+
+async function syncFields() {
+  if (!confirm('同步表结构会按字段定义补齐数据库列，并回填历史数据的解析值，确定继续？')) return;
+  toast('正在同步...');
+  const r = await api('/api/projects/' + PID + '/fields/sync', { method: 'POST' });
+  toast(r.message || (r.ok ? '同步完成' : '同步失败'), r.ok ? 'success' : 'error');
+  loadFieldSettings();
+  loadOverview();
+}
+
+/* ---- Tab ---- */
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  ['home','records','parsed','logs','fields','sub','settings'].forEach(n => {
+    const el = document.getElementById('panel-' + n);
+    if (el) el.classList.toggle('hidden', n !== name);
+  });
+  if (name === 'records') loadRecords(1);
+  if (name === 'parsed') loadParsed(1);
+  if (name === 'logs') loadLogs(1);
+  if (name === 'sub') loadSubRows(1);
+  if (name === 'settings') loadFieldSettings();
+}
+
+initHome();
+const TABS = ['home', 'records', 'parsed', 'logs', 'fields', 'sub', 'settings'];
+
+function tabFromHash() {
+  const h = String(location.hash || '').replace('#', '');
+  return TABS.includes(h) ? h : '';
+}
+
+loadColPref('records');
+loadColPref('parsed');
+
+loadOverview().then(() => {
+  // 项目首页只展示项目配置与统计，不预加载任何明细数据。
+  // 明细数据仅在显式点击「原始数据 / 解析后数据 / 查看数据」时按需加载。
+  const h = tabFromHash();
+  if (h) switchTab(h);
+});
+
+// 同页切换 hash（例如从列表再点「字段设置」）也要跟随
+window.addEventListener('hashchange', () => {
+  const h = tabFromHash();
+  if (h) switchTab(h);
+});
+
+// 字段设置筛选（内联绑定，避免行内 onclick 的引号问题）
+(function bindFieldFilters() {
+  const kw = document.getElementById('fs_kw');
+  const mode = document.getElementById('fs_mode');
+  const state = document.getElementById('fs_state');
+  const reRender = () => { FIELD_PAGE = 1; renderFieldSettings(); };
+  if (kw) kw.addEventListener('input', debounce(reRender, 250));
+  if (mode) mode.addEventListener('change', reRender);
+  if (state) state.addEventListener('change', reRender);
+})();
+
+// 点击列设置面板外部时收起
+document.addEventListener('click', (e) => {
+  ['r_colMenu', 'p_colMenu'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || el.classList.contains('hidden')) return;
+    if (el.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('button[onclick*="toggleColMenu"]')) return;
+    el.classList.add('hidden');
+  });
+});
+
+// 单元格查看弹窗：全选按钮
+(function bindCellView() {
+  const btn = document.getElementById('cellViewSelectAll');
+  const pre = document.getElementById('cellViewBody');
+  if (!btn || !pre) return;
+  btn.addEventListener('click', () => {
+    const range = document.createRange();
+    range.selectNodeContents(pre);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  });
+})();
+</script>

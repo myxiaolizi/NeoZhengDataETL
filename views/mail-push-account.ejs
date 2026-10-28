@@ -1,0 +1,359 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <a class="btn btn-ghost btn-sm acct-back" href="/mail-push#accounts">← 返回邮箱推送</a>
+    <h1 id="page-title">添加邮箱</h1>
+    <p class="sub">配置 IMAP 收件账户 · 自动拉取邮件附件并导入数据表</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3>账户与连接</h3>
+    <span class="muted small">带 <i class="req">*</i> 为必填项</span>
+  </div>
+  <div class="card-body">
+    <div class="field">
+      <span>服务商</span>
+      <select class="input" id="acct-preset">
+        <option value="custom">自定义</option>
+      </select>
+      <span class="hint">选择常见服务商可自动填充 IMAP 服务器、端口与加密方式</span>
+    </div>
+
+    <div class="form-row">
+      <div class="field">
+        <span>账户名称</span>
+        <input class="input" id="acct-name" type="text" placeholder="如：CRM 报表邮箱" autocomplete="off">
+        <span class="hint">可留空，留空时使用邮箱地址作为名称</span>
+      </div>
+      <div class="field">
+        <span>邮箱地址 <i class="req">*</i></span>
+        <input class="input" id="acct-email" type="text" placeholder="name@company.com" autocomplete="off">
+        <span class="hint">收件邮箱，需开启 IMAP 服务</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <span>密码 / 授权码 <i class="req" id="acct-pass-req">*</i></span>
+      <input class="input" id="acct-password" type="password" placeholder="客户端专用密码 / 授权码" autocomplete="new-password">
+      <span class="hint" id="acct-pass-hint">请填写邮箱的客户端专用密码或授权码，非网页登录密码</span>
+    </div>
+
+    <div class="form-row">
+      <div class="field">
+        <span>IMAP 服务器</span>
+        <input class="input" id="acct-host" type="text" placeholder="imap.qiye.aliyun.com" autocomplete="off">
+        <span class="hint">例如 imap.qiye.aliyun.com</span>
+      </div>
+      <div class="field">
+        <span>端口</span>
+        <input class="input" id="acct-port" type="number" value="993" min="1" max="65535">
+        <span class="hint">SSL 加密一般使用 993</span>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="field">
+        <span>SSL 加密</span>
+        <select class="input" id="acct-secure">
+          <option value="1">启用（推荐）</option>
+          <option value="0">关闭</option>
+        </select>
+        <span class="hint">关闭后按明文 IMAP 连接，仅内网环境使用</span>
+      </div>
+      <div class="field">
+        <span>收件文件夹</span>
+        <input class="input" id="acct-mailbox" type="text" value="INBOX" autocomplete="off">
+        <span class="hint">默认 INBOX，区分大小写</span>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="field">
+        <span>首次回溯天数</span>
+        <input class="input" id="acct-days" type="number" value="7" min="1" max="365">
+        <span class="hint">首次接入时向前回溯的邮件天数，1 - 365</span>
+      </div>
+      <div class="field">
+        <span>单次最多邮件数</span>
+        <input class="input" id="acct-max" type="number" value="50" min="1" max="500">
+        <span class="hint">每次自动拉取处理的上限，1 - 500</span>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="field">
+        <span>启用自动拉取</span>
+        <select class="input" id="acct-enabled">
+          <option value="1">启用</option>
+          <option value="0">停用</option>
+        </select>
+        <span class="hint">停用后该账户不参与定时拉取</span>
+      </div>
+      <div class="field">
+        <span>自动导入 Excel 附件</span>
+        <select class="input" id="acct-autoimport">
+          <option value="1">开启（解析附件并入库）</option>
+          <option value="0">仅收信不导入</option>
+        </select>
+        <span class="hint">开启后附件将按文件名匹配数据项目并写入</span>
+      </div>
+    </div>
+
+    <div class="form-actions">
+      <span class="muted small acct-test-result" id="acct-test-result"></span>
+      <button class="btn btn-ghost" id="btn-test" type="button">测试连接</button>
+      <button class="btn btn-ghost" id="btn-cancel" type="button">取消</button>
+      <button class="btn btn-primary" id="btn-save" type="button">保存</button>
+    </div>
+  </div>
+</div>
+
+<style>
+.acct-back { margin-bottom: 10px; }
+.card .form-row { margin-bottom: 0; }
+.card .form-row .field { margin-bottom: 16px; }
+.acct-test-result { margin-right: auto; line-height: 20px; }
+.acct-test-result.ok { color: #3687FF; }
+.acct-test-result.err { color: #E86161; }
+</style>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+window.__ACCOUNT__ = <%- JSON.stringify(typeof account !== 'undefined' ? account : null) %>;
+window.__IS_EDIT__ = <%- typeof isEdit !== 'undefined' && isEdit ? 'true' : 'false' %>;
+window.__ACCOUNT_ID__ = <%- JSON.stringify(typeof accountId !== 'undefined' ? accountId : null) %>;
+window.__CAN_WRITE__ = <%- typeof can === 'function' && can('settings:write') ? 'true' : 'false' %>;
+
+document.addEventListener('DOMContentLoaded', function () {
+  var ACC = window.__ACCOUNT__ || null;
+  var IS_EDIT = window.__IS_EDIT__ === true;
+  var CAN_WRITE = window.__CAN_WRITE__ === true;
+  var PRESETS = [];
+  var ACCOUNT_ID = null;
+
+  function $(id) { return document.getElementById(id); }
+
+  /** 从 /mail-push/accounts/:id/edit 提取账户 id */
+  function pathId() {
+    var m = String(location.pathname || '').match(/\/mail-push\/accounts\/(\d+)\/edit/);
+    return m ? Number(m[1]) : null;
+  }
+
+  ACCOUNT_ID = window.__ACCOUNT_ID__ || (ACC && ACC.id) || pathId() || null;
+
+  function setVal(id, v) {
+    var el = $(id);
+    if (!el) return;
+    el.value = (v === null || v === undefined) ? '' : String(v);
+  }
+
+  /** 回填整份表单 */
+  function fillForm(a) {
+    if (!a) return;
+    setVal('acct-name', a.name || '');
+    setVal('acct-email', a.email || '');
+    setVal('acct-password', '');
+    setVal('acct-host', a.imap_host || '');
+    setVal('acct-port', a.imap_port === undefined || a.imap_port === null ? 993 : a.imap_port);
+    setVal('acct-secure', a.imap_secure === undefined || a.imap_secure === null ? '1' : String(Number(a.imap_secure) ? 1 : 0));
+    setVal('acct-mailbox', a.mailbox || 'INBOX');
+    setVal('acct-days', a.initial_days === undefined || a.initial_days === null ? 7 : a.initial_days);
+    setVal('acct-max', a.max_per_run === undefined || a.max_per_run === null ? 50 : a.max_per_run);
+    setVal('acct-enabled', a.enabled === undefined || a.enabled === null ? '1' : String(Number(a.enabled) ? 1 : 0));
+    setVal('acct-autoimport', a.auto_import === undefined || a.auto_import === null ? '1' : String(Number(a.auto_import) ? 1 : 0));
+
+    // 服务商：按 host 反查，匹配不到则停在自定义
+    var sel = $('acct-preset');
+    if (sel && PRESETS.length) {
+      var hit = null;
+      for (var i = 0; i < PRESETS.length; i += 1) {
+        if (PRESETS[i].host && PRESETS[i].host === a.imap_host) { hit = PRESETS[i]; break; }
+      }
+      sel.value = hit ? hit.key : 'custom';
+    }
+  }
+
+  /** 更新页面标题（只改页面内 h1，保留 layout 注入的浏览器标题） */
+  function applyTitle(email) {
+    var h1 = $('page-title');
+    var text = IS_EDIT ? ('编辑邮箱' + (email ? ' · ' + email : '')) : '添加邮箱';
+    if (h1) h1.textContent = text;
+  }
+
+  /** 编辑模式：调整密码必填标记与提示 */
+  function applyEditHints() {
+    if (!IS_EDIT) return;
+    var req = $('acct-pass-req');
+    if (req) req.style.display = 'none';
+    var hint = $('acct-pass-hint');
+    if (hint) hint.textContent = '留空表示不修改现有密码；如需更换请直接填写新密码';
+    var pw = $('acct-password');
+    if (pw) pw.placeholder = '留空表示不修改现有密码';
+  }
+
+  /** 加载服务商预设 */
+  function loadPresets() {
+    var sel = $('acct-preset');
+    return api('/api/mail-push/account-presets').then(function (r) {
+      if (!r || !r.ok || !r.data) {
+        if (sel) sel.innerHTML = '<option value="custom">自定义</option>';
+        return;
+      }
+      PRESETS = r.data || [];
+      if (!sel) return;
+      var html = '';
+      for (var i = 0; i < PRESETS.length; i += 1) {
+        html += '<option value="' + esc(PRESETS[i].key) + '">' + esc(PRESETS[i].label) + '</option>';
+      }
+      if (!html) html = '<option value="custom">自定义</option>';
+      sel.innerHTML = html;
+      sel.value = 'custom';
+    }).catch(function () {
+      if (sel) sel.innerHTML = '<option value="custom">自定义</option>';
+    });
+  }
+
+  /** 服务商切换：自动填充服务器 / 端口 / 加密 */
+  function onPresetChange() {
+    var sel = $('acct-preset');
+    if (!sel) return;
+    var key = sel.value;
+    var p = null;
+    for (var i = 0; i < PRESETS.length; i += 1) {
+      if (PRESETS[i].key === key) { p = PRESETS[i]; break; }
+    }
+    if (!p || !p.host) return;
+    setVal('acct-host', p.host);
+    setVal('acct-port', p.port || 993);
+    setVal('acct-secure', String(Number(p.secure) ? 1 : 0));
+  }
+
+  /** 收集表单值 */
+  function collect() {
+    var portEl = $('acct-port');
+    var daysEl = $('acct-days');
+    var maxEl = $('acct-max');
+    return {
+      name: ($('acct-name').value || '').trim(),
+      email: ($('acct-email').value || '').trim(),
+      password: $('acct-password').value || '',
+      imap_host: ($('acct-host').value || '').trim(),
+      imap_port: Number(portEl.value) || 993,
+      imap_secure: Number($('acct-secure').value) ? 1 : 0,
+      mailbox: ($('acct-mailbox').value || '').trim() || 'INBOX',
+      initial_days: Number(daysEl.value) || 7,
+      max_per_run: Number(maxEl.value) || 50,
+      enabled: Number($('acct-enabled').value) ? 1 : 0,
+      auto_import: Number($('acct-autoimport').value) ? 1 : 0
+    };
+  }
+
+  function showResult(text, ok) {
+    var el = $('acct-test-result');
+    if (!el) return;
+    el.textContent = text || '';
+    el.className = 'muted small acct-test-result' + (text ? (ok ? ' ok' : ' err') : '');
+  }
+
+  /** 测试连接 */
+  function testConn() {
+    var btn = $('btn-test');
+    var payload = collect();
+    if (!payload.email) { toast('请先填写邮箱地址', 'error'); return; }
+    if (!IS_EDIT && !payload.password) { toast('请先填写邮箱密码 / 授权码', 'error'); return; }
+    if (IS_EDIT && ACCOUNT_ID) payload.id = Number(ACCOUNT_ID);
+
+    btn.disabled = true;
+    var old = btn.textContent;
+    btn.textContent = '测试中…';
+    showResult('正在连接 IMAP 服务器…', true);
+
+    api('/api/mail-push/test', { method: 'POST', body: payload }).then(function (r) {
+      var msg = (r && r.message) ? r.message : (r && r.ok ? '连接成功' : '连接失败');
+      showResult(msg, !!(r && r.ok));
+      toast(msg, (r && r.ok) ? 'success' : 'error');
+    }).catch(function (e) {
+      showResult((e && e.message) || '测试失败', false);
+      toast((e && e.message) || '测试失败', 'error');
+    }).then(function () {
+      btn.disabled = false;
+      btn.textContent = old || '测试连接';
+    });
+  }
+
+  /** 保存（新增 POST / 编辑 PUT） */
+  function save() {
+    if (!CAN_WRITE) { toast('没有修改邮箱账户的权限', 'error'); return; }
+    var payload = collect();
+    if (!payload.email) { toast('请填写邮箱地址', 'error'); return; }
+    if (!IS_EDIT && !payload.password) { toast('请填写邮箱密码 / 授权码', 'error'); return; }
+    if (IS_EDIT && !ACCOUNT_ID) { toast('缺少账户 ID，无法保存', 'error'); return; }
+
+    var btn = $('btn-save');
+    btn.disabled = true;
+    var old = btn.textContent;
+    btn.textContent = '保存中…';
+
+    var url = IS_EDIT ? ('/api/mail-push/accounts/' + ACCOUNT_ID) : '/api/mail-push/accounts';
+    var method = IS_EDIT ? 'PUT' : 'POST';
+
+    api(url, { method: method, body: payload }).then(function (r) {
+      if (!r || !r.ok) {
+        toast((r && r.message) || '保存失败', 'error');
+        btn.disabled = false;
+        btn.textContent = old || '保存';
+        return;
+      }
+      toast(r.message || '邮箱账户已保存', 'success');
+      setTimeout(function () { location.href = '/mail-push#accounts'; }, 350);
+    }).catch(function (e) {
+      toast((e && e.message) || '保存失败', 'error');
+      btn.disabled = false;
+      btn.textContent = old || '保存';
+    });
+  }
+
+  function back() { location.href = '/mail-push#accounts'; }
+
+  /* ---------- 初始化 ---------- */
+
+  applyEditHints();
+  applyTitle(ACC && ACC.email);
+
+  var presetSel = $('acct-preset');
+  if (presetSel) presetSel.addEventListener('change', onPresetChange);
+  var testBtn = $('btn-test');
+  if (testBtn) testBtn.addEventListener('click', testConn);
+  var saveBtn = $('btn-save');
+  if (saveBtn) saveBtn.addEventListener('click', save);
+  var cancelBtn = $('btn-cancel');
+  if (cancelBtn) cancelBtn.addEventListener('click', back);
+
+  loadPresets().then(function () {
+    if (!IS_EDIT) {
+      applyTitle('');
+      return;
+    }
+    if (ACC) {
+      fillForm(ACC);
+      applyTitle(ACC.email);
+      return;
+    }
+    // 兜底：注入对象缺失时按路径 id 拉取
+    var id = ACCOUNT_ID;
+    if (!id) { toast('缺少账户 ID', 'error'); return; }
+    api('/api/mail-push/accounts/' + id).then(function (r) {
+      if (!r || !r.ok) { toast((r && r.message) || '账户加载失败', 'error'); return; }
+      ACCOUNT_ID = Number(id);
+      fillForm(r.data);
+      applyTitle(r.data && r.data.email);
+    }).catch(function (e) {
+      toast((e && e.message) || '账户加载失败', 'error');
+    });
+  });
+});
+</script>

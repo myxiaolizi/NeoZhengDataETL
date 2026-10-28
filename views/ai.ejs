@@ -1,0 +1,200 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>AI 问数</h1>
+    <p class="sub">用自然语言查询数据 · 自动生成 SQL 并解读结果</p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" onclick="clearChat()">清空对话</button>
+    ${can('ai:config') ? '<a class="btn" href="/settings">AI 配置</a>' : ''}
+  </div>
+</div>
+
+${!aiEnabled ? `
+<div class="alert alert-warning">
+  <b>AI 问数尚未启用。</b>请前往「系统设置 → AI 问数」配置大模型接口地址与密钥后开启。
+</div>` : ''}
+
+<div class="ai-layout">
+  <div class="ai-chat">
+    <div class="ai-messages" id="messages"></div>
+    <div class="ai-suggest" id="suggest"></div>
+    <div class="ai-input-row">
+      <input class="input" id="question" placeholder="输入你的问题，例如：本月新增了多少条数据？"
+             ${aiEnabled ? '' : 'disabled'}>
+      <button class="btn btn-primary" id="askBtn" onclick="ask()" ${aiEnabled ? '' : 'disabled'}>发送</button>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <div class="card-header"><h3>数据集范围</h3></div>
+      <div class="card-body">
+        <label class="field">
+          <span>限定数据集（可选）</span>
+          <select class="input" id="datasetId">
+            <option value="">自动选择（推荐）</option>
+          </select>
+          <small class="hint">不限定范围时，AI 会根据问题自动匹配最合适的数据集</small>
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3>历史问数</h3></div>
+      <div class="card-body" id="history" style="max-height:340px;overflow-y:auto">
+        <div class="empty-mini">暂无记录</div>
+      </div>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const AI_ENABLED = <%= aiEnabled ? 'true' : 'false' %>;
+const WELCOME = <%- JSON.stringify(welcome || '') %>;
+let SESSION_KEY = 'ai_' + Date.now().toString(36);
+let HISTORY = [];
+let DATASETS = [];
+
+const SUGGESTS = [
+  '一共有多少条数据？',
+  '最近 7 天的数据量趋势如何？',
+  '按分类统计数量并排序',
+  '列出前 10 条记录',
+];
+
+function esc2(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function addMessage(role, html) {
+  const box = document.getElementById('messages');
+  const div = document.createElement('div');
+  div.className = 'ai-msg ' + role;
+  div.innerHTML = '<div class="ai-avatar">' + (role === 'user' ? '我' : '✦') + '</div>' +
+                  '<div class="ai-bubble">' + html + '</div>';
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+  return div;
+}
+
+function renderWelcome() {
+  if (WELCOME) addMessage('bot', esc2(WELCOME));
+  document.getElementById('suggest').innerHTML = SUGGESTS.map(s =>
+    '<span class="chip" data-q="' + esc2(s) + '">' + esc2(s) + '</span>').join('');
+  document.querySelectorAll('#suggest .chip').forEach(el => {
+    el.addEventListener('click', () => {
+      document.getElementById('question').value = el.dataset.q;
+      ask();
+    });
+  });
+}
+
+async function loadDatasets() {
+  const r = await api('/api/datasets');
+  if (!r.ok) return;
+  DATASETS = r.data;
+  document.getElementById('datasetId').innerHTML =
+    '<option value="">自动选择（推荐）</option>' +
+    DATASETS.map(d => '<option value="' + d.id + '">' + esc2(d.name) + '</option>').join('');
+}
+
+async function loadHistory() {
+  const r = await api('/api/ai/chats?limit=30');
+  if (!r.ok) return;
+  const el = document.getElementById('history');
+  if (!r.data.length) { el.innerHTML = '<div class="empty-mini">暂无记录</div>'; return; }
+  el.innerHTML = r.data.map(c =>
+    '<div style="padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer" data-q="' + esc2(c.question) + '">' +
+      '<div style="font-size:12.5px">' + (c.success ? '✓ ' : '✗ ') + esc2(String(c.question || '').slice(0, 40)) + '</div>' +
+      '<div class="muted" style="font-size:11px">' + fmtTime(c.created_at) +
+        (c.result_rows ? ' · ' + c.result_rows + ' 行' : '') + '</div>' +
+    '</div>').join('');
+  el.querySelectorAll('div[data-q]').forEach(d => {
+    d.addEventListener('click', () => {
+      document.getElementById('question').value = d.dataset.q;
+      ask();
+    });
+  });
+}
+
+async function ask() {
+  if (!AI_ENABLED) return toast('系统未启用 AI 问数', 'error');
+  const input = document.getElementById('question');
+  const q = input.value.trim();
+  if (!q) return toast('请输入问题', 'error');
+
+  addMessage('user', esc2(q));
+  input.value = '';
+  HISTORY.push({ role: 'user', content: q });
+
+  const btn = document.getElementById('askBtn');
+  btn.disabled = true; btn.textContent = '思考中...';
+  const loading = addMessage('bot', '<span class="muted">正在分析问题并生成查询...</span>');
+
+  const r = await api('/api/ai/ask', {
+    method: 'POST',
+    body: {
+      question: q,
+      sessionKey: SESSION_KEY,
+      datasetId: Number(document.getElementById('datasetId').value) || undefined,
+      history: HISTORY.slice(-4),
+    },
+  });
+
+  btn.disabled = false; btn.textContent = '发送';
+
+  if (!r.ok) {
+    loading.querySelector('.ai-bubble').innerHTML =
+      '<span style="color:var(--danger)">查询失败：' + esc2(r.message) + '</span>';
+    return;
+  }
+
+  const d = r.data;
+  let html = '<div style="margin-bottom:8px">' + esc2(d.answer || '查询完成') + '</div>';
+  html += '<div class="muted" style="font-size:11.5px;margin-bottom:6px">' +
+          '数据集：' + esc2(d.datasetName) + ' · 返回 ' + d.rowCount + ' 行 · 耗时 ' + d.duration + 'ms</div>';
+  html += '<details><summary style="cursor:pointer;color:var(--primary);font-size:12px">查看生成的 SQL</summary>' +
+          '<pre>' + esc2(d.sql) + '</pre></details>';
+
+  if (d.rows.length) {
+    const cols = d.columns.map(c => c.name);
+    html += '<div style="margin-top:10px;overflow-x:auto;max-height:260px">' +
+      '<table class="table table-fixed" style="font-size:12px"><thead><tr>' +
+      cols.map(c => '<th>' + esc2(c) + '</th>').join('') + '</tr></thead><tbody>' +
+      d.rows.slice(0, 20).map(row => '<tr>' + cols.map(c => {
+        const v = row[c];
+        const s = v === null || v === undefined ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+        return '<td title="' + esc2(s) + '"><span class="cell-inner">' + esc2(s.slice(0, 50)) + '</span></td>';
+      }).join('') + '</tr>').join('') + '</tbody></table></div>';
+    if (d.rows.length > 20) {
+      html += '<div class="muted" style="font-size:11.5px;margin-top:6px">仅显示前 20 行，共 ' + d.rows.length + ' 行</div>';
+    }
+  }
+
+  loading.querySelector('.ai-bubble').innerHTML = html;
+  HISTORY.push({ role: 'assistant', content: d.answer || '' });
+  loadHistory();
+}
+
+function clearChat() {
+  document.getElementById('messages').innerHTML = '';
+  HISTORY = [];
+  SESSION_KEY = 'ai_' + Date.now().toString(36);
+  renderWelcome();
+  toast('对话已清空', 'success');
+}
+
+document.getElementById('question').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask(); }
+});
+
+renderWelcome();
+loadDatasets();
+loadHistory();
+</script>

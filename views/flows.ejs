@@ -1,0 +1,211 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>数据处理</h1>
+    <p class="sub">拖拽编排数据加工流程 · 清洗、转换、聚合后输出</p>
+  </div>
+  <div class="head-actions">
+    <input class="input" id="kw" placeholder="搜索流程" style="width:200px">
+    ${can('flow:write') ? '<button class="btn btn-primary" onclick="openCreate()">+ 新建流程</button>' : ''}
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-label">流程总数</div><div class="stat-value" id="s_total">-</div></div>
+  <div class="stat"><div class="stat-label">已启用</div><div class="stat-value" id="s_active">-</div></div>
+  <div class="stat"><div class="stat-label">累计执行</div><div class="stat-value" id="s_runs">-</div></div>
+  <div class="stat"><div class="stat-label">成功次数</div><div class="stat-value" id="s_oks">-</div></div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="table table-fixed">
+      <thead>
+        <tr>
+          <th style="width:60px">ID</th>
+          <th style="width:180px">流程名称</th>
+          <th>说明</th>
+          <th style="width:100px">节点数</th>
+          <th style="width:110px">执行/成功</th>
+          <th style="width:160px">最近执行</th>
+          <th style="width:90px">状态</th>
+          <th style="width:280px">操作</th>
+        </tr>
+      </thead>
+      <tbody id="flowBody"><tr><td colspan="8" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal-mask" id="createModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modalTitle">新建流程</h3>
+      <button class="modal-close" onclick="closeModal('createModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="c_id">
+      <label class="field">
+        <span>流程名称 <i class="req">*</i></span>
+        <input class="input" id="c_name" placeholder="例如：客户数据清洗">
+      </label>
+      <label class="field">
+        <span>流程说明</span>
+        <textarea class="input" id="c_desc" rows="2" placeholder="可选"></textarea>
+      </label>
+      <label class="field">
+        <span>运行方式</span>
+        <select class="input" id="c_mode">
+          <option value="manual">手动执行</option>
+          <option value="cron">定时执行</option>
+          <option value="trigger">数据到达时触发</option>
+        </select>
+      </label>
+      <label class="field hidden" id="cronField">
+        <span>定时表达式（Cron）</span>
+        <input class="input mono" id="c_cron" placeholder="0 2 * * *（每天凌晨 2 点）">
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('createModal')">取消</button>
+      <button class="btn btn-primary" id="createBtn" onclick="doCreate()">创建并编排</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const CAN_WRITE = <%= can('flow:write') ? 'true' : 'false' %>;
+let LIST = [];
+
+async function load() {
+  const kw = document.getElementById('kw').value.trim();
+  const r = await api('/api/flows?keyword=' + encodeURIComponent(kw));
+  if (!r.ok) return toast(r.message, 'error');
+  LIST = r.data.list;
+  const s = r.data.stats;
+  document.getElementById('s_total').textContent = s.flows;
+  document.getElementById('s_active').textContent = s.active;
+  document.getElementById('s_runs').textContent = s.runs;
+  document.getElementById('s_oks').textContent = s.oks;
+  render();
+}
+
+function render() {
+  const body = document.getElementById('flowBody');
+  if (!LIST.length) {
+    body.innerHTML = '<tr><td colspan="8" class="empty">还没有处理流程，点击右上角新建</td></tr>';
+    return;
+  }
+
+  body.innerHTML = LIST.map(f => {
+    const runTag = f.lastRunOk === null
+      ? '<span class="tag tag-off tag-sm">未执行</span>'
+      : (f.lastRunOk ? '<span class="tag tag-ok tag-sm">成功</span>' : '<span class="tag tag-err tag-sm">失败</span>');
+    const modeName = { manual: '手动', cron: '定时', trigger: '触发' }[f.runMode] || f.runMode;
+
+    return '<tr>' +
+      '<td>' + f.id + '</td>' +
+      '<td><b>' + esc(f.name) + '</b><div class="muted small">' + esc(f.code) + '</div></td>' +
+      '<td class="small muted">' + esc(f.description || '-') + '</td>' +
+      '<td>' + f.nodeCount + ' <span class="muted small">(' + esc(modeName) + ')</span></td>' +
+      '<td class="small">' + f.runCount + ' / ' + f.successCount + '</td>' +
+      '<td class="small">' + fmtTime(f.lastRunAt) + '<div>' + runTag + '</div></td>' +
+      '<td>' + (f.status ? '<span class="tag tag-ok">启用</span>' : '<span class="tag tag-off">停用</span>') + '</td>' +
+      '<td>' +
+        (CAN_WRITE ? '<button class="btn btn-sm btn-primary" data-run="' + f.id + '">执行</button>' : '') +
+        (CAN_WRITE ? '<a class="btn btn-sm" href="/flows/' + f.id + '/design">编排</a>' : '') +
+        '<a class="btn btn-sm" href="/flows/' + f.id + '/logs">日志</a>' +
+        (CAN_WRITE ? '<button class="btn btn-sm" data-edit="' + f.id + '">设置</button>' : '') +
+        (CAN_WRITE ? '<button class="btn btn-sm btn-danger" data-del="' + f.id + '">删除</button>' : '') +
+      '</td>' +
+    '</tr>';
+  }).join('');
+
+  body.querySelectorAll('button[data-run]').forEach(b => b.addEventListener('click', () => runFlow(Number(b.dataset.run))));
+  body.querySelectorAll('button[data-edit]').forEach(b => b.addEventListener('click', () => openEdit(Number(b.dataset.edit))));
+  body.querySelectorAll('button[data-del]').forEach(b => b.addEventListener('click', () => del(Number(b.dataset.del))));
+}
+
+document.getElementById('c_mode').addEventListener('change', () => {
+  document.getElementById('cronField').classList.toggle('hidden', document.getElementById('c_mode').value !== 'cron');
+});
+
+function openCreate() {
+  document.getElementById('modalTitle').textContent = '新建流程';
+  document.getElementById('c_id').value = '';
+  document.getElementById('c_name').value = '';
+  document.getElementById('c_desc').value = '';
+  document.getElementById('c_mode').value = 'manual';
+  document.getElementById('c_cron').value = '';
+  document.getElementById('cronField').classList.add('hidden');
+  document.getElementById('createBtn').textContent = '创建并编排';
+  openModal('createModal');
+}
+
+function openEdit(id) {
+  const f = LIST.find(x => x.id === id);
+  if (!f) return;
+  document.getElementById('modalTitle').textContent = '流程设置：' + f.name;
+  document.getElementById('c_id').value = f.id;
+  document.getElementById('c_name').value = f.name;
+  document.getElementById('c_desc').value = f.description || '';
+  document.getElementById('c_mode').value = f.runMode;
+  document.getElementById('c_cron').value = f.cronExpr || '';
+  document.getElementById('cronField').classList.toggle('hidden', f.runMode !== 'cron');
+  document.getElementById('createBtn').textContent = '保存';
+  openModal('createModal');
+}
+
+async function doCreate() {
+  const id = document.getElementById('c_id').value;
+  const body = {
+    name: document.getElementById('c_name').value.trim(),
+    description: document.getElementById('c_desc').value.trim(),
+    runMode: document.getElementById('c_mode').value,
+    cronExpr: document.getElementById('c_cron').value.trim(),
+  };
+  if (!body.name) return toast('请填写流程名称', 'error');
+
+  const btn = document.getElementById('createBtn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = '保存中...';
+  const r = id
+    ? await api('/api/flows/' + id, { method: 'PUT', body })
+    : await api('/api/flows', { method: 'POST', body });
+  btn.disabled = false; btn.textContent = orig;
+
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  if (id) {
+    toast('已保存', 'success');
+    closeModal('createModal');
+    load();
+  } else {
+    toast('创建成功，正在进入编排器...', 'success');
+    setTimeout(() => { location.href = '/flows/' + r.data.id + '/design'; }, 600);
+  }
+}
+
+async function runFlow(id) {
+  const f = LIST.find(x => x.id === id);
+  if (!confirm('立即执行流程「' + (f ? f.name : id) + '」？')) return;
+  toast('正在执行...');
+  const r = await api('/api/flows/' + id + '/run', { method: 'POST' });
+  toast(r.message || (r.ok ? '执行成功' : '执行失败'), r.ok ? 'success' : 'error');
+  load();
+}
+
+async function del(id) {
+  const f = LIST.find(x => x.id === id);
+  if (!confirm('确定删除流程「' + (f ? f.name : id) + '」？运行日志也会一并删除。')) return;
+  const r = await api('/api/flows/' + id, { method: 'DELETE' });
+  if (!r.ok) return toast(r.message || '删除失败', 'error');
+  toast('流程已删除', 'success');
+  load();
+}
+
+document.getElementById('kw').addEventListener('input', debounce(load, 400));
+load();
+</script>

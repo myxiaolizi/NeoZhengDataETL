@@ -1,0 +1,17 @@
+<% var body = '' %>
+<% body += `
+<div class="error-page">
+  <h1>${title}</h1>
+  <p>${message}</p>
+  <a class="btn btn-primary" href="/">返回首页</a>
+</div>
+` %>
+<%- include('layout', {
+  body: body,
+  title: title,
+  active: typeof active !== 'undefined' ? active : '',
+  currentUser: typeof currentUser !== 'undefined' ? currentUser : null,
+  can: typeof can !== 'undefined' ? can : function () { return false; },
+  isAdmin: typeof isAdmin !== 'undefined' ? isAdmin : false,
+  settings: typeof settings !== 'undefined' && settings ? settings : locals.settings
+}) %>

@@ -1,0 +1,126 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>${esc(flow.name)}</h1>
+    <p class="sub">
+      <span class="tag tag-primary">运行日志</span>
+      <span class="muted">共执行 ${flow.runCount} 次，成功 ${flow.successCount} 次</span>
+    </p>
+  </div>
+  <div class="head-actions">
+    ${can('flow:write') ? '<button class="btn btn-primary" onclick="runNow()">立即执行</button>' : ''}
+    <button class="btn" onclick="load(1)">刷新</button>
+    <a class="btn btn-ghost" href="/flows">返回</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table class="table table-fixed">
+      <thead>
+        <tr>
+          <th style="width:70px">ID</th>
+          <th style="width:100px">触发</th>
+          <th style="width:90px">结果</th>
+          <th style="width:100px">输入行</th>
+          <th style="width:100px">输出行</th>
+          <th style="width:100px">耗时</th>
+          <th>消息</th>
+          <th style="width:160px">时间</th>
+          <th style="width:80px">详情</th>
+        </tr>
+      </thead>
+      <tbody id="logBody"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager"></div>
+</div>
+
+<div class="modal-mask" id="detailModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3>执行详情</h3>
+      <button class="modal-close" onclick="closeModal('detailModal')">×</button>
+    </div>
+    <div class="modal-body" id="detailBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('detailModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const FLOW_ID = <%= flow.id %>;
+let LOGS = [];
+const TRIGGER = { manual: '手动', cron: '定时', webhook: '触发' };
+
+async function load(page) {
+  const r = await api('/api/flows/' + FLOW_ID + '/logs?page=' + page + '&pageSize=20');
+  if (!r.ok) return toast(r.message, 'error');
+  LOGS = r.data.list;
+
+  const body = document.getElementById('logBody');
+  if (!LOGS.length) {
+    body.innerHTML = '<tr><td colspan="9" class="empty">暂无运行日志</td></tr>';
+  } else {
+    body.innerHTML = LOGS.map(l => '<tr>' +
+      '<td>' + l.id + '</td>' +
+      '<td>' + esc(TRIGGER[l.trigger_source] || l.trigger_source) + '</td>' +
+      '<td>' + (l.success ? '<span class="tag tag-ok">成功</span>' : '<span class="tag tag-err">失败</span>') + '</td>' +
+      '<td>' + l.input_rows + '</td>' +
+      '<td>' + l.output_rows + '</td>' +
+      '<td>' + (l.duration_ms || 0) + 'ms</td>' +
+      '<td class="small" title="' + esc(l.message || '') + '">' + esc((l.message || '').slice(0, 70)) + '</td>' +
+      '<td class="small">' + fmtTime(l.created_at) + '</td>' +
+      '<td><button class="btn btn-sm" data-detail="' + l.id + '">查看</button></td>' +
+    '</tr>').join('');
+
+    body.querySelectorAll('button[data-detail]').forEach(b =>
+      b.addEventListener('click', () => showDetail(Number(b.dataset.detail))));
+  }
+
+  renderPager('pager', r.data.total, r.data.page, r.data.pageSize, load);
+}
+
+function showDetail(id) {
+  const l = LOGS.find(x => x.id === id);
+  if (!l) return;
+
+  document.getElementById('detailBody').innerHTML =
+    '<div class="kv">' +
+      '<div><span>结果</span><b>' + (l.success ? '成功' : '失败') + '</b></div>' +
+      '<div><span>触发方式</span>' + esc(TRIGGER[l.trigger_source] || l.trigger_source) + '</div>' +
+      '<div><span>输入行数</span>' + l.input_rows + '</div>' +
+      '<div><span>输出行数</span>' + l.output_rows + '</div>' +
+      '<div><span>耗时</span>' + (l.duration_ms || 0) + 'ms</div>' +
+      '<div><span>时间</span>' + fmtTime(l.created_at) + '</div>' +
+    '</div>' +
+    (l.message ? '<div class="alert ' + (l.success ? 'alert-info' : 'alert-error') + '">' + esc(l.message) + '</div>' : '') +
+    '<h4 style="margin:16px 0 8px;font-size:14px">节点执行明细</h4>' +
+    '<div class="flow-log">' +
+      (l.nodeLogs || []).map(n => '<div>' +
+        (n.ok === false ? '<span class="err">✗</span> ' : '<span class="ok">✓</span> ') +
+        esc(n.name) + '：' +
+        (n.error ? '<span class="err">' + esc(n.error) + '</span>'
+          : (n.inputRows !== undefined ? n.inputRows + ' → ' + n.outputRows + ' 行' : n.rows + ' 行')) +
+        (n.result ? ' <span class="muted">' + esc(JSON.stringify(n.result)) + '</span>' : '') +
+        ' <span class="muted">(' + n.ms + 'ms)</span>' +
+      '</div>').join('') || '<div class="muted">无节点日志</div>' +
+    '</div>';
+
+  openModal('detailModal');
+}
+
+async function runNow() {
+  if (!confirm('立即执行该流程？')) return;
+  toast('正在执行...');
+  const r = await api('/api/flows/' + FLOW_ID + '/run', { method: 'POST' });
+  toast(r.message || (r.ok ? '执行成功' : '执行失败'), r.ok ? 'success' : 'error');
+  load(1);
+}
+
+load(1);
+</script>

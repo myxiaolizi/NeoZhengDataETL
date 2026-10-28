@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %> - <%= settings.site_name %></title>
+  <link rel="stylesheet" href="/public/css/app.css">
+  <% if (settings.theme_color && settings.theme_color !== '#3687FF') { %>
+  <style>:root { --primary: <%= settings.theme_color %>; }</style>
+  <% } %>
+</head>
+<body class="login-body">
+  <div class="login-bg">
+    <div class="orb orb1"></div>
+    <div class="orb orb2"></div>
+    <div class="orb orb3"></div>
+    <div class="login-grid"></div>
+  </div>
+
+  <div class="login-shell">
+    <div class="login-hero">
+      <div class="hero-brand">
+        <div class="logo"><%= settings.site_logo_text %></div>
+        <div>
+          <div class="brand-name"><%= settings.site_name %></div>
+          <div class="brand-tag"><%= settings.site_subtitle %></div>
+        </div>
+      </div>
+
+      <h1>创建账号<br><span class="grad">开始接收推送数据</span></h1>
+      <p class="hero-desc">
+        注册后默认为「只读用户」角色，可查看项目、数据明细与接收日志。<br>
+        需要创建项目或配置字段，请联系管理员调整权限。
+      </p>
+
+      <div class="hero-features">
+        <div class="hero-feature">
+          <div class="fi">✉</div>
+          <div>
+            <div class="ft">邮箱验证</div>
+            <div class="fd">注册后需完成邮箱验证，用于找回密码</div>
+          </div>
+        </div>
+        <div class="hero-feature">
+          <div class="fi">⛨</div>
+          <div>
+            <div class="ft">密码加密</div>
+            <div class="fd">密码使用 bcrypt 单向加密存储</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-foot">
+        <% if (settings.site_footer) { %><%= settings.site_footer %><br><% } %>
+        © <%= new Date().getFullYear() %> <%= settings.site_name %>
+      </div>
+    </div>
+
+    <div class="login-panel">
+      <div class="panel-title">注册账号</div>
+      <div class="panel-sub">填写以下信息完成注册</div>
+
+      <% if (!mailReady) { %>
+      <div class="alert alert-error">系统尚未配置邮件服务，暂时无法自助注册，请联系管理员开通账号</div>
+      <% } %>
+      <% if (error) { %>
+      <div class="alert alert-error"><%= error %></div>
+      <% } %>
+
+      <form method="post" action="/register" class="login-form" id="regForm">
+        <label class="field">
+          <span>账号 <i style="color:#E86161">*</i></span>
+          <input class="input" type="text" name="username" value="<%= form.username %>"
+                 placeholder="3-32 位字母、数字、下划线" required autofocus
+                 <%= mailReady ? '' : 'disabled' %>>
+        </label>
+
+        <label class="field">
+          <span>邮箱 <i style="color:#E86161">*</i></span>
+          <input class="input" type="email" name="email" value="<%= form.email %>"
+                 placeholder="用于找回密码与接收通知" required
+                 <%= mailReady ? '' : 'disabled' %>>
+        </label>
+
+        <label class="field">
+          <span>显示名称</span>
+          <input class="input" type="text" name="displayName" value="<%= form.displayName %>"
+                 placeholder="留空则使用账号" <%= mailReady ? '' : 'disabled' %>>
+        </label>
+
+        <label class="field">
+          <span>密码 <i style="color:#E86161">*</i></span>
+          <input class="input" type="password" name="password" placeholder="请输入密码"
+                 autocomplete="new-password" required <%= mailReady ? '' : 'disabled' %>>
+        </label>
+
+        <label class="field">
+          <span>确认密码 <i style="color:#E86161">*</i></span>
+          <input class="input" type="password" name="confirmPassword" placeholder="请再次输入密码"
+                 autocomplete="new-password" required <%= mailReady ? '' : 'disabled' %>>
+        </label>
+
+        <button class="btn-login" type="submit" <%= mailReady ? '' : 'disabled' %>>注 册</button>
+
+        <div class="panel-links" style="justify-content:center">
+          <a href="/login">已有账号？返回登录</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

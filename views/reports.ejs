@@ -1,0 +1,342 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>报表中心</h1>
+    <p class="sub">图表 / 表格 / 看板大屏 · 支持分享给他人查看</p>
+  </div>
+  <div class="head-actions">
+    <input class="input" id="kw" placeholder="搜索报表名称 / 分类" style="width:200px">
+    <a class="btn" href="/datasets">数据集管理</a>
+    ${can('report:write') ? '<button class="btn btn-primary" onclick="openCreate()">+ 新建报表</button>' : ''}
+  </div>
+</div>
+
+<div class="tabs-pill" id="typeTabs" style="margin-bottom:18px"></div>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-label">报表总数</div><div class="stat-value" id="s_total">-</div></div>
+  <div class="stat"><div class="stat-label">图表报表</div><div class="stat-value" id="s_chart">-</div></div>
+  <div class="stat"><div class="stat-label">数据表格</div><div class="stat-value" id="s_table">-</div></div>
+  <div class="stat"><div class="stat-label">看板大屏</div><div class="stat-value" id="s_dash">-</div></div>
+  <div class="stat"><div class="stat-label">分享中</div><div class="stat-value" id="s_share">-</div></div>
+</div>
+
+<div class="report-grid" id="reportGrid"></div>
+<div id="reportEmpty" class="empty-state hidden">
+  <div class="ico">◨</div>
+  <h3>还没有报表</h3>
+  <p>先创建数据集，再基于数据集设计图表报表或看板</p>
+  ${can('dataset:write') ? '<a class="btn btn-primary" href="/datasets">去创建数据集</a>' : ''}
+</div>
+
+<div class="modal-mask" id="createModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modalTitle">新建报表</h3>
+      <button class="modal-close" onclick="closeModal('createModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="c_id">
+      <label class="field">
+        <span>报表名称 <i class="req">*</i></span>
+        <input class="input" id="c_name" placeholder="例如：月度销售趋势">
+      </label>
+      <label class="field">
+        <span>报表类型</span>
+        <select class="input" id="c_type" onchange="onTypeChange()">
+          <option value="chart">图表报表</option>
+          <option value="table">数据表格</option>
+          <option value="dashboard">看板大屏</option>
+        </select>
+        <small class="hint" id="typeHint">图表报表：单图表展示；看板大屏：多卡片组合的仪表盘</small>
+      </label>
+      <label class="field">
+        <span>数据集 <i class="req">*</i></span>
+        <select class="input" id="c_dataset"></select>
+        <small class="hint">报表的数据来源，可在「数据集管理」中创建</small>
+      </label>
+      <label class="field">
+        <span>分类</span>
+        <input class="input" id="c_category" placeholder="例如：销售分析">
+      </label>
+      <label class="field">
+        <span>说明</span>
+        <textarea class="input" id="c_desc" rows="2" placeholder="可选"></textarea>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('createModal')">取消</button>
+      <button class="btn btn-primary" id="createBtn" onclick="doCreate()">创建并设计</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const CAN_WRITE = <%= can('report:write') ? 'true' : 'false' %>;
+const CAN_SHARE = <%= can('share:write') ? 'true' : 'false' %>;
+let REPORTS = [];
+let DATASETS = [];
+let TYPE_FILTER = 'all';
+
+const TYPE_TABS = [
+  { key: 'all', name: '全部', icon: '◫' },
+  { key: 'chart', name: '图表报表', icon: '◨' },
+  { key: 'table', name: '数据表格', icon: '▤' },
+  { key: 'dashboard', name: '看板大屏', icon: '▦' },
+];
+
+function renderTypeTabs() {
+  document.getElementById('typeTabs').innerHTML = TYPE_TABS.map(t =>
+    '<button class="tp-item' + (t.key === TYPE_FILTER ? ' active' : '') + '" data-type="' + t.key + '">' +
+    t.icon + ' ' + t.name + '</button>').join('');
+
+  document.querySelectorAll('#typeTabs .tp-item').forEach(el => {
+    el.addEventListener('click', () => {
+      TYPE_FILTER = el.dataset.type;
+      renderTypeTabs();
+      render();
+    });
+  });
+}
+
+async function load() {
+  const kw = document.getElementById('kw').value.trim();
+  const [rr, dr] = await Promise.all([
+    api('/api/reports?keyword=' + encodeURIComponent(kw)),
+    api('/api/datasets'),
+  ]);
+  if (!rr.ok) return toast(rr.message, 'error');
+  REPORTS = rr.data;
+  if (dr.ok) DATASETS = dr.data;
+
+  document.getElementById('s_total').textContent = REPORTS.length;
+  document.getElementById('s_chart').textContent = REPORTS.filter(r => r.reportType === 'chart').length;
+  document.getElementById('s_table').textContent = REPORTS.filter(r => r.reportType === 'table').length;
+  document.getElementById('s_dash').textContent = REPORTS.filter(r => r.reportType === 'dashboard').length;
+  document.getElementById('s_share').textContent = REPORTS.reduce((s, r) => s + (r.shareCount || 0), 0);
+
+  renderTypeTabs();
+  render();
+}
+
+function render() {
+  const grid = document.getElementById('reportGrid');
+  const empty = document.getElementById('reportEmpty');
+
+  let list = REPORTS;
+  if (TYPE_FILTER !== 'all') list = list.filter(r => r.reportType === TYPE_FILTER);
+
+  if (!list.length) {
+    grid.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  grid.innerHTML = list.map(r => {
+    const typeName = { chart: '图表', table: '表格', dashboard: '看板' }[r.reportType] || r.reportType;
+    const isDash = r.reportType === 'dashboard';
+    const dashUrl = (r.config && r.config.dashboardUrl) || null;
+
+    return '<div class="report-card">' +
+      '<div class="rc-head">' +
+        '<div class="rc-title">' + esc(r.name) + '</div>' +
+        '<div class="rc-meta">' +
+          '<span class="tag ' + (isDash ? 'tag-warn' : 'tag-primary') + ' tag-sm">' + esc(typeName) + '</span>' +
+          (r.category ? '<span>' + esc(r.category) + '</span>' : '') +
+          '<span>数据集：' + esc(r.datasetName || '未绑定') + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="rc-preview" id="prev_' + r.id + '"></div>' +
+      '<div class="rc-actions">' +
+        (isDash && dashUrl
+          ? '<a class="btn btn-sm btn-primary" href="' + esc(dashUrl) + '">打开看板</a>'
+          : '<a class="btn btn-sm btn-primary" href="/reports/' + r.id + '/view">查看</a>') +
+        (CAN_WRITE && !isDash ? '<a class="btn btn-sm" href="/reports/' + r.id + '/design">设计</a>' : '') +
+        (CAN_WRITE ? '<button class="btn btn-sm" data-edit="' + r.id + '">编辑</button>' : '') +
+        (CAN_SHARE ? '<button class="btn btn-sm" data-share="' + r.id + '">分享</button>' : '') +
+        (CAN_WRITE ? '<button class="btn btn-sm btn-danger" data-del="' + r.id + '">删除</button>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  grid.querySelectorAll('button[data-edit]').forEach(b =>
+    b.addEventListener('click', () => openEdit(Number(b.dataset.edit))));
+  grid.querySelectorAll('button[data-share]').forEach(b =>
+    b.addEventListener('click', () => shareReport(Number(b.dataset.share))));
+  grid.querySelectorAll('button[data-del]').forEach(b =>
+    b.addEventListener('click', () => delReport(Number(b.dataset.del))));
+
+  // 异步渲染缩略图（看板类型显示图标）
+  list.slice(0, 12).forEach(r => renderPreview(r));
+}
+
+async function renderPreview(r) {
+  const el = document.getElementById('prev_' + r.id);
+  if (!el) return;
+
+  if (r.reportType === 'dashboard') {
+    el.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:8px">' +
+      '<div style="font-size:32px;opacity:.35">▦</div>' +
+      '<div class="muted small">看板大屏</div></div>';
+    return;
+  }
+
+  if (!r.datasetId) {
+    el.innerHTML = '<div class="empty-mini">未绑定数据集</div>';
+    return;
+  }
+  const res = await api('/api/reports/' + r.id + '/run', { method: 'POST', body: { limit: 30 } });
+  if (!res.ok || !res.data.rows.length) {
+    el.innerHTML = '<div class="empty-mini">暂无数据</div>';
+    return;
+  }
+  const cfg = Object.assign({ height: 150 }, r.config || {});
+  if (!cfg.chartType) cfg.chartType = r.reportType === 'table' ? 'table' : 'bar';
+  Charts.render(el, res.data.rows, cfg);
+}
+
+function fillDatasetSelect(selectedId) {
+  const sel = document.getElementById('c_dataset');
+  if (!DATASETS.length) {
+    sel.innerHTML = '<option value="">（暂无数据集，请先创建）</option>';
+    return;
+  }
+  sel.innerHTML = DATASETS.map(d =>
+    '<option value="' + d.id + '"' + (String(selectedId) === String(d.id) ? ' selected' : '') + '>' +
+    esc(d.name) + '（' + esc(d.sourceType) + '）</option>').join('');
+}
+
+function onTypeChange() {
+  const t = document.getElementById('c_type').value;
+  const hint = document.getElementById('typeHint');
+  const map = {
+    chart: '图表报表：单图表展示，可在设计器中配置图表类型与字段',
+    table: '数据表格：以表格形式展示明细数据',
+    dashboard: '看板大屏：多卡片组合的仪表盘，支持 KPI 卡、环形图、进度、排行榜、趋势与明细',
+  };
+  if (hint) hint.textContent = map[t] || '';
+}
+
+function openCreate() {
+  if (!DATASETS.length) {
+    if (confirm('还没有数据集，报表需要基于数据集取数。\\n\\n是否前往创建数据集？')) {
+      location.href = '/datasets';
+    }
+    return;
+  }
+  document.getElementById('modalTitle').textContent = '新建报表';
+  document.getElementById('c_id').value = '';
+  document.getElementById('c_name').value = '';
+  document.getElementById('c_type').value = 'chart';
+  document.getElementById('c_category').value = '';
+  document.getElementById('c_desc').value = '';
+  document.getElementById('createBtn').textContent = '创建并设计';
+  fillDatasetSelect(null);
+  openModal('createModal');
+}
+
+/** 编辑报表基础信息 */
+function openEdit(id) {
+  const r = REPORTS.find(x => x.id === id);
+  if (!r) return;
+  document.getElementById('modalTitle').textContent = '编辑报表：' + r.name;
+  document.getElementById('c_id').value = r.id;
+  document.getElementById('c_name').value = r.name || '';
+  document.getElementById('c_type').value = r.reportType || 'chart';
+  document.getElementById('c_category').value = r.category || '';
+  document.getElementById('c_desc').value = r.description || '';
+  document.getElementById('createBtn').textContent = '保存';
+  fillDatasetSelect(r.datasetId);
+  openModal('createModal');
+}
+
+async function doCreate() {
+  const id = document.getElementById('c_id').value;
+  const reportType = document.getElementById('c_type').value;
+  const body = {
+    name: document.getElementById('c_name').value.trim(),
+    reportType,
+    datasetId: Number(document.getElementById('c_dataset').value) || null,
+    category: document.getElementById('c_category').value.trim(),
+    description: document.getElementById('c_desc').value.trim(),
+  };
+  if (!body.name) return toast('请填写报表名称', 'error');
+  if (!body.datasetId) return toast('请选择数据集', 'error');
+
+  // 看板默认配置
+  if (reportType === 'dashboard' && !id) {
+    body.config = {
+      chartType: 'kpi',
+      title: body.name,
+      layout: [
+        { row: 'r1', cols: [
+          { type: 'kpiSplit', title: '关键指标', span: 1 },
+          { type: 'donutLegend', title: '分类分布', span: 1 },
+          { type: 'progress', title: '进度对比', span: 1 },
+        ] },
+        { row: 'r4', cols: [{ type: 'trendBar', title: '趋势', span: 1 }] },
+        { row: 'r4', cols: [{ type: 'detailTable', title: '明细', span: 1 }] },
+      ],
+    };
+  }
+
+  const btn = document.getElementById('createBtn');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = '保存中...';
+
+  const r = id
+    ? await api('/api/reports/' + id, { method: 'PUT', body })
+    : await api('/api/reports', { method: 'POST', body });
+
+  btn.disabled = false; btn.textContent = original;
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+
+  if (id) {
+    toast('报表已保存', 'success');
+    closeModal('createModal');
+    load();
+  } else if (reportType === 'dashboard') {
+    toast('看板创建成功', 'success');
+    closeModal('createModal');
+    load();
+  } else {
+    toast('创建成功，正在进入设计器...', 'success');
+    setTimeout(() => { location.href = '/reports/' + r.data.id + '/design'; }, 600);
+  }
+}
+
+async function shareReport(id) {
+  const r = REPORTS.find(x => x.id === id);
+  if (!r) return;
+  const days = prompt('分享有效期（天），0 表示永久有效：', '0');
+  if (days === null) return;
+  const pwd = prompt('访问密码（留空表示无需密码）：', '');
+  if (pwd === null) return;
+
+  const res = await api('/api/shares', {
+    method: 'POST',
+    body: { targetType: 'report', targetId: id, expiresDays: Number(days) || 0, password: pwd || '' },
+  });
+  if (!res.ok) return toast(res.message || '分享失败', 'error');
+
+  const url = res.data.url;
+  if (confirm('分享链接已创建：\\n\\n' + url + '\\n\\n是否复制到剪贴板？')) copyText(url);
+  load();
+}
+
+async function delReport(id) {
+  const r = REPORTS.find(x => x.id === id);
+  if (!confirm('确定删除报表「' + (r ? r.name : id) + '」？')) return;
+  const res = await api('/api/reports/' + id, { method: 'DELETE' });
+  if (!res.ok) return toast(res.message || '删除失败', 'error');
+  toast('已删除', 'success');
+  load();
+}
+
+document.getElementById('kw').addEventListener('input', debounce(load, 400));
+load();
+</script>

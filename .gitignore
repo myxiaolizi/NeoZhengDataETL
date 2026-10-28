@@ -1,0 +1,33 @@
+node_modules/
+.env
+*.log
+logs/
+.DS_Store
+Thumbs.db
+npm-debug.log*
+.git/
+.idea/
+.vscode/
+scripts/e2e-test.js
+
+# 本地备份与临时文件
+_color-backup*/
+_work/
+_sanitize-backup/
+_mail_attach/
+data/
+数据文件/
+_attach.txt
+_diag*.txt
+_fixdoc.txt
+_imap*.txt
+_xl*.txt
+_zipchk.txt
+_skeleton.txt
+_sanitize.log
+
+# 打包产物
+*.zip
+
+# 调试截图与临时 HTML
+browser-screenshots/

@@ -1,0 +1,708 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <a class="back-link" href="/mail-push#projects">← 返回数据项目</a>
+    <h1 id="proj-name">数据项目详情</h1>
+    <p class="sub" id="proj-sub"><span class="muted">加载中…</span></p>
+  </div>
+  <div class="head-actions">
+    <button class="btn btn-sm" id="btn-refresh" onclick="refreshAll()">刷新</button>
+    <button class="btn btn-sm" id="btn-edit-name" onclick="editName()">编辑名称</button>
+    <button class="btn btn-sm" id="btn-export" onclick="exportCsv()">导出 CSV</button>
+    <button class="btn btn-sm" id="btn-clear" onclick="clearData()">清空数据</button>
+    <button class="btn btn-sm btn-danger" id="btn-delete" onclick="deleteProject()">删除项目</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="tabs">
+    <button class="tab active" data-tab="home" onclick="switchTab('home')">项目首页</button>
+    <button class="tab" data-tab="records" onclick="switchTab('records')">数据明细</button>
+    <button class="tab" data-tab="fields" onclick="switchTab('fields')">字段结构</button>
+    <button class="tab" data-tab="logs" onclick="switchTab('logs')">导入日志</button>
+  </div>
+
+  <!-- ══════════ 项目首页 ══════════ -->
+  <div class="tab-panel" id="panel-home">
+    <div class="card-body">
+      <div class="home-section">
+        <div class="home-section-title">
+          <span class="hs-ico">◫</span> 项目信息
+          <span class="muted small">项目元数据与数据表概况</span>
+        </div>
+        <div class="kv" id="home-info"><div class="muted small">加载中…</div></div>
+      </div>
+
+      <div class="home-section">
+        <div class="home-section-title">
+          <span class="hs-ico">⛁</span> 列结构概览
+          <span class="muted small" id="home-col-count"></span>
+        </div>
+        <div class="col-chips" id="home-cols"><div class="muted small">加载中…</div></div>
+      </div>
+
+      <div class="home-section">
+        <div class="home-section-title">
+          <span class="hs-ico">⇣</span> 最近导入记录
+          <span class="muted small">该项目最近 10 条导入日志</span>
+        </div>
+        <div class="table-wrap">
+          <table class="table table-fixed">
+            <thead>
+              <tr>
+                <th style="width:150px">时间</th>
+                <th>附件名</th>
+                <th style="width:70px">行数</th>
+                <th style="width:70px">列数</th>
+                <th style="width:90px">结果</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody id="home-logs"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ 数据明细 ══════════ -->
+  <div class="tab-panel hidden" id="panel-records">
+    <div class="toolbar">
+      <input class="input" id="r_kw" placeholder="搜索所有列…" style="width:260px">
+      <button class="btn btn-sm btn-primary" onclick="searchRecords()">查询</button>
+      <button class="btn btn-sm" onclick="resetRecords()">重置</button>
+      <div class="spacer"></div>
+      <span class="muted small">每页</span>
+      <select class="input" id="r_size" style="width:90px" onchange="changeRecordSize()">
+        <option value="20">20</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+      <span class="muted small" id="r_count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed" id="record-table">
+        <thead id="record-head"><tr><th>加载中…</th></tr></thead>
+        <tbody id="record-body"><tr><td class="empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="pager" id="record-pager"></div>
+  </div>
+
+  <!-- ══════════ 字段结构 ══════════ -->
+  <div class="tab-panel hidden" id="panel-fields">
+    <div class="toolbar">
+      <span class="muted small">数据表 <code id="fields-table">-</code> 的物理列结构；带
+        <span class="tag tag-primary tag-sm">主键</span> 标记的列唯一标识每一行</span>
+      <div class="spacer"></div>
+      <span class="muted small" id="fields-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed">
+        <thead>
+          <tr>
+            <th style="width:60px">#</th>
+            <th style="width:220px">列名</th>
+            <th style="width:200px">类型</th>
+            <th>中文注释</th>
+            <th style="width:100px">主键</th>
+            <th style="width:100px">可空</th>
+          </tr>
+        </thead>
+        <tbody id="field-body"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ══════════ 导入日志 ══════════ -->
+  <div class="tab-panel hidden" id="panel-logs">
+    <div class="toolbar">
+      <span class="muted small">本项目的附件导入记录</span>
+      <div class="spacer"></div>
+      <button class="btn btn-sm" onclick="loadLogs()">刷新</button>
+      <span class="muted small" id="logs-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed">
+        <thead>
+          <tr>
+            <th style="width:150px">时间</th>
+            <th>附件名</th>
+            <th style="width:70px">行数</th>
+            <th style="width:70px">列数</th>
+            <th style="width:90px">结果</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody id="log-body"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 单元格完整内容查看 -->
+<div class="modal-mask" id="cell-modal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3 id="cell-title">单元格内容</h3>
+      <button class="modal-close" onclick="closeModal('cell-modal')">×</button>
+    </div>
+    <div class="modal-body">
+      <pre class="pre cell-view" id="cell-body"></pre>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('cell-modal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<style>
+.tab-panel { display: block; }
+.tab-panel.hidden { display: none; }
+.back-link { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: var(--text-muted); text-decoration: none; margin-bottom: 6px; }
+.back-link:hover { color: var(--primary); text-decoration: none; }
+.col-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.col-chip { font-size: 12px; padding: 3px 10px; border-radius: 20px; background: rgba(54,135,255,.10); color: var(--primary); border: 1px solid rgba(54,135,255,.25); white-space: nowrap; }
+.col-chip.pk { background: rgba(255,192,0,.12); color: #EC673C; border-color: rgba(255,192,0,.35); font-weight: 600; }
+.col-chip b { font-size: 10px; margin-left: 3px; letter-spacing: .5px; }
+.cell-view { white-space: pre-wrap; word-break: break-word; max-height: 52vh; overflow: auto; user-select: text; }
+</style>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+ * 邮箱推送 · 数据项目详情
+ * 注意：本脚本内联在 body 中，早于 layout 末尾的 app.js 执行，
+ *      所有 api()/toast()/esc()/fmtTime() 调用必须等到 DOMContentLoaded。
+ * ═══════════════════════════════════════════════════════════════ */
+
+var PROJECT_ID = 0;
+window.__PROJECT_ID__ = 0;
+
+var TABS = ['home', 'records', 'fields', 'logs'];
+var DATA = { project: null, columns: [] };
+var RSTATE = { page: 1, size: 20, keyword: '', sort: '', order: 'desc', total: 0 };
+var LOADED = { home: false, records: false, fields: false, logs: false };
+var CELL = { title: '', text: '' };
+
+/* ══════════ 工具 ══════════ */
+
+/** 从 URL 路径提取项目 id：/mail-push/projects/5 → 5 */
+function parseProjectId() {
+  var parts = String(location.pathname || '').split('/');
+  var i;
+  for (i = 0; i < parts.length; i++) {
+    if (parts[i] === 'projects' && parts[i + 1]) {
+      var n = parseInt(parts[i + 1], 10);
+      if (n > 0) return n;
+    }
+  }
+  return 0;
+}
+
+function tabFromHash() {
+  var h = String(location.hash || '').replace('#', '');
+  return TABS.indexOf(h) >= 0 ? h : '';
+}
+
+/** 单元格纯文本（用于查看/复制，保留完整内容） */
+function cellText(v) {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'object') {
+    try { return JSON.stringify(v, null, 2); } catch (e) { return String(v); }
+  }
+  return String(v);
+}
+
+/** 单元格渲染 */
+function renderCell(v) {
+  if (v === null || v === undefined || v === '') return '<span class="muted">-</span>';
+  if (typeof v === 'object') return '<code class="mini">' + esc(JSON.stringify(v)) + '</code>';
+  return esc(String(v));
+}
+
+/** 列是否可空：优先用后端字段，否则按建表约定推断 */
+function isNullable(c) {
+  if (!c) return true;
+  if (c.nullable !== undefined && c.nullable !== null) {
+    return c.nullable === true || Number(c.nullable) === 1;
+  }
+  if (c.is_nullable !== undefined && c.is_nullable !== null) {
+    return String(c.is_nullable).toUpperCase() === 'YES';
+  }
+  if (String(c.ckey || '') === 'PRI') return false;
+  if (String(c.extra || '').toLowerCase().indexOf('auto_increment') >= 0) return false;
+  var n = String(c.name || '').toLowerCase();
+  if (n === 'wjmc' || n === 'import_date') return false;
+  return true;
+}
+
+function dash() { return '<span class="muted">—</span>'; }
+
+/* ══════════ 标签页 ══════════ */
+
+function switchTab(key, skipHash) {
+  if (TABS.indexOf(key) < 0) key = 'home';
+
+  var tabs = document.querySelectorAll('.tab');
+  var i;
+  for (i = 0; i < tabs.length; i++) {
+    if (tabs[i].getAttribute('data-tab') === key) tabs[i].classList.add('active');
+    else tabs[i].classList.remove('active');
+  }
+
+  var panels = document.querySelectorAll('.tab-panel');
+  for (i = 0; i < panels.length; i++) {
+    if (panels[i].id === 'panel-' + key) panels[i].classList.remove('hidden');
+    else panels[i].classList.add('hidden');
+  }
+
+  if (!skipHash && location.hash !== '#' + key) {
+    try { history.replaceState(null, '', '#' + key); } catch (e) { location.hash = key; }
+  }
+
+  if (key === 'records' && !LOADED.records) { LOADED.records = true; loadRecords(1); }
+  else if (key === 'fields' && !LOADED.fields) { LOADED.fields = true; loadFields(); }
+  else if (key === 'logs' && !LOADED.logs) { LOADED.logs = true; loadLogs(); }
+}
+
+/* ══════════ 项目首页 ══════════ */
+
+function renderProjectHead() {
+  var p = DATA.project || {};
+  var t = document.getElementById('proj-name');
+  if (t) t.textContent = p.name || '数据项目详情';
+
+  var sub = document.getElementById('proj-sub');
+  if (!sub) return;
+  var html = '';
+  html += '<code>' + esc(p.code || '-') + '</code>';
+  html += '<code>' + esc(p.data_table || '-') + '</code>';
+  html += Number(p.status) ? '<span class="tag tag-ok">启用</span>' : '<span class="tag tag-off">停用</span>';
+  if (p.source_mail) html += '<span class="muted">来源邮箱：' + esc(p.source_mail) + '</span>';
+  sub.innerHTML = html;
+}
+
+function renderHomeInfo() {
+  var box = document.getElementById('home-info');
+  if (!box) return;
+  var p = DATA.project || {};
+  var cols = DATA.columns || [];
+
+  var html = '';
+  html += '<div><span>项目名称</span><b>' + esc(p.name || '-') + '</b></div>';
+  html += '<div><span>项目编码</span><code>' + esc(p.code || '-') + '</code></div>';
+  html += '<div><span>数据表</span><code>' + esc(p.data_table || '-') + '</code></div>';
+  html += '<div><span>来源邮箱</span>' + (p.source_mail ? esc(p.source_mail) : dash()) + '</div>';
+  html += '<div><span>累计行数</span><b>' + Number(p.row_count || 0).toLocaleString() + '</b></div>';
+  html += '<div><span>列数</span><b>' + cols.length + '</b></div>';
+  html += '<div><span>最近导入时间</span>' + (p.last_import_at ? fmtTime(p.last_import_at) : dash()) + '</div>';
+  html += '<div><span>最近文件</span>' + (p.last_file
+    ? '<span class="ellipsis" title="' + esc(p.last_file) + '">' + esc(p.last_file) + '</span>'
+    : dash()) + '</div>';
+  html += '<div><span>创建时间</span>' + (p.created_at ? fmtTime(p.created_at) : dash()) + '</div>';
+  html += '<div><span>更新时间</span>' + (p.updated_at ? fmtTime(p.updated_at) : dash()) + '</div>';
+  box.innerHTML = html;
+}
+
+function renderHomeCols() {
+  var box = document.getElementById('home-cols');
+  if (!box) return;
+  var cols = DATA.columns || [];
+  var cnt = document.getElementById('home-col-count');
+  if (cnt) cnt.textContent = cols.length ? '共 ' + cols.length + ' 列' : '';
+
+  if (!cols.length) {
+    box.innerHTML = '<div class="muted small">暂无列信息（数据表尚未建立）</div>';
+    return;
+  }
+
+  var html = '';
+  var i;
+  for (i = 0; i < cols.length; i++) {
+    var c = cols[i];
+    var isPk = String(c.ckey || '') === 'PRI';
+    var tip = String(c.name || '') + ' · ' + String(c.type || '');
+    html += '<span class="col-chip' + (isPk ? ' pk' : '') + '" title="' + esc(tip) + '">' +
+      esc(c.comment || c.name) + (isPk ? '<b>PK</b>' : '') + '</span>';
+  }
+  box.innerHTML = html;
+}
+
+/* ══════════ 日志（首页与日志页共用） ══════════ */
+
+/** 拉取本项目日志；后端未支持 projectId 过滤时前端兜底再筛一次 */
+function fetchProjectLogs(limit, cb) {
+  api('/api/mail-push/logs?projectId=' + PROJECT_ID + '&limit=' + limit).then(function (r) {
+    if (!r.ok) { cb(r.message || '日志读取失败', []); return; }
+    var list = r.data || [];
+    var mine = [];
+    var i;
+    for (i = 0; i < list.length; i++) {
+      if (Number(list[i].project_id) === Number(PROJECT_ID)) mine.push(list[i]);
+    }
+    cb('', mine);
+  }).catch(function (e) { cb(e.message, []); });
+}
+
+function renderLogRows(tbody, list, span) {
+  if (!tbody) return;
+  if (!list.length) {
+    tbody.innerHTML = '<tr><td colspan="' + span + '" class="empty">暂无导入记录</td></tr>';
+    return;
+  }
+  var html = '';
+  var i;
+  for (i = 0; i < list.length; i++) {
+    var x = list[i];
+    var cls = x.result === 'success' ? 'tag tag-ok tag-sm'
+      : (x.result === 'skipped' ? 'tag tag-warn tag-sm' : 'tag tag-err tag-sm');
+    html += '<tr>' +
+      '<td class="small">' + fmtTime(x.created_at) + '</td>' +
+      '<td class="ellipsis" title="' + esc(x.filename || '') + '">' + esc(x.filename || '—') + '</td>' +
+      '<td>' + Number(x.rows_total || 0) + '</td>' +
+      '<td>' + Number(x.columns_total || 0) + '</td>' +
+      '<td><span class="' + cls + '">' + esc(x.result || '-') + '</span></td>' +
+      '<td class="small muted" title="' + esc(x.message || '') + '">' + esc(x.message || '') + '</td>' +
+      '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+function loadHomeLogs() {
+  var tbody = document.getElementById('home-logs');
+  if (!tbody) return;
+  fetchProjectLogs(50, function (err, list) {
+    if (err) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">' + esc(err) + '</td></tr>';
+      return;
+    }
+    renderLogRows(tbody, list.slice(0, 10), 6);
+  });
+}
+
+/* ══════════ 项目信息加载 ══════════ */
+
+function loadHome() {
+  api('/api/mail-push/projects/' + PROJECT_ID).then(function (r) {
+    if (!r.ok) {
+      var sub = document.getElementById('proj-sub');
+      if (sub) sub.innerHTML = '<span class="tag tag-err">' + esc(r.message || '项目读取失败') + '</span>';
+      toast(r.message || '项目读取失败', 'error');
+      return;
+    }
+    var d = r.data || {};
+    DATA.project = d.project || null;
+    DATA.columns = d.columns || [];
+    LOADED.home = true;
+
+    renderProjectHead();
+    renderHomeInfo();
+    renderHomeCols();
+    renderFields();
+    loadHomeLogs();
+  }).catch(function (e) {
+    toast(e.message, 'error');
+  });
+}
+
+/* ══════════ 数据明细 ══════════ */
+
+function onSortClick() {
+  var key = this.getAttribute('data-sort');
+  if (RSTATE.sort === key) {
+    RSTATE.order = RSTATE.order === 'asc' ? 'desc' : 'asc';
+  } else {
+    RSTATE.sort = key;
+    RSTATE.order = 'asc';
+  }
+  loadRecords(1);
+}
+
+function renderRecordHead(cols) {
+  var head = document.getElementById('record-head');
+  if (!head) return;
+  if (!cols.length) {
+    head.innerHTML = '<tr><th>列</th></tr>';
+    return;
+  }
+  var html = '<tr>';
+  var i;
+  for (i = 0; i < cols.length; i++) {
+    var c = cols[i];
+    var on = RSTATE.sort === c.name;
+    var ind = on ? (RSTATE.order === 'asc' ? '▲' : '▼') : '↕';
+    html += '<th class="sortable' + (on ? ' sorted' : '') + '"' +
+      ' data-sort="' + esc(c.name) + '"' +
+      ' title="' + esc(String(c.name) + ' · ' + String(c.type || '')) + '">' +
+      esc(c.comment || c.name) +
+      '<span class="sort-ind">' + ind + '</span></th>';
+  }
+  html += '</tr>';
+  head.innerHTML = html;
+
+  var ths = head.querySelectorAll('th[data-sort]');
+  for (i = 0; i < ths.length; i++) ths[i].addEventListener('click', onSortClick);
+}
+
+function onCellClick() {
+  CELL.title = this.getAttribute('data-label') || '单元格内容';
+  CELL.text = this.getAttribute('data-cell') || '';
+  var t = document.getElementById('cell-title');
+  var b = document.getElementById('cell-body');
+  if (t) t.textContent = CELL.title;
+  if (b) b.textContent = CELL.text || '（空）';
+  openModal('cell-modal');
+}
+
+function renderRecordBody(cols, rows) {
+  var tbody = document.getElementById('record-body');
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="' + Math.max(1, cols.length) + '" class="empty">暂无数据</td></tr>';
+    return;
+  }
+  var html = '';
+  var i;
+  var j;
+  for (i = 0; i < rows.length; i++) {
+    html += '<tr>';
+    for (j = 0; j < cols.length; j++) {
+      var c = cols[j];
+      var v = rows[i][c.name];
+      html += '<td class="cell-click" title="点击查看完整内容"' +
+        ' data-cell="' + esc(cellText(v)) + '"' +
+        ' data-label="' + esc(c.comment || c.name) + '">' +
+        '<span class="cell-inner">' + renderCell(v) + '</span></td>';
+    }
+    html += '</tr>';
+  }
+  tbody.innerHTML = html;
+
+  var tds = tbody.querySelectorAll('td.cell-click');
+  for (i = 0; i < tds.length; i++) tds[i].addEventListener('click', onCellClick);
+}
+
+function loadRecords(page) {
+  if (page) RSTATE.page = page;
+  if (RSTATE.page < 1) RSTATE.page = 1;
+
+  var q = 'page=' + RSTATE.page + '&size=' + RSTATE.size;
+  if (RSTATE.keyword) q += '&keyword=' + encodeURIComponent(RSTATE.keyword);
+  if (RSTATE.sort) q += '&sort=' + encodeURIComponent(RSTATE.sort) + '&order=' + RSTATE.order;
+
+  var tbody = document.getElementById('record-body');
+  if (tbody) tbody.innerHTML = '<tr><td class="empty">加载中…</td></tr>';
+
+  api('/api/mail-push/projects/' + PROJECT_ID + '/rows?' + q).then(function (r) {
+    if (!r.ok) {
+      if (tbody) tbody.innerHTML = '<tr><td class="empty">' + esc(r.message || '数据读取失败') + '</td></tr>';
+      toast(r.message || '数据读取失败', 'error');
+      return;
+    }
+    var d = r.data || {};
+    var cols = d.columns || [];
+    if (cols.length && !DATA.columns.length) DATA.columns = cols;
+    if (!cols.length) cols = DATA.columns || [];
+
+    RSTATE.total = Number(d.total || 0);
+    renderRecordHead(cols);
+    renderRecordBody(cols, d.rows || []);
+
+    var cnt = document.getElementById('r_count');
+    if (cnt) cnt.textContent = '共 ' + RSTATE.total + ' 条';
+
+    renderPager('record-pager', RSTATE.total, Number(d.page || RSTATE.page),
+      Number(d.size || RSTATE.size), function (p) { loadRecords(p); });
+  }).catch(function (e) {
+    if (tbody) tbody.innerHTML = '<tr><td class="empty">' + esc(e.message) + '</td></tr>';
+  });
+}
+
+function searchRecords() {
+  var el = document.getElementById('r_kw');
+  RSTATE.keyword = el ? String(el.value || '').trim() : '';
+  loadRecords(1);
+}
+
+function resetRecords() {
+  var el = document.getElementById('r_kw');
+  if (el) el.value = '';
+  RSTATE.keyword = '';
+  RSTATE.sort = '';
+  RSTATE.order = 'desc';
+  loadRecords(1);
+}
+
+function changeRecordSize() {
+  var el = document.getElementById('r_size');
+  RSTATE.size = el ? (Number(el.value) || 20) : 20;
+  loadRecords(1);
+}
+
+/* ══════════ 字段结构 ══════════ */
+
+function renderFields() {
+  var tbody = document.getElementById('field-body');
+  if (!tbody) return;
+  var cols = DATA.columns || [];
+  var p = DATA.project || {};
+
+  var tbl = document.getElementById('fields-table');
+  if (tbl) tbl.textContent = p.data_table || '-';
+  var cnt = document.getElementById('fields-count');
+  if (cnt) cnt.textContent = '共 ' + cols.length + ' 列';
+
+  if (!cols.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无列信息（数据表尚未建立）</td></tr>';
+    return;
+  }
+
+  var html = '';
+  var i;
+  for (i = 0; i < cols.length; i++) {
+    var c = cols[i];
+    var isPk = String(c.ckey || '') === 'PRI';
+    html += '<tr class="' + (isPk ? 'row-meta' : '') + '">' +
+      '<td>' + (i + 1) + '</td>' +
+      '<td><code>' + esc(c.name) + '</code></td>' +
+      '<td><code class="mini">' + esc(c.type || '-') + '</code></td>' +
+      '<td>' + (c.comment ? esc(c.comment) : dash()) + '</td>' +
+      '<td>' + (isPk ? '<span class="tag tag-primary tag-sm">主键</span>' : '<span class="muted small">—</span>') + '</td>' +
+      '<td>' + (isNullable(c)
+        ? '<span class="tag tag-warn tag-sm">可空</span>'
+        : '<span class="tag tag-off tag-sm">不可空</span>') + '</td>' +
+      '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+function loadFields() {
+  if (DATA.columns && DATA.columns.length) { renderFields(); return; }
+  api('/api/mail-push/projects/' + PROJECT_ID).then(function (r) {
+    if (r.ok) {
+      var d = r.data || {};
+      DATA.project = d.project || DATA.project;
+      DATA.columns = d.columns || [];
+    }
+    renderFields();
+  }).catch(function () { renderFields(); });
+}
+
+/* ══════════ 导入日志 ══════════ */
+
+function loadLogs() {
+  var tbody = document.getElementById('log-body');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" class="empty">加载中…</td></tr>';
+  fetchProjectLogs(50, function (err, list) {
+    if (err) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">' + esc(err) + '</td></tr>';
+      return;
+    }
+    renderLogRows(tbody, list, 6);
+    var cnt = document.getElementById('logs-count');
+    if (cnt) cnt.textContent = '共 ' + list.length + ' 条';
+  });
+}
+
+/* ══════════ 操作按钮 ══════════ */
+
+function exportCsv() {
+  window.location = '/api/mail-push/projects/' + PROJECT_ID + '/export';
+}
+
+function editName() {
+  var p = DATA.project || {};
+  var cur = p.name || '';
+  var val = window.prompt('修改项目名称', cur);
+  if (val === null) return;
+  val = String(val).trim();
+  if (!val) { toast('项目名称不能为空', 'error'); return; }
+  if (val === cur) { toast('名称未变化', 'info'); return; }
+
+  api('/api/mail-push/projects/' + PROJECT_ID, { method: 'PUT', body: { name: val } }).then(function (r) {
+    if (!r.ok) { toast(r.message || '保存失败', 'error'); return; }
+    var np = r.data || {};
+    if (np.project) np = np.project;
+    if (!DATA.project) DATA.project = {};
+    DATA.project.name = np.name || val;
+    renderProjectHead();
+    renderHomeInfo();
+    toast('项目名称已更新', 'success');
+  }).catch(function (e) { toast(e.message, 'error'); });
+}
+
+function clearData() {
+  var p = DATA.project || {};
+  var msg = '确定清空项目「' + (p.name || '') + '」的全部数据？\\n\\n' +
+            '将删除数据表「' + (p.data_table || '') + '」内的所有行（保留表结构），此操作不可恢复。';
+  if (!window.confirm(msg)) return;
+
+  api('/api/mail-push/projects/' + PROJECT_ID + '/clear', { method: 'POST' }).then(function (r) {
+    if (!r.ok) { toast(r.message || '清空失败', 'error'); return; }
+    toast(r.message || '数据已清空', 'success');
+    LOADED.records = false;
+    refreshAll();
+  }).catch(function (e) { toast(e.message, 'error'); });
+}
+
+function deleteProject() {
+  var p = DATA.project || {};
+  var msg = '确定删除项目「' + (p.name || '') + '」？\\n\\n' +
+            '将连同数据表「' + (p.data_table || '') + '」一起删除，数据与日志均不可恢复！';
+  if (!window.confirm(msg)) return;
+
+  api('/api/mail-push/projects/' + PROJECT_ID + '?dropTable=1', { method: 'DELETE' }).then(function (r) {
+    if (!r.ok) { toast(r.message || '删除失败', 'error'); return; }
+    toast(r.message || '项目已删除', 'success');
+    setTimeout(function () { location.href = '/mail-push#projects'; }, 700);
+  }).catch(function (e) { toast(e.message, 'error'); });
+}
+
+function refreshAll() {
+  loadHome();
+  if (LOADED.records) loadRecords(RSTATE.page);
+  if (LOADED.fields) loadFields();
+  if (LOADED.logs) loadLogs();
+}
+
+/* ══════════ 启动 ══════════ */
+
+function boot() {
+  PROJECT_ID = parseProjectId();
+  window.__PROJECT_ID__ = PROJECT_ID;
+
+  var kw = document.getElementById('r_kw');
+  if (kw) {
+    kw.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') searchRecords();
+    });
+  }
+
+  if (!PROJECT_ID) {
+    var nameEl = document.getElementById('proj-name');
+    if (nameEl) nameEl.textContent = '项目未找到';
+    var sub = document.getElementById('proj-sub');
+    if (sub) sub.innerHTML = '<span class="tag tag-err">无法从地址中识别项目 ID</span>';
+    toast('无法从地址中识别项目 ID', 'error');
+    return;
+  }
+
+  loadHome();
+  switchTab(tabFromHash() || 'home', true);
+
+  window.addEventListener('hashchange', function () {
+    var h = tabFromHash();
+    if (h) switchTab(h, true);
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
+</script>
+` %>
+<%- include('layout', { body: body, title: (typeof title !== 'undefined' ? title : '数据项目详情'), active: (typeof active !== 'undefined' ? active : 'mail-push'), currentUser: (typeof currentUser !== 'undefined' ? currentUser : null), can: (typeof can === 'function' ? can : function () { return false; }), isAdmin: (typeof isAdmin !== 'undefined' ? isAdmin : false), settings: settings }) %>

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= title %> - <%= settings.site_name %></title>
+  <link rel="stylesheet" href="/public/css/app.css">
+  <% if (settings.theme_color && settings.theme_color !== '#3687FF') { %>
+  <style>:root { --primary: <%= settings.theme_color %>; }</style>
+  <% } %>
+</head>
+<body class="share-body">
+  <div class="share-header">
+    <div style="display:flex;align-items:center;gap:12px">
+      <span class="brand-logo" style="width:36px;height:36px;font-size:16px;flex:0 0 36px"><%= settings.site_logo_text %></span>
+      <div>
+        <div class="sh-title"><%= title %></div>
+        <div class="sh-meta"><%= settings.site_name %> · 数据报表分享</div>
+      </div>
+    </div>
+    <div class="sh-meta">
+      <% if (typeof share !== 'undefined' && share) { %>
+      浏览 <%= share.viewCount %> 次<% if (share.expiresAt) { %> · 有效期至 <%= fmtTime(share.expiresAt) %><% } %>
+      <% } else { %>
+      <%= settings.site_name %> · 数据报表分享
+      <% } %>
+    </div>
+  </div>
+
+  <div class="share-content">
+    <% if (error) { %>
+    <div class="card" style="max-width:520px;margin:60px auto;padding:40px;text-align:center">
+      <div style="font-size:44px;margin-bottom:14px;opacity:.4">⚠</div>
+      <h2 style="margin:0 0 8px;font-size:19px">无法访问</h2>
+      <p class="muted" style="margin:0 0 20px"><%= error %></p>
+      <a class="btn btn-primary" href="/login">前往登录</a>
+    </div>
+    <% } else { %>
+    <div class="card" style="max-width:420px;margin:60px auto;padding:36px">
+      <h2 style="margin:0 0 6px;font-size:19px;text-align:center">需要访问密码</h2>
+      <p class="muted" style="text-align:center;margin:0 0 22px;font-size:13px">该分享链接已设置访问密码</p>
+      <form method="get" action="/s/<%= token %>">
+        <label class="field">
+          <span>访问密码</span>
+          <input class="input" type="password" name="pwd" placeholder="请输入访问密码" required autofocus>
+        </label>
+        <button class="btn btn-primary btn-block btn-lg" type="submit">进入查看</button>
+      </form>
+    </div>
+    <% } %>
+  </div>
+</body>
+</html>

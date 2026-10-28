@@ -1,0 +1,480 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>${esc(flow.name)}</h1>
+    <p class="sub">
+      <span class="tag tag-primary">流程编排</span>
+      <span class="muted">拖拽节点到画布，拖动节点调整位置，点击节点配置参数</span>
+    </p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" onclick="preview()">试运行</button>
+    <button class="btn" onclick="runNow()">正式执行</button>
+    <button class="btn btn-primary" onclick="save()">保存流程</button>
+    <a class="btn btn-ghost" href="/flows">返回</a>
+  </div>
+</div>
+
+<div class="flow-toolbar">
+  <span style="font-size:12.5px;font-weight:600">添加节点：</span>
+  <select class="input" id="nodeType" style="width:220px"></select>
+  <button class="btn btn-sm btn-primary" onclick="addSelectedNode()">+ 添加</button>
+  <span class="sep"></span>
+  <button class="btn btn-sm" onclick="autoLayout()">自动排列</button>
+  <button class="btn btn-sm" onclick="clearAll()">清空画布</button>
+  <span class="sep"></span>
+  <span class="muted small" id="nodeInfo">0 个节点</span>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 320px;gap:16px;align-items:start">
+  <div class="flow-canvas" id="canvas">
+    <svg id="edges" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none"></svg>
+  </div>
+
+  <div class="fd-props">
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px">节点配置</div>
+    <div id="props"><div class="empty-mini">请点击画布中的节点</div></div>
+  </div>
+</div>
+
+<div class="modal-mask" id="previewModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>试运行结果</h3>
+      <button class="modal-close" onclick="closeModal('previewModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="previewLogs" style="margin-bottom:14px"></div>
+      <div class="muted small" id="previewInfo" style="margin-bottom:10px"></div>
+      <div class="table-wrap" style="max-height:400px;overflow:auto">
+        <table class="table table-fixed">
+          <thead id="previewHead"></thead>
+          <tbody id="previewBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('previewModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const FLOW_ID = <%= flow.id %>;
+const FLOW = <%- JSON.stringify({ id: flow.id, name: flow.name, code: flow.code, nodes: flow.nodes, edges: flow.edges }) %>;
+
+let NODE_TYPES = [];
+let CATEGORIES = [];
+let NODES = (FLOW.nodes || []).map(n => Object.assign({}, n));
+let EDGES = (FLOW.edges || []).map(e => Object.assign({}, e));
+let SELECTED = null;
+let PROJECTS = [];
+let DATASOURCES = [];
+let FORMS = [];
+let FIELD_OPTIONS = [];
+let connectMode = false;
+let connectFrom = null;
+
+const CAT_COLORS = { source: 'source', clean: '', sink: 'sink' };
+
+/* ══════════ 初始化 ══════════ */
+async function init() {
+  const [nr, pr, dr, fr] = await Promise.all([
+    api('/api/flow-node-types'),
+    api('/api/projects'),
+    api('/api/datasources'),
+    api('/api/forms').catch(() => ({ ok: false })),
+  ]);
+  if (nr.ok) { NODE_TYPES = nr.data.nodes; CATEGORIES = nr.data.categories; }
+  if (pr.ok) PROJECTS = pr.data;
+  if (dr.ok) DATASOURCES = dr.data.list;
+  if (fr.ok) FORMS = fr.data.list;
+
+  const sel = document.getElementById('nodeType');
+  sel.innerHTML = CATEGORIES.map(c =>
+    '<optgroup label="' + esc(c.name) + '">' +
+      NODE_TYPES.filter(n => n.category === c.key).map(n =>
+        '<option value="' + n.key + '">' + n.name + '</option>').join('') +
+    '</optgroup>').join('');
+
+  render();
+  loadFields();
+}
+
+async function loadFields() {
+  const r = await api('/api/flows/' + FLOW_ID + '/fields');
+  if (r.ok) FIELD_OPTIONS = r.data;
+}
+
+/* ══════════ 渲染画布 ══════════ */
+function render() {
+  const canvas = document.getElementById('canvas');
+  const svg = document.getElementById('edges');
+
+  // 保留 SVG，重建节点
+  canvas.querySelectorAll('.flow-node-box').forEach(el => el.remove());
+
+  NODES.forEach(n => {
+    const def = NODE_TYPES.find(t => t.key === n.type) || {};
+    const el = document.createElement('div');
+    el.className = 'flow-node-box ' + (CAT_COLORS[def.category] || '') + (SELECTED === n.id ? ' selected' : '');
+    el.style.left = n.x + 'px';
+    el.style.top = n.y + 'px';
+    el.dataset.id = n.id;
+    el.innerHTML =
+      '<div class="fn-port in"></div>' +
+      '<div class="fn-port out"></div>' +
+      '<div class="fn-type">' + esc(def.category === 'source' ? '数据源' : def.category === 'sink' ? '输出' : '处理') + '</div>' +
+      '<div class="fn-title">' + esc(n.label || def.name || n.type) + '</div>' +
+      '<div class="fn-sub">' + esc(summaryOf(n)) + '</div>';
+
+    el.addEventListener('mousedown', e => startDrag(e, n, el));
+    el.addEventListener('click', e => {
+      if (e.target.classList.contains('fn-port')) return;
+      if (connectMode) {
+        handleConnect(n.id);
+      } else {
+        SELECTED = n.id;
+        render();
+        renderProps();
+      }
+    });
+    el.querySelector('.fn-port.out').addEventListener('click', e => {
+      e.stopPropagation();
+      connectMode = true;
+      connectFrom = n.id;
+      toast('请点击目标节点的左侧圆点完成连线', 'success');
+    });
+    el.querySelector('.fn-port.in').addEventListener('click', e => {
+      e.stopPropagation();
+      if (connectMode && connectFrom) handleConnect(n.id);
+    });
+
+    canvas.appendChild(el);
+  });
+
+  renderEdges();
+  document.getElementById('nodeInfo').textContent = NODES.length + ' 个节点 · ' + EDGES.length + ' 条连线';
+}
+
+function summaryOf(n) {
+  const c = n.config || {};
+  switch (n.type) {
+    case 'source_project': {
+      const p = PROJECTS.find(x => String(x.id) === String(c.projectId));
+      return (p ? p.name : '未选择项目') + ' / ' + (c.table === 'raw' ? '原始表' : '解析表');
+    }
+    case 'source_sql': return (c.sql || '未填写 SQL').slice(0, 30);
+    case 'source_form': {
+      const f = FORMS.find(x => String(x.id) === String(c.formId));
+      return f ? f.name : '未选择表单';
+    }
+    case 'source_manual': return '手动 JSON';
+    case 'filter': return (c.field || '?') + ' ' + (c.operator || 'eq') + ' ' + (c.value || '');
+    case 'select_fields': return (c.mode === 'drop' ? '排除 ' : '保留 ') + (c.fields || '?');
+    case 'rename': return '重命名 ' + String(c.mapping || '').split('\n').length + ' 项';
+    case 'dedupe': return '按 ' + (c.fields || '?') + ' 去重';
+    case 'fill_null': return '填充 ' + (c.fields || '*');
+    case 'replace': return '替换 ' + (c.search || '?');
+    case 'trim': return '去空白 ' + (c.fields || '*');
+    case 'type_convert': return (c.field || '?') + ' → ' + (c.to || 'number');
+    case 'split_field': return '拆分 ' + (c.field || '?');
+    case 'merge_field': return '合并 → ' + (c.target || '?');
+    case 'extract_json': return (c.field || '?') + '.' + (c.path || '?');
+    case 'extract_regex': return '正则提取 → ' + (c.target || '?');
+    case 'compute': return (c.target || '?') + ' = ' + (c.expression || '?');
+    case 'aggregate': return '按 ' + (c.groupBy || '?') + ' 分组';
+    case 'sort': return (c.field || '?') + ' ' + (c.order === 'desc' ? '降序' : '升序');
+    case 'limit': return '前 ' + (c.count || 100) + ' 行';
+    case 'sink_table': return (c.table || '未指定表') + ' / ' + (c.mode || 'replace');
+    case 'sink_project': {
+      const p = PROJECTS.find(x => String(x.id) === String(c.projectId));
+      return p ? p.name : '未选择项目';
+    }
+    case 'sink_api': return (c.url || '未填写地址').slice(0, 28);
+    case 'sink_dataset': return c.datasetName || '未命名数据集';
+    default: return '';
+  }
+}
+
+function renderEdges() {
+  const svg = document.getElementById('edges');
+  const canvas = document.getElementById('canvas');
+  const rect = canvas.getBoundingClientRect();
+
+  let html = '<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto">' +
+    '<path d="M0,0 L0,6 L9,3 z" fill="#3687FF"/></marker></defs>';
+
+  EDGES.forEach(e => {
+    const from = NODES.find(n => n.id === e.from);
+    const to = NODES.find(n => n.id === e.to);
+    if (!from || !to) return;
+
+    const x1 = from.x + 170;
+    const y1 = from.y + 34;
+    const x2 = to.x;
+    const y2 = to.y + 34;
+    const mx = (x1 + x2) / 2;
+
+    html += '<path d="M' + x1 + ',' + y1 + ' C' + mx + ',' + y1 + ' ' + mx + ',' + y2 + ' ' + x2 + ',' + y2 + '" ' +
+      'fill="none" stroke="#3687FF" stroke-width="2" marker-end="url(#arrow)" opacity="0.75"/>';
+  });
+
+  svg.innerHTML = html;
+  svg.setAttribute('width', canvas.scrollWidth);
+  svg.setAttribute('height', canvas.scrollHeight);
+}
+
+/* ══════════ 拖拽 ══════════ */
+let drag = null;
+function startDrag(e, node, el) {
+  if (e.target.classList.contains('fn-port')) return;
+  drag = { node, el, startX: e.clientX, startY: e.clientY, origX: node.x, origY: node.y };
+  el.style.zIndex = 100;
+
+  const onMove = (ev) => {
+    if (!drag) return;
+    const dx = ev.clientX - drag.startX;
+    const dy = ev.clientY - drag.startY;
+    drag.node.x = Math.max(0, drag.origX + dx);
+    drag.node.y = Math.max(0, drag.origY + dy);
+    drag.el.style.left = drag.node.x + 'px';
+    drag.el.style.top = drag.node.y + 'px';
+    renderEdges();
+  };
+
+  const onUp = () => {
+    if (drag) drag.el.style.zIndex = '';
+    drag = null;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
+/* ══════════ 添加/删除节点 ══════════ */
+function addSelectedNode() {
+  const type = document.getElementById('nodeType').value;
+  addNode(type);
+}
+
+function addNode(type) {
+  const def = NODE_TYPES.find(t => t.key === type);
+  if (!def) return;
+
+  const id = 'n' + Date.now().toString(36) + Math.floor(Math.random() * 100);
+  const col = def.category === 'source' ? 0 : def.category === 'sink' ? 2 : 1;
+  const sameCat = NODES.filter(n => {
+    const d = NODE_TYPES.find(t => t.key === n.type);
+    return d && d.category === def.category;
+  }).length;
+
+  const config = {};
+  (def.fields || []).forEach(f => {
+    if (f.default !== undefined) config[f.key] = f.default;
+  });
+
+  NODES.push({
+    id, type,
+    label: def.name,
+    x: 40 + col * 250,
+    y: 40 + sameCat * 110,
+    config,
+  });
+
+  // 自动连线：连到同类别的上一个节点
+  const prev = NODES.filter(n => n.id !== id).pop();
+  if (prev && def.category !== 'source') {
+    EDGES.push({ from: prev.id, to: id });
+  }
+
+  SELECTED = id;
+  render();
+  renderProps();
+}
+
+function removeNode(id) {
+  NODES = NODES.filter(n => n.id !== id);
+  EDGES = EDGES.filter(e => e.from !== id && e.to !== id);
+  if (SELECTED === id) SELECTED = null;
+  render();
+  renderProps();
+}
+
+function handleConnect(targetId) {
+  if (!connectFrom || connectFrom === targetId) {
+    connectMode = false; connectFrom = null; return;
+  }
+  const exists = EDGES.some(e => e.from === connectFrom && e.to === targetId);
+  if (!exists) EDGES.push({ from: connectFrom, to: targetId });
+  connectMode = false;
+  connectFrom = null;
+  render();
+  toast('已连线', 'success');
+}
+
+function autoLayout() {
+  const cols = { source: 0, clean: 1, sink: 2 };
+  const counters = { source: 0, clean: 0, sink: 0 };
+  NODES.forEach(n => {
+    const def = NODE_TYPES.find(t => t.key === n.type) || {};
+    const c = cols[def.category] !== undefined ? def.category : 'clean';
+    n.x = 40 + cols[c] * 250;
+    n.y = 40 + counters[c] * 110;
+    counters[c] += 1;
+  });
+  render();
+}
+
+function clearAll() {
+  if (!confirm('确定清空画布上的所有节点？')) return;
+  NODES = []; EDGES = []; SELECTED = null;
+  render();
+  renderProps();
+}
+
+/* ══════════ 节点配置 ══════════ */
+function renderProps() {
+  const el = document.getElementById('props');
+  const node = NODES.find(n => n.id === SELECTED);
+  if (!node) { el.innerHTML = '<div class="empty-mini">请点击画布中的节点</div>'; return; }
+
+  const def = NODE_TYPES.find(t => t.key === node.type) || { fields: [] };
+  const cfg = node.config || {};
+
+  const inputs = (def.fields || []).map(f => {
+    const v = cfg[f.key] === undefined ? '' : cfg[f.key];
+    let control = '';
+
+    if (f.type === 'project') {
+      control = '<select class="input" data-cfg="' + f.key + '">' +
+        '<option value="">请选择项目</option>' +
+        PROJECTS.map(p => '<option value="' + p.id + '"' +
+          (String(v) === String(p.id) ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') +
+        '</select>';
+    } else if (f.type === 'datasource') {
+      control = '<select class="input" data-cfg="' + f.key + '">' +
+        DATASOURCES.map(d => '<option value="' + d.id + '"' +
+          (String(v) === String(d.id) ? ' selected' : '') + '>' + esc(d.name) + '</option>').join('') +
+        '</select>';
+    } else if (f.type === 'form') {
+      control = '<select class="input" data-cfg="' + f.key + '">' +
+        '<option value="">请选择表单</option>' +
+        FORMS.map(x => '<option value="' + x.id + '"' +
+          (String(v) === String(x.id) ? ' selected' : '') + '>' + esc(x.name) + '</option>').join('') +
+        '</select>';
+    } else if (f.type === 'select') {
+      control = '<select class="input" data-cfg="' + f.key + '">' +
+        (f.options || []).map(o => '<option value="' + esc(o.value) + '"' +
+          (String(v) === String(o.value) ? ' selected' : '') + '>' + esc(o.label) + '</option>').join('') +
+        '</select>';
+    } else if (f.type === 'switch') {
+      control = '<label class="switch"><input type="checkbox" data-cfg="' + f.key + '"' +
+        (v ? ' checked' : '') + '><span class="track"></span></label>';
+    } else if (f.type === 'field') {
+      control = '<select class="input" data-cfg="' + f.key + '">' +
+        '<option value="">请选择字段</option>' +
+        FIELD_OPTIONS.map(o => '<option value="' + esc(o.name) + '"' +
+          (String(v) === String(o.name) ? ' selected' : '') + '>' + esc(o.name) + '</option>').join('') +
+        '</select>';
+    } else if (f.type === 'sql' || f.type === 'json' || f.type === 'kv') {
+      control = '<textarea class="input mono" data-cfg="' + f.key + '" rows="' +
+        (f.type === 'sql' ? 5 : 4) + '" placeholder="' + esc(f.hint || '') + '">' + esc(v) + '</textarea>';
+    } else if (f.type === 'number') {
+      control = '<input class="input" type="number" data-cfg="' + f.key + '" value="' + esc(v) + '">';
+    } else {
+      control = '<input class="input" data-cfg="' + f.key + '" value="' + esc(v) + '"' +
+        (f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : '') + '>';
+    }
+
+    return '<label class="field"><span>' + esc(f.label) +
+      (f.required ? ' <i class="req">*</i>' : '') + '</span>' + control +
+      (f.hint ? '<small class="hint">' + esc(f.hint) + '</small>' : '') + '</label>';
+  }).join('');
+
+  el.innerHTML =
+    '<label class="field"><span>节点名称</span>' +
+      '<input class="input" id="n_label" value="' + esc(node.label || '') + '"></label>' +
+    '<div class="muted small" style="margin:-6px 0 12px">类型：' + esc(def.name || node.type) + '</div>' +
+    (def.desc ? '<div class="alert alert-info" style="padding:8px 10px;font-size:12px">' + esc(def.desc) + '</div>' : '') +
+    inputs +
+    '<button class="btn btn-primary btn-block" onclick="applyNode()">应用配置</button>' +
+    '<button class="btn btn-danger btn-block" style="margin-top:8px" onclick="removeNode(\'' + node.id + '\')">删除节点</button>';
+}
+
+function applyNode() {
+  const node = NODES.find(n => n.id === SELECTED);
+  if (!node) return;
+
+  node.label = document.getElementById('n_label').value.trim() || node.label;
+  node.config = node.config || {};
+
+  document.querySelectorAll('#props [data-cfg]').forEach(el => {
+    const key = el.dataset.cfg;
+    if (el.type === 'checkbox') node.config[key] = el.checked;
+    else if (el.type === 'number') node.config[key] = el.value === '' ? null : Number(el.value);
+    else node.config[key] = el.value;
+  });
+
+  toast('配置已应用', 'success');
+  render();
+}
+
+/* ══════════ 保存 / 执行 ══════════ */
+async function save() {
+  const r = await api('/api/flows/' + FLOW_ID, {
+    method: 'PUT',
+    body: { nodes: NODES, edges: EDGES },
+  });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast('流程已保存', 'success');
+  loadFields();
+}
+
+async function preview() {
+  if (!NODES.length) return toast('请先添加节点', 'error');
+  toast('正在试运行...');
+  const r = await api('/api/flows/' + FLOW_ID + '/preview', { method: 'POST', body: { limit: 50 } });
+  if (!r.ok) return toast(r.message || '试运行失败', 'error');
+
+  const d = r.data;
+  document.getElementById('previewLogs').innerHTML = '<div class="flow-log">' +
+    d.logs.map(l => '<div>' +
+      (l.skipped ? '<span class="info">⊘</span> ' : '<span class="ok">✓</span> ') +
+      esc(l.name) + '：' +
+      (l.skipped ? '跳过（输出节点不写入）' :
+        (l.inputRows !== undefined ? l.inputRows + ' → ' + l.outputRows + ' 行' : l.outputRows + ' 行')) +
+      ' <span class="muted">(' + l.ms + 'ms)</span></div>').join('') + '</div>';
+
+  document.getElementById('previewInfo').textContent = '共 ' + d.rowCount + ' 行结果，显示前 ' + d.rows.length + ' 行';
+
+  const cols = d.columns.map(c => c.name);
+  document.getElementById('previewHead').innerHTML = '<tr>' + cols.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>';
+  document.getElementById('previewBody').innerHTML = d.rows.map(row =>
+    '<tr>' + cols.map(c => {
+      const v = row[c];
+      const s = v === null || v === undefined ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+      return '<td title="' + esc(s) + '"><span class="cell-inner">' + esc(s.slice(0, 60)) + '</span></td>';
+    }).join('') + '</tr>').join('') ||
+    '<tr><td colspan="' + cols.length + '" class="empty">无数据</td></tr>';
+
+  openModal('previewModal');
+}
+
+async function runNow() {
+  if (!NODES.length) return toast('请先添加节点', 'error');
+  await save();
+  if (!confirm('正式执行会写入目标表，确定继续？')) return;
+  toast('正在执行...');
+  const r = await api('/api/flows/' + FLOW_ID + '/run', { method: 'POST' });
+  toast(r.message || (r.ok ? '执行成功' : '执行失败'), r.ok ? 'success' : 'error');
+}
+
+window.addEventListener('resize', debounce(renderEdges, 200));
+init();
+</script>

@@ -1,0 +1,116 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>${esc(form.name)}</h1>
+    <p class="sub">
+      <span class="tag tag-primary">提交数据</span>
+      <span class="muted">共 ${form.submitCount} 条提交</span>
+    </p>
+  </div>
+  <div class="head-actions">
+    <input class="input" id="kw" placeholder="搜索内容" style="width:200px">
+    <button class="btn" onclick="load(1)">刷新</button>
+    <a class="btn" href="/api/forms/${form.id}/export">导出 CSV</a>
+    ${can('form:write') ? '<a class="btn" href="/forms/' + form.id + '/design">设计表单</a>' : ''}
+    <a class="btn btn-ghost" href="/forms">返回</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap" style="max-height:620px;overflow:auto">
+    <table class="table table-fixed">
+      <thead id="dataHead"></thead>
+      <tbody id="dataBody"><tr><td class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager"></div>
+</div>
+
+<div class="modal-mask" id="detailModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3>提交详情</h3>
+      <button class="modal-close" onclick="closeModal('detailModal')">×</button>
+    </div>
+    <div class="modal-body" id="detailBody"></div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('detailModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const FID = <%= form.id %>;
+const FIELDS = <%- JSON.stringify((form.fields || []).filter(function (f) { return f.type !== 'divider' && f.type !== 'section'; })) %>;
+let RECORDS = [];
+
+async function load(page) {
+  const kw = document.getElementById('kw').value.trim();
+  const r = await api('/api/forms/' + FID + '/records?page=' + page + '&pageSize=20&keyword=' + encodeURIComponent(kw));
+  if (!r.ok) return toast(r.message, 'error');
+  RECORDS = r.data.list;
+
+  document.getElementById('dataHead').innerHTML = '<tr>' +
+    '<th style="width:60px">ID</th>' +
+    '<th style="width:150px">提交时间</th>' +
+    '<th style="width:120px">提交人</th>' +
+    FIELDS.map(f => '<th>' + esc(f.label) + '</th>').join('') +
+    '<th style="width:90px">状态</th>' +
+    '<th style="width:80px">操作</th>' +
+  '</tr>';
+
+  const body = document.getElementById('dataBody');
+  if (!RECORDS.length) {
+    body.innerHTML = '<tr><td colspan="' + (FIELDS.length + 5) + '" class="empty">暂无提交数据</td></tr>';
+  } else {
+    body.innerHTML = RECORDS.map(rec => '<tr>' +
+      '<td>' + rec.id + '</td>' +
+      '<td class="small">' + fmtTime(rec.created_at) + '</td>' +
+      '<td class="small">' + esc(rec.submitter || '-') + '</td>' +
+      FIELDS.map(f => {
+        const v = rec.data[f.key];
+        const s = v === null || v === undefined ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+        return '<td title="' + esc(s) + '"><span class="cell-inner">' + esc(s.slice(0, 60)) + '</span></td>';
+      }).join('') +
+      '<td>' + (rec.status === 'ok' ? '<span class="tag tag-ok">成功</span>'
+        : rec.status === 'invalid' ? '<span class="tag tag-err">校验失败</span>'
+        : '<span class="tag tag-warn">部分成功</span>') + '</td>' +
+      '<td><button class="btn btn-sm" data-detail="' + rec.id + '">详情</button></td>' +
+    '</tr>').join('');
+
+    body.querySelectorAll('button[data-detail]').forEach(b =>
+      b.addEventListener('click', () => showDetail(Number(b.dataset.detail))));
+  }
+
+  renderPager('pager', r.data.total, r.data.page, r.data.pageSize, load);
+}
+
+function showDetail(id) {
+  const rec = RECORDS.find(x => x.id === id);
+  if (!rec) return;
+  document.getElementById('detailBody').innerHTML =
+    '<div class="kv">' +
+      '<div><span>提交时间</span>' + fmtTime(rec.created_at) + '</div>' +
+      '<div><span>提交人</span>' + esc(rec.submitter || '匿名') + '</div>' +
+      '<div><span>IP</span><code>' + esc(rec.ip || '-') + '</code></div>' +
+      '<div><span>状态</span>' + esc(rec.status) + '</div>' +
+    '</div>' +
+    (rec.message ? '<div class="alert alert-warn">' + esc(rec.message) + '</div>' : '') +
+    '<h4 style="margin:16px 0 8px;font-size:14px">提交内容</h4>' +
+    '<div class="kv">' +
+      FIELDS.map(f => {
+        const v = rec.data[f.key];
+        const s = v === null || v === undefined || v === '' ? '<span class="muted">（空）</span>'
+          : esc(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v));
+        return '<div><span>' + esc(f.label) + '</span>' + s + '</div>';
+      }).join('') +
+    '</div>';
+  openModal('detailModal');
+}
+
+document.getElementById('kw').addEventListener('input', debounce(() => load(1), 400));
+load(1);
+</script>

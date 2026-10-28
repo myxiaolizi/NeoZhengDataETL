@@ -1,0 +1,888 @@
+<% var body = '' %>
+<% body += `
+<style>
+/* 项目分组视图：左侧分组树 + 右侧项目卡片 */
+.pj-layout { display: grid; grid-template-columns: 232px 1fr; gap: 16px; align-items: start; }
+@media (max-width: 980px) { .pj-layout { grid-template-columns: 1fr; } }
+
+.grp-panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px; position: sticky; top: 12px;
+}
+.grp-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 6px 10px; border-bottom: 1px solid var(--border); margin-bottom: 8px;
+}
+.grp-panel-head h4 { font-size: 13px; font-weight: 600; color: var(--text-secondary); }
+.grp-list { display: flex; flex-direction: column; gap: 1px; max-height: 62vh; overflow: auto; }
+
+.grp-item {
+  display: flex; align-items: center; gap: 6px; padding: 7px 8px; border-radius: 8px;
+  cursor: pointer; font-size: 13px; color: var(--text-secondary); user-select: none;
+  border: 1px solid transparent; transition: var(--transition);
+}
+.grp-item:hover { background: var(--surface-alt); color: var(--text); }
+.grp-item.active { background: var(--primary-bg); color: var(--primary-dark); font-weight: 600; border-color: var(--border-strong); }
+.grp-item .g-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grp-item .g-count {
+  font-size: 11px; color: var(--text-muted); background: var(--surface-alt);
+  padding: 1px 6px; border-radius: 9px; min-width: 18px; text-align: center;
+}
+.grp-item.active .g-count { background: rgba(54,135,255,.18); color: var(--primary-dark); }
+.grp-item .g-caret {
+  width: 14px; text-align: center; font-size: 10px; color: var(--text-muted);
+  transition: transform .15s ease; flex: 0 0 14px;
+}
+.grp-item .g-caret.open { transform: rotate(90deg); }
+.grp-item .g-caret.leaf { visibility: hidden; }
+.grp-item .g-ops { display: none; gap: 2px; }
+.grp-item:hover .g-ops { display: flex; }
+.grp-item .g-ops button {
+  border: 0; background: transparent; cursor: pointer; font-size: 12px;
+  color: var(--text-muted); padding: 0 2px; line-height: 1;
+}
+.grp-item .g-ops button:hover { color: var(--primary-dark); }
+.grp-item .g-ops button.del:hover { color: var(--danger); }
+
+.grp-children { margin-left: 12px; border-left: 1px dashed var(--border); padding-left: 2px; }
+.grp-children.collapsed { display: none; }
+.grp-sep { height: 1px; background: var(--border); margin: 8px 4px; }
+
+/* 分组标题栏（右侧内容区） */
+.grp-header {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); margin-bottom: 12px;
+}
+.grp-header .gh-title { font-size: 15px; font-weight: 600; }
+.grp-header .gh-path { font-size: 12px; color: var(--text-muted); }
+.grp-header .gh-actions { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 卡片内分组标记 */
+.card-group-tag {
+  display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
+  color: var(--primary-dark); background: var(--primary-soft);
+  padding: 2px 8px; border-radius: 10px; max-width: 100%;
+}
+.card-group-tag .cg-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 批量选择 */
+.pj-select-bar {
+  display: none; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px; background: var(--primary-soft); border: 1px solid var(--border-strong);
+  border-radius: var(--radius); margin-bottom: 12px;
+}
+.pj-select-bar.show { display: flex; }
+.pj-select-bar .sel-info { font-size: 13px; color: var(--primary-dark); font-weight: 600; }
+.project-card .card-check {
+  position: absolute; top: 10px; right: 10px; z-index: 2; display: none;
+}
+.project-card.selecting .card-check { display: block; }
+.project-card.selecting { position: relative; }
+.project-card.picked { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+.grp-empty { padding: 30px 10px; text-align: center; color: var(--text-muted); font-size: 13px; }
+</style>
+
+<div class="page-head">
+  <div>
+    <h1>项目管理</h1>
+    <p class="sub">按分组管理项目；每个项目对应一套独立的接收地址、数据表、字段定义与接收日志</p>
+  </div>
+  <div class="head-actions">
+    <input class="input" id="kw" type="text" placeholder="搜索项目名称 / 编码" style="width:210px">
+    ${can('project:write') ? '<button class="btn btn-ghost" onclick="toggleSelectMode()" id="selModeBtn">批量移动</button>' : ''}
+    ${can('project:write') ? '<button class="btn btn-ghost" onclick="openGroupManage()">分组管理</button>' : ''}
+    ${can('project:write') ? '<button class="btn btn-primary" onclick="openCreate()">+ 新建项目</button>' : ''}
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat">
+    <div class="stat-label">项目总数</div>
+    <div class="stat-value">${stats.projects}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">分组数</div>
+    <div class="stat-value">${groupStats.groups}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">未分组</div>
+    <div class="stat-value">${groupStats.ungrouped}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">启用项目</div>
+    <div class="stat-value">${stats.activeProjects}</div>
+  </div>
+  <div class="stat">
+    <div class="stat-label">数据总量</div>
+    <div class="stat-value">${stats.dataTotal.toLocaleString()}</div>
+  </div>
+</div>
+
+<div class="pj-layout">
+  <!-- 左侧：分组树 -->
+  <aside class="grp-panel">
+    <div class="grp-panel-head">
+      <h4>项目分组</h4>
+      ${can('project:write') ? '<button class="btn btn-sm btn-ghost" onclick="openGroupForm(null)" title="新建根分组">+ 新建</button>' : ''}
+    </div>
+    <div class="grp-list" id="grpList"></div>
+  </aside>
+
+  <!-- 右侧：项目卡片 -->
+  <div>
+    <div class="grp-header" id="grpHeader"></div>
+    <div class="pj-select-bar" id="selBar">
+      <span class="sel-info" id="selInfo">已选 0 项</span>
+      <select class="input" id="selTarget" style="width:200px"></select>
+      <button class="btn btn-sm btn-primary" onclick="doBatchMove()">移动到该分组</button>
+      <button class="btn btn-sm btn-ghost" onclick="clearSelect()">取消选择</button>
+    </div>
+    <div id="projectGrid" class="project-grid"></div>
+    <div id="projectEmpty" class="empty-state hidden">
+      <div class="ico">▦</div>
+      <h3>该分组下还没有项目</h3>
+      <p>可以新建项目，或把已有项目移动到这个分组</p>
+      ${can('project:write') ? '<button class="btn btn-primary" onclick="openCreate()">+ 新建项目</button>' : ''}
+    </div>
+  </div>
+</div>
+
+<!-- 项目新建/编辑弹窗 -->
+<div class="modal-mask" id="projectModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modalTitle">新建项目</h3>
+      <button class="modal-close" onclick="closeModal('projectModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="f_id">
+      <label class="field">
+        <span>项目名称 <i class="req">*</i></span>
+        <input class="input" id="f_name" placeholder="例如：客户管理应用" maxlength="128">
+      </label>
+      <label class="field">
+        <span>项目编码</span>
+        <input class="input" id="f_code" placeholder="留空自动生成，仅字母数字下划线" maxlength="64">
+      </label>
+      <label class="field">
+        <span>所属分组</span>
+        <select class="input" id="f_group"></select>
+        <small class="hint">项目将归入该分组，便于按业务域管理</small>
+      </label>
+      <label class="field">
+        <span>简道云服务器地址</span>
+        <input class="input" id="f_base" placeholder="例如：https://jdy.zhengl.vip">
+        <small class="hint">本平台对外访问地址（协议 + 域名/IP + 端口），用于生成推送到简道云的完整地址。</small>
+      </label>
+      <label class="field">
+        <span>Secret</span>
+        <input class="input" id="f_secret" placeholder="简道云「生成 Secret」后复制到这里">
+        <small class="hint">用于校验推送签名（X-JDY-Signature）。可留空，之后在项目详情里补充。</small>
+      </label>
+      <label class="field">
+        <span>存储数据源</span>
+        <select class="input" id="f_datasource">
+          <option value="0">本机数据库（默认）</option>
+        </select>
+        <small class="hint">项目数据将存储到该数据源；可在「数据源管理」中添加 MySQL / SQL Server</small>
+      </label>
+      <label class="field">
+        <span>字段自动解析</span>
+        <label class="switch">
+          <input type="checkbox" id="f_parse" checked>
+          <span class="track"></span>
+          <span class="label-text">开启后，JSON 结构字段会自动解析为可读值</span>
+        </label>
+      </label>
+      <label class="field">
+        <span>标签</span>
+        <input class="input" id="f_tags" placeholder="可选，逗号分隔，例如：核心,线上">
+      </label>
+      <label class="field">
+        <span>项目说明</span>
+        <textarea class="input" id="f_desc" rows="2" placeholder="可选"></textarea>
+      </label>
+      <label class="field">
+        <span>备注</span>
+        <textarea class="input" id="f_remark" rows="2" placeholder="可选"></textarea>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('projectModal')">取消</button>
+      <button class="btn btn-primary" id="saveProjectBtn" onclick="saveProject()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 分组新建/编辑弹窗 -->
+<div class="modal-mask" id="groupModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-head">
+      <h3 id="groupModalTitle">新建分组</h3>
+      <button class="modal-close" onclick="closeModal('groupModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="g_id">
+      <label class="field">
+        <span>分组名称 <i class="req">*</i></span>
+        <input class="input" id="g_name" placeholder="例如：CRM 业务 / 电商数据" maxlength="64">
+      </label>
+      <label class="field">
+        <span>上级分组</span>
+        <select class="input" id="g_parent"></select>
+        <small class="hint">留空则为根分组；最多支持 5 级</small>
+      </label>
+      <label class="field">
+        <span>图标 / 标识色</span>
+        <div style="display:flex;gap:8px">
+          <input class="input" id="g_icon" placeholder="图标，如 ▦ 或 📦" maxlength="4" style="width:120px">
+          <input class="input" id="g_color" type="color" value="#3687FF" style="width:60px;padding:2px">
+        </div>
+      </label>
+      <label class="field">
+        <span>备注</span>
+        <textarea class="input" id="g_remark" rows="2" placeholder="可选"></textarea>
+      </label>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('groupModal')">取消</button>
+      <button class="btn btn-primary" id="saveGroupBtn" onclick="saveGroup()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 分组管理弹窗（列表式，支持排序与删除） -->
+<div class="modal-mask" id="grpManageModal">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-head">
+      <h3>分组管理</h3>
+      <button class="modal-close" onclick="closeModal('grpManageModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button class="btn btn-sm btn-primary" onclick="openGroupForm(null)">+ 新建根分组</button>
+        <button class="btn btn-sm btn-ghost" onclick="expandAllGroups()">全部展开</button>
+        <button class="btn btn-sm btn-ghost" onclick="collapseAllGroups()">全部收起</button>
+      </div>
+      <div id="grpManageList" style="max-height:52vh;overflow:auto"></div>
+      <small class="hint" style="display:block;margin-top:10px">
+        提示：删除分组不会删除项目，其下项目会自动上移到父分组；有子分组时需先处理子分组。
+      </small>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('grpManageModal')">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 删除分组确认弹窗 -->
+<div class="modal-mask" id="grpDelModal">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-head">
+      <h3>删除分组</h3>
+      <button class="modal-close" onclick="closeModal('grpDelModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <p id="grpDelTip" style="margin-bottom:12px;font-size:13px"></p>
+      <label class="field">
+        <span>该分组下的项目移动到</span>
+        <select class="input" id="grpDelTarget"></select>
+      </label>
+      <small class="hint">项目本身不会被删除，只改变归属分组</small>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('grpDelModal')">取消</button>
+      <button class="btn btn-danger" id="grpDelBtn" onclick="confirmDeleteGroup()">确认删除</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const CAN_WRITE = <%= can('project:write') ? 'true' : 'false' %>;
+const CAN_FIELD = <%= can('field:write') ? 'true' : 'false' %>;
+let PROJECTS = [];
+let DATASOURCES = [];
+let GROUPS = [];          // 扁平分组
+let GROUP_TREE = [];      // 树形分组
+let GROUP_MAP = {};       // id -> 分组对象
+let MAX_DEPTH = 5;
+let CURRENT_GROUP = 'all';   // 'all' | 0(未分组) | 分组id
+let COLLAPSED = {};          // 折叠状态 {groupId: true}
+let SELECT_MODE = false;
+let SELECTED = {};           // {projectId: true}
+let DELETING_GROUP = null;
+
+/* ---------- 数据加载 ---------- */
+
+async function loadDatasources() {
+  const r = await api('/api/datasources');
+  if (!r.ok) return;
+  DATASOURCES = r.data.list;
+  document.getElementById('f_datasource').innerHTML = DATASOURCES.map(d =>
+    '<option value="' + d.id + '">' + esc(d.name) + '（' + esc(d.type) + '）</option>').join('');
+}
+
+async function loadGroups() {
+  const r = await api('/api/project-groups');
+  if (!r.ok) { toast(r.message || '分组加载失败', 'error'); return; }
+  GROUPS = r.data.list || [];
+  GROUP_TREE = r.data.tree || [];
+  MAX_DEPTH = r.data.maxDepth || 5;
+  GROUP_MAP = {};
+  GROUPS.forEach(g => { GROUP_MAP[g.id] = g; });
+  // 让 GROUP_MAP 同时带上 children，便于判断"有子分组"
+  const attach = (nodes) => {
+    (nodes || []).forEach(n => {
+      if (GROUP_MAP[n.id]) GROUP_MAP[n.id].children = n.children || [];
+      attach(n.children);
+    });
+  };
+  attach(GROUP_TREE);
+  renderGroupList();
+  renderGroupSelectors();
+}
+
+function groupPath(gid) {
+  const parts = [];
+  let cur = GROUP_MAP[gid];
+  const guard = new Set();
+  while (cur && !guard.has(cur.id)) {
+    guard.add(cur.id);
+    parts.unshift(cur.name);
+    cur = GROUP_MAP[cur.parentId];
+  }
+  return parts.join(' / ');
+}
+
+/* ---------- 左侧分组树 ---------- */
+
+function renderGroupList() {
+  const box = document.getElementById('grpList');
+  if (!box) return;
+  const totalAll = PROJECTS.length;
+  const ungrouped = PROJECTS.filter(p => !p.group_id).length;
+
+  let html = '';
+  html += '<div class="grp-item' + (CURRENT_GROUP === 'all' ? ' active' : '') + '" data-gid="all">' +
+    '<span class="g-caret leaf">▸</span>' +
+    '<span class="g-name">全部项目</span>' +
+    '<span class="g-count">' + totalAll + '</span>' +
+  '</div>';
+
+  html += renderTreeNodes(GROUP_TREE, 0);
+
+  html += '<div class="grp-sep"></div>';
+  html += '<div class="grp-item' + (CURRENT_GROUP === 0 ? ' active' : '') + '" data-gid="0">' +
+    '<span class="g-caret leaf">▸</span>' +
+    '<span class="g-name" style="color:var(--text-muted)">未分组</span>' +
+    '<span class="g-count">' + ungrouped + '</span>' +
+  '</div>';
+
+  box.innerHTML = html;
+
+  box.querySelectorAll('.grp-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.g-ops')) return;
+      const gid = el.dataset.gid;
+      setCurrentGroup(gid === 'all' ? 'all' : Number(gid));
+    });
+  });
+
+  box.querySelectorAll('.g-caret[data-collapse]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const gid = Number(el.dataset.collapse);
+      COLLAPSED[gid] = !COLLAPSED[gid];
+      renderGroupList();
+    });
+  });
+
+  box.querySelectorAll('button[data-gact]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const act = btn.dataset.gact;
+      const gid = Number(btn.dataset.gid);
+      if (act === 'add') openGroupForm(null, gid);
+      else if (act === 'edit') openGroupForm(gid);
+      else if (act === 'del') askDeleteGroup(gid);
+    });
+  });
+}
+
+function renderTreeNodes(nodes, level) {
+  if (!nodes || !nodes.length) return '';
+  return nodes.map(n => {
+    const hasChildren = n.children && n.children.length > 0;
+    const isCollapsed = COLLAPSED[n.id];
+    const active = CURRENT_GROUP === n.id;
+    const icon = n.icon ? esc(n.icon) + ' ' : '';
+    const colorStyle = n.color ? ' style="color:' + esc(n.color) + '"' : '';
+    let h = '<div class="grp-item' + (active ? ' active' : '') + '" data-gid="' + n.id + '">';
+    h += '<span class="g-caret' + (hasChildren ? (isCollapsed ? '' : ' open') : ' leaf') + '"' +
+         (hasChildren ? ' data-collapse="' + n.id + '"' : '') + '>▸</span>';
+    h += '<span class="g-name"' + colorStyle + ' title="' + esc(n.name) + '">' + icon + esc(n.name) + '</span>';
+    h += '<span class="g-count">' + (n.totalProjectCount || 0) + '</span>';
+    if (CAN_WRITE) {
+      h += '<span class="g-ops">';
+      if (level + 1 < MAX_DEPTH) h += '<button data-gact="add" data-gid="' + n.id + '" title="新建子分组">+</button>';
+      h += '<button data-gact="edit" data-gid="' + n.id + '" title="编辑">✎</button>';
+      h += '<button class="del" data-gact="del" data-gid="' + n.id + '" title="删除">✕</button>';
+      h += '</span>';
+    }
+    h += '</div>';
+    if (hasChildren) {
+      h += '<div class="grp-children' + (isCollapsed ? ' collapsed' : '') + '">' +
+           renderTreeNodes(n.children, level + 1) + '</div>';
+    }
+    return h;
+  }).join('');
+}
+
+function setCurrentGroup(gid) {
+  CURRENT_GROUP = gid;
+  renderGroupList();
+  loadProjects();
+}
+
+/* ---------- 右侧标题栏 ---------- */
+
+function renderGroupHeader() {
+  const box = document.getElementById('grpHeader');
+  if (!box) return;
+  let title = '全部项目';
+  let path = '';
+  if (CURRENT_GROUP === 0) {
+    title = '未分组';
+    path = '未归入任何分组的项目';
+  } else if (CURRENT_GROUP !== 'all') {
+    const g = GROUP_MAP[CURRENT_GROUP];
+    if (g) {
+      title = (g.icon ? g.icon + ' ' : '') + g.name;
+      path = groupPath(g.id);
+    }
+  }
+
+  const shown = PROJECTS.length;
+  let h = '<span class="gh-title">' + esc(title) + '</span>';
+  h += '<span class="gh-path">' + esc(path || '共 ' + shown + ' 个项目') + '</span>';
+  h += '<span class="gh-actions">';
+  if (CURRENT_GROUP !== 'all' && CURRENT_GROUP !== 0 && CAN_WRITE) {
+    h += '<button class="btn btn-sm btn-ghost" onclick="openGroupForm(' + CURRENT_GROUP + ')">编辑分组</button>';
+    h += '<button class="btn btn-sm btn-ghost" onclick="openGroupForm(null,' + CURRENT_GROUP + ')">+ 子分组</button>';
+    h += '<button class="btn btn-sm btn-danger" onclick="askDeleteGroup(' + CURRENT_GROUP + ')">删除分组</button>';
+  }
+  if (CAN_WRITE && CURRENT_GROUP !== 'all') {
+    h += '<button class="btn btn-sm" onclick="openCreate()">+ 在此分组新建项目</button>';
+  }
+  h += '</span>';
+  box.innerHTML = h;
+}
+
+/* ---------- 分组下拉选项 ---------- */
+
+function buildGroupOptions(selectedId, excludeId, withEmpty, emptyLabel) {
+  const opts = [];
+  const walk = (nodes, level) => {
+    (nodes || []).forEach(n => {
+      if (excludeId && n.id === excludeId) return;   // 编辑时排除自身（及子级自然随之跳过）
+      opts.push({ id: n.id, label: '　'.repeat(level) + (n.icon ? n.icon + ' ' : '') + n.name, level });
+      walk(n.children, level + 1);
+    });
+  };
+  walk(GROUP_TREE, 0);
+
+  let html = withEmpty ? '<option value="0">' + esc(emptyLabel || '（不分组）') + '</option>' : '';
+  html += opts.map(o =>
+    '<option value="' + o.id + '"' + (Number(selectedId) === o.id ? ' selected' : '') + '>' +
+    esc(o.label) + '</option>').join('');
+  return html;
+}
+
+function renderGroupSelectors() {
+  const fg = document.getElementById('f_group');
+  if (fg) fg.innerHTML = buildGroupOptions(fg.value, null, true, '（不分组）');
+  const st = document.getElementById('selTarget');
+  if (st) st.innerHTML = buildGroupOptions(st.value, null, true, '未分组');
+  const gp = document.getElementById('g_parent');
+  if (gp) {
+    const curId = Number(document.getElementById('g_id').value) || 0;
+    gp.innerHTML = buildGroupOptions(gp.value, curId || null, true, '（作为根分组）');
+  }
+}
+
+/* ---------- 项目列表 ---------- */
+
+async function loadProjects() {
+  const kw = document.getElementById('kw').value.trim();
+  let url = '/api/projects?keyword=' + encodeURIComponent(kw);
+  if (CURRENT_GROUP !== 'all') url += '&groupId=' + CURRENT_GROUP;
+
+  const r = await api(url);
+  const grid = document.getElementById('projectGrid');
+  const empty = document.getElementById('projectEmpty');
+
+  if (!r.ok) { grid.innerHTML = '<div class="alert alert-error">' + esc(r.message) + '</div>'; return; }
+  PROJECTS = r.data;
+
+  renderGroupHeader();
+  renderGroupList();
+
+  if (!PROJECTS.length) {
+    grid.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  grid.innerHTML = PROJECTS.map(p => {
+    const statusTag = p.status
+      ? '<span class="tag tag-ok">启用</span>'
+      : '<span class="tag tag-off">停用</span>';
+    const secretTag = p.jdy_secret
+      ? '<span class="tag tag-primary tag-sm">Secret 已配置</span>'
+      : '<span class="tag tag-warn tag-sm">Secret 未配置</span>';
+    const parseTag = Number(p.parse_enabled)
+      ? '<span class="tag tag-ok tag-sm">字段解析</span>'
+      : '<span class="tag tag-off tag-sm">解析关闭</span>';
+    const groupTag = p.group_name
+      ? '<span class="card-group-tag" title="' + esc(groupPath(p.group_id)) + '">▦ <span class="cg-name">' + esc(p.group_name) + '</span></span>'
+      : '<span class="card-group-tag" style="background:var(--surface-alt);color:var(--text-muted)">未分组</span>';
+
+    const picked = SELECTED[p.id] ? ' picked' : '';
+    return '<div class="project-card' + (SELECT_MODE ? ' selecting' : '') + picked + '" data-open="' + p.id + '" data-pid="' + p.id + '">' +
+      '<div class="card-check"><input type="checkbox" data-check="' + p.id + '"' + (SELECTED[p.id] ? ' checked' : '') + '></div>' +
+      '<div class="card-top">' +
+        '<h3><a href="/projects/' + p.id + '">' + esc(p.name) + '</a></h3>' +
+        '<div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">' + statusTag + '</div>' +
+      '</div>' +
+      '<div style="margin:6px 0">' + groupTag + '</div>' +
+      '<div class="card-desc">' + (p.description ? esc(p.description) : '<span class="muted">暂无项目说明</span>') + '</div>' +
+      '<div class="card-stats">' +
+        '<div class="card-stat"><div class="num">' + (p.dataCount || 0).toLocaleString() + '</div><div class="lbl">数据条数</div></div>' +
+        '<div class="card-stat"><div class="num">' + (p.fieldCount || 0) + '</div><div class="lbl">字段定义</div></div>' +
+        '<div class="card-stat"><div class="num">' + (p.columnCount || 0) + '</div><div class="lbl">数据列</div></div>' +
+      '</div>' +
+      '<div class="card-meta" style="flex-direction:column;align-items:flex-start;gap:4px">' +
+        '<span>原始表：<code class="mini">' + esc(p.data_table || '-') + '</code></span>' +
+        '<span>解析表：<code class="mini">' + esc(p.parsed_table || '-') + '</code></span>' +
+      '</div>' +
+      '<div class="card-meta">' +
+        '<span>数据源：' + esc(p.datasource_name || '本机数据库') + '</span>' +
+        '<span>最近推送：' + fmtTime(p.last_push_at) + '</span>' +
+      '</div>' +
+      '<div class="card-meta" style="gap:6px">' + secretTag + parseTag +
+        (p.failedLogs > 0 ? '<span class="tag tag-err tag-sm">失败 ' + p.failedLogs + '</span>' : '') +
+      '</div>' +
+      '<div class="card-actions">' +
+        '<a class="btn btn-sm btn-primary" href="/projects/' + p.id + '#parsed">查看数据</a>' +
+        (CAN_FIELD ? '<a class="btn btn-sm" href="/projects/' + p.id + '#settings">字段设置</a>' : '') +
+        (CAN_WRITE ? '<button class="btn btn-sm" data-edit="' + p.id + '">编辑</button>' : '') +
+        (CAN_WRITE ? '<button class="btn btn-sm btn-danger" data-del="' + p.id + '">删除</button>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  grid.querySelectorAll('.project-card[data-open]').forEach(card => {
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('a, button, input')) return;
+      if (SELECT_MODE) { togglePick(Number(card.dataset.pid)); return; }
+      location.href = '/projects/' + card.dataset.open;
+    });
+  });
+
+  grid.querySelectorAll('input[data-check]').forEach(cb => {
+    cb.addEventListener('change', () => togglePick(Number(cb.dataset.check)));
+  });
+
+  grid.querySelectorAll('button[data-edit]').forEach(btn => {
+    btn.addEventListener('click', () => editProject(Number(btn.dataset.edit)));
+  });
+
+  grid.querySelectorAll('button[data-del]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = Number(btn.dataset.del);
+      const p = PROJECTS.find(x => x.id === id);
+      delProject(id, p ? p.name : String(id));
+    });
+  });
+
+  updateSelBar();
+}
+
+/* ---------- 批量移动 ---------- */
+
+function toggleSelectMode() {
+  SELECT_MODE = !SELECT_MODE;
+  if (!SELECT_MODE) SELECTED = {};
+  const btn = document.getElementById('selModeBtn');
+  if (btn) btn.textContent = SELECT_MODE ? '退出批量' : '批量移动';
+  document.getElementById('selBar').classList.toggle('show', SELECT_MODE);
+  loadProjects();
+}
+
+function togglePick(pid) {
+  if (!SELECT_MODE) return;
+  if (SELECTED[pid]) delete SELECTED[pid]; else SELECTED[pid] = true;
+  const card = document.querySelector('.project-card[data-pid="' + pid + '"]');
+  if (card) {
+    card.classList.toggle('picked', !!SELECTED[pid]);
+    const cb = card.querySelector('input[data-check]');
+    if (cb) cb.checked = !!SELECTED[pid];
+  }
+  updateSelBar();
+}
+
+function updateSelBar() {
+  const n = Object.keys(SELECTED).length;
+  const el = document.getElementById('selInfo');
+  if (el) el.textContent = '已选 ' + n + ' 项';
+}
+
+function clearSelect() {
+  SELECTED = {};
+  loadProjects();
+}
+
+async function doBatchMove() {
+  const ids = Object.keys(SELECTED).map(Number);
+  if (!ids.length) return toast('请先选择要移动的项目', 'error');
+  const gid = Number(document.getElementById('selTarget').value) || 0;
+  const gname = gid ? (GROUP_MAP[gid] ? GROUP_MAP[gid].name : '目标分组') : '未分组';
+  const r = await api('/api/project-groups/assign', {
+    method: 'POST',
+    body: { projectIds: ids, groupId: gid },
+  });
+  if (!r.ok) return toast(r.message || '移动失败', 'error');
+  toast('已移动 ' + ids.length + ' 个项目到「' + gname + '」', 'success');
+  SELECTED = {};
+  await loadGroups();
+  await loadProjects();
+}
+
+/* ---------- 项目弹窗 ---------- */
+
+function openCreate() {
+  document.getElementById('modalTitle').textContent = '新建项目';
+  ['f_id','f_name','f_code','f_base','f_secret','f_desc','f_remark','f_tags'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('f_parse').checked = true;
+  document.getElementById('f_code').disabled = false;
+  document.getElementById('f_datasource').value = '0';
+  const fg = document.getElementById('f_group');
+  const preset = CURRENT_GROUP !== 'all' ? CURRENT_GROUP : 0;
+  fg.innerHTML = buildGroupOptions(preset, null, true, '（不分组）');
+  fg.value = String(preset);
+  openModal('projectModal');
+}
+
+function editProject(id) {
+  const p = PROJECTS.find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('modalTitle').textContent = '编辑项目 #' + id;
+  document.getElementById('f_id').value = p.id;
+  document.getElementById('f_name').value = p.name || '';
+  document.getElementById('f_code').value = p.code || '';
+  document.getElementById('f_code').disabled = true;
+  document.getElementById('f_base').value = p.jdy_base_url || '';
+  document.getElementById('f_secret').value = p.jdy_secret || '';
+  document.getElementById('f_desc').value = p.description || '';
+  document.getElementById('f_remark').value = p.remark || '';
+  document.getElementById('f_tags').value = p.tags || '';
+  document.getElementById('f_parse').checked = Number(p.parse_enabled) === 1;
+  document.getElementById('f_datasource').value = String(p.datasource_id || 0);
+  const fg = document.getElementById('f_group');
+  fg.innerHTML = buildGroupOptions(p.group_id || 0, null, true, '（不分组）');
+  fg.value = String(p.group_id || 0);
+  openModal('projectModal');
+}
+
+async function saveProject() {
+  const id = document.getElementById('f_id').value;
+  const payload = {
+    name: document.getElementById('f_name').value.trim(),
+    code: document.getElementById('f_code').value.trim(),
+    jdyBaseUrl: document.getElementById('f_base').value.trim(),
+    jdySecret: document.getElementById('f_secret').value.trim(),
+    description: document.getElementById('f_desc').value.trim(),
+    remark: document.getElementById('f_remark').value.trim(),
+    tags: document.getElementById('f_tags').value.trim(),
+    groupId: Number(document.getElementById('f_group').value) || 0,
+    parseEnabled: document.getElementById('f_parse').checked,
+    datasourceId: Number(document.getElementById('f_datasource').value) || 0,
+  };
+  if (!payload.name) return toast('请填写项目名称', 'error');
+
+  const btn = document.getElementById('saveProjectBtn');
+  btn.disabled = true; btn.textContent = '保存中...';
+  const r = id
+    ? await api('/api/projects/' + id, { method: 'PUT', body: payload })
+    : await api('/api/projects', { method: 'POST', body: payload });
+  btn.disabled = false; btn.textContent = '保存';
+
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast(r.message || '保存成功', 'success');
+  closeModal('projectModal');
+  await loadGroups();
+  await loadProjects();
+}
+
+async function delProject(id, name) {
+  if (!confirm('确定删除项目「' + name + '」？\\n\\n该项目的数据表、日志表、子表与字段定义会一并删除，且不可恢复！')) return;
+  const r = await api('/api/projects/' + id, { method: 'DELETE' });
+  if (!r.ok) return toast(r.message || '删除失败', 'error');
+  toast('项目已删除', 'success');
+  await loadGroups();
+  await loadProjects();
+}
+
+/* ---------- 分组弹窗 ---------- */
+
+function openGroupForm(gid, presetParent) {
+  const editing = gid ? GROUP_MAP[gid] : null;
+  document.getElementById('groupModalTitle').textContent = editing ? '编辑分组' : '新建分组';
+  document.getElementById('g_id').value = editing ? editing.id : '';
+  document.getElementById('g_name').value = editing ? editing.name : '';
+  document.getElementById('g_icon').value = editing ? (editing.icon || '') : '';
+  document.getElementById('g_color').value = editing && editing.color ? editing.color : '#3687FF';
+  document.getElementById('g_remark').value = editing ? (editing.remark || '') : '';
+
+  const gp = document.getElementById('g_parent');
+  const parentVal = editing ? (editing.parentId || 0) : (presetParent || 0);
+  gp.innerHTML = buildGroupOptions(parentVal, editing ? editing.id : null, true, '（作为根分组）');
+  gp.value = String(parentVal);
+
+  openModal('groupModal');
+}
+
+async function saveGroup() {
+  const id = document.getElementById('g_id').value;
+  const payload = {
+    name: document.getElementById('g_name').value.trim(),
+    parentId: Number(document.getElementById('g_parent').value) || 0,
+    icon: document.getElementById('g_icon').value.trim(),
+    color: document.getElementById('g_color').value.trim(),
+    remark: document.getElementById('g_remark').value.trim(),
+  };
+  if (!payload.name) return toast('请填写分组名称', 'error');
+
+  const btn = document.getElementById('saveGroupBtn');
+  btn.disabled = true; btn.textContent = '保存中...';
+  const r = id
+    ? await api('/api/project-groups/' + id, { method: 'PUT', body: payload })
+    : await api('/api/project-groups', { method: 'POST', body: payload });
+  btn.disabled = false; btn.textContent = '保存';
+
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast(r.message || '保存成功', 'success');
+  closeModal('groupModal');
+  await loadGroups();
+  await loadProjects();
+  if (!document.getElementById('grpManageModal').classList.contains('hidden')) renderGroupManage();
+}
+
+function askDeleteGroup(gid) {
+  const g = GROUP_MAP[gid];
+  if (!g) return;
+  if (g.children && g.children.length) {
+    return toast('该分组下还有子分组，请先删除或移动子分组', 'error');
+  }
+  DELETING_GROUP = gid;
+  document.getElementById('grpDelTip').innerHTML =
+    '确定删除分组「<b>' + esc(g.name) + '</b>」？<br>该分组下有 <b>' + (g.projectCount || 0) +
+    '</b> 个项目，删除后项目不会被删除，会移动到下面选择的分组。';
+  const sel = document.getElementById('grpDelTarget');
+  sel.innerHTML = buildGroupOptions(g.parentId || 0, gid, true, '未分组');
+  sel.value = String(g.parentId || 0);
+  openModal('grpDelModal');
+}
+
+async function confirmDeleteGroup() {
+  if (!DELETING_GROUP) return;
+  const gid = DELETING_GROUP;
+  const moveTo = Number(document.getElementById('grpDelTarget').value) || 0;
+  const btn = document.getElementById('grpDelBtn');
+  btn.disabled = true; btn.textContent = '删除中...';
+  const r = await api('/api/project-groups/' + gid, { method: 'DELETE', body: { moveTo } });
+  btn.disabled = false; btn.textContent = '确认删除';
+  if (!r.ok) return toast(r.message || '删除失败', 'error');
+  toast(r.message || '分组已删除', 'success');
+  closeModal('grpDelModal');
+  DELETING_GROUP = null;
+  if (CURRENT_GROUP === gid) CURRENT_GROUP = 'all';
+  await loadGroups();
+  await loadProjects();
+  if (!document.getElementById('grpManageModal').classList.contains('hidden')) renderGroupManage();
+}
+
+/* ---------- 分组管理弹窗 ---------- */
+
+function openGroupManage() {
+  renderGroupManage();
+  openModal('grpManageModal');
+}
+
+function renderGroupManage() {
+  const box = document.getElementById('grpManageList');
+  if (!GROUPS.length) {
+    box.innerHTML = '<div class="grp-empty">还没有分组，点击上方「+ 新建根分组」开始</div>';
+    return;
+  }
+  const rows = [];
+  const walk = (nodes, level) => {
+    (nodes || []).forEach(n => {
+      const indent = '　'.repeat(level);
+      rows.push(
+        '<div style="display:flex;align-items:center;gap:8px;padding:8px;border-bottom:1px solid var(--border)">' +
+          '<span style="flex:1;font-size:13px">' + indent +
+            (n.icon ? esc(n.icon) + ' ' : '') + '<b>' + esc(n.name) + '</b>' +
+            '<span class="muted" style="font-size:11px;margin-left:6px">' +
+              (n.totalProjectCount || 0) + ' 个项目' + (level > 0 ? ' · ' + (level + 1) + ' 级' : '') +
+            '</span>' +
+          '</span>' +
+          '<button class="btn btn-sm btn-ghost" data-madd="' + n.id + '">+ 子分组</button>' +
+          '<button class="btn btn-sm" data-medit="' + n.id + '">编辑</button>' +
+          '<button class="btn btn-sm btn-danger" data-mdel="' + n.id + '">删除</button>' +
+        '</div>'
+      );
+      walk(n.children, level + 1);
+    });
+  };
+  walk(GROUP_TREE, 0);
+  box.innerHTML = rows.join('');
+
+  box.querySelectorAll('button[data-madd]').forEach(b =>
+    b.addEventListener('click', () => openGroupForm(null, Number(b.dataset.madd))));
+  box.querySelectorAll('button[data-medit]').forEach(b =>
+    b.addEventListener('click', () => openGroupForm(Number(b.dataset.medit))));
+  box.querySelectorAll('button[data-mdel]').forEach(b =>
+    b.addEventListener('click', () => askDeleteGroup(Number(b.dataset.mdel))));
+}
+
+function expandAllGroups() {
+  COLLAPSED = {};
+  renderGroupList();
+  toast('已全部展开', 'success');
+}
+
+function collapseAllGroups() {
+  GROUPS.forEach(g => { COLLAPSED[g.id] = true; });
+  renderGroupList();
+  toast('已全部收起', 'success');
+}
+
+/* ---------- 初始化 ---------- */
+
+document.getElementById('kw').addEventListener('keydown', e => { if (e.key === 'Enter') loadProjects(); });
+document.getElementById('kw').addEventListener('input', debounce(loadProjects, 400));
+
+(async () => {
+  await loadDatasources();
+  await loadGroups();
+  await loadProjects();
+})();
+</script>

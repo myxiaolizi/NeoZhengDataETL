@@ -1,0 +1,170 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>治理总览</h1>
+    <p class="sub">数据资产盘点 · 表结构对照 · 字段质量评估</p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" onclick="load()">刷新</button>
+  </div>
+</div>
+
+<div class="stat-row">
+  <div class="stat"><div class="stat-label">数据项目</div><div class="stat-value" id="s_projects">-</div></div>
+  <div class="stat"><div class="stat-label">数据总条数</div><div class="stat-value" id="s_rows">-</div></div>
+  <div class="stat"><div class="stat-label">字段定义</div><div class="stat-value" id="s_fields">-</div></div>
+  <div class="stat"><div class="stat-label">启用解析</div><div class="stat-value" id="s_parsed">-</div></div>
+  <div class="stat"><div class="stat-label">注释覆盖率</div><div class="stat-value" id="s_comment">-</div></div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h3>数据资产清单</h3>
+    <span class="muted small">每个项目对应「解析前」与「解析后」两张数据表</span>
+  </div>
+  <div class="table-wrap">
+    <table class="table table-fixed">
+      <thead>
+        <tr>
+          <th style="width:60px">ID</th>
+          <th style="width:150px">项目名称</th>
+          <th style="width:130px">数据源</th>
+          <th style="width:170px">原始数据表</th>
+          <th style="width:170px">解析数据表</th>
+          <th style="width:100px">数据条数</th>
+          <th style="width:100px">字段定义</th>
+          <th style="width:120px">注释覆盖</th>
+          <th style="width:90px">操作</th>
+        </tr>
+      </thead>
+      <tbody id="govBody"><tr><td colspan="9" class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal-mask" id="schemaModal">
+  <div class="modal modal-lg">
+    <div class="modal-head">
+      <h3 id="schemaTitle">表结构对照</h3>
+      <button class="modal-close" onclick="closeModal('schemaModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="table-pair">
+        <div class="tp-box">
+          <div class="tp-head">解析前（原始数据表）</div>
+          <div style="max-height:400px;overflow:auto">
+            <table class="table table-fixed" style="font-size:12px">
+              <thead><tr><th>列名</th><th>类型</th><th>注释</th></tr></thead>
+              <tbody id="rawCols"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="tp-box">
+          <div class="tp-head">解析后（解析数据表）</div>
+          <div style="max-height:400px;overflow:auto">
+            <table class="table table-fixed" style="font-size:12px">
+              <thead><tr><th>列名</th><th>类型</th><th>注释</th></tr></thead>
+              <tbody id="parsedCols"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <h4 style="font-size:14px;margin-bottom:8px">字段定义与解析规则</h4>
+        <div style="max-height:300px;overflow:auto">
+          <table class="table table-fixed" style="font-size:12px">
+            <thead><tr><th>字段名称</th><th>字段ID</th><th>列名</th><th>解析方式</th><th>说明</th></tr></thead>
+            <tbody id="fieldDefs"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('schemaModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+let LIST = [];
+
+async function load() {
+  const r = await api('/api/governance/overview');
+  if (!r.ok) return toast(r.message, 'error');
+  LIST = r.data;
+
+  const totalRows = LIST.reduce((s, x) => s + x.dataCount, 0);
+  const totalFields = LIST.reduce((s, x) => s + x.fieldTotal, 0);
+  const totalParsed = LIST.reduce((s, x) => s + x.fieldParsed, 0);
+  const totalCols = LIST.reduce((s, x) => s + x.rawCols, 0);
+  const totalCommented = LIST.reduce((s, x) => s + x.commentedCols, 0);
+
+  document.getElementById('s_projects').textContent = LIST.length;
+  document.getElementById('s_rows').textContent = totalRows.toLocaleString();
+  document.getElementById('s_fields').textContent = totalFields;
+  document.getElementById('s_parsed').textContent = totalParsed;
+  document.getElementById('s_comment').textContent =
+    totalCols ? Math.round((totalCommented / totalCols) * 100) + '%' : '-';
+
+  render();
+}
+
+function render() {
+  const body = document.getElementById('govBody');
+  if (!LIST.length) { body.innerHTML = '<tr><td colspan="9" class="empty">暂无数据项目</td></tr>'; return; }
+
+  body.innerHTML = LIST.map(p => {
+    const cov = p.rawCols ? Math.round((p.commentedCols / p.rawCols) * 100) : 0;
+    return '<tr>' +
+      '<td>' + p.id + '</td>' +
+      '<td><b>' + esc(p.name) + '</b><div class="muted small">' + esc(p.code) + '</div></td>' +
+      '<td class="small">' + esc(p.datasourceName) + '</td>' +
+      '<td><code class="mini">' + esc(p.dataTable || '-') + '</code></td>' +
+      '<td><code class="mini">' + esc(p.parsedTable || '-') + '</code></td>' +
+      '<td>' + Number(p.dataCount).toLocaleString() + '</td>' +
+      '<td>' + p.fieldTotal + (p.fieldParsed ? ' <span class="tag tag-primary tag-sm">解析 ' + p.fieldParsed + '</span>' : '') + '</td>' +
+      '<td>' + cov + '%<div class="quality-bar"><span style="width:' + cov + '%"></span></div></td>' +
+      '<td><button class="btn btn-sm" data-schema="' + p.id + '">表结构</button></td>' +
+    '</tr>';
+  }).join('');
+
+  body.querySelectorAll('button[data-schema]').forEach(b =>
+    b.addEventListener('click', () => showSchema(Number(b.dataset.schema))));
+}
+
+async function showSchema(id) {
+  const p = LIST.find(x => x.id === id);
+  const r = await api('/api/governance/projects/' + id + '/schema');
+  if (!r.ok) return toast(r.message, 'error');
+
+  document.getElementById('schemaTitle').textContent = (p ? p.name : '') + ' — 表结构对照';
+
+  document.getElementById('rawCols').innerHTML = r.data.rawColumns.map(c =>
+    '<tr><td><code class="mini">' + esc(c.name) + '</code></td>' +
+    '<td class="small">' + esc(c.columnType) + '</td>' +
+    '<td class="small muted">' + esc(c.comment || '-') + '</td></tr>').join('') ||
+    '<tr><td colspan="3" class="empty">无数据</td></tr>';
+
+  document.getElementById('parsedCols').innerHTML = r.data.parsedColumns.map(c =>
+    '<tr><td><code class="mini">' + esc(c.name) + '</code></td>' +
+    '<td class="small">' + esc(c.columnType) + '</td>' +
+    '<td class="small muted">' + esc(c.comment || '-') + '</td></tr>').join('') ||
+    '<tr><td colspan="3" class="empty">无数据</td></tr>';
+
+  const MODE = { none: '不解析', expand: '展开子表' };
+  document.getElementById('fieldDefs').innerHTML = r.data.fieldDefs.map(f =>
+    '<tr><td>' + esc(f.field_name) + '</td>' +
+    '<td><code class="mini">' + esc(f.field_key) + '</code></td>' +
+    '<td><code class="mini">' + esc(f.column_name) + '</code></td>' +
+    '<td class="small">' + esc(MODE[f.parse_mode] || f.parse_mode) + '</td>' +
+    '<td class="small muted">' + esc(f.remark || '-') + '</td></tr>').join('') ||
+    '<tr><td colspan="5" class="empty">无字段定义</td></tr>';
+
+  openModal('schemaModal');
+}
+
+load();
+</script>

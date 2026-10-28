@@ -1,0 +1,144 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>数据概览</h1>
+    <p class="sub">数据集成 · 数据治理 · 报表 BI · AI 问数 全景视图</p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" onclick="load()">刷新</button>
+    ${can('project:write') ? '<a class="btn btn-primary" href="/">+ 新建数据项目</a>' : ''}
+  </div>
+</div>
+
+<div class="kpi-grid" id="kpiGrid"></div>
+
+<div class="dash-grid">
+  <div class="chart-box">
+    <div class="cb-title">
+      <span>近 7 天数据接收趋势</span>
+      <span class="muted small" id="trendTotal"></span>
+    </div>
+    <div class="chart-canvas" id="trendChart" style="min-height:280px"></div>
+  </div>
+
+  <div class="chart-box">
+    <div class="cb-title"><span>数据资产分布</span></div>
+    <div class="chart-canvas" id="assetChart" style="min-height:280px"></div>
+  </div>
+</div>
+
+<div class="dash-grid" style="margin-top:16px">
+  <div class="card">
+    <div class="card-header">
+      <h3>最近接收日志</h3>
+      <a class="btn btn-sm" href="/">查看全部</a>
+    </div>
+    <div class="table-wrap">
+      <table class="table table-fixed">
+        <thead>
+          <tr>
+            <th style="width:150px">项目</th>
+            <th style="width:120px">事件</th>
+            <th style="width:150px">数据ID</th>
+            <th>表单</th>
+            <th style="width:90px">结果</th>
+            <th style="width:160px">时间</th>
+          </tr>
+        </thead>
+        <tbody id="logBody"><tr><td colspan="6" class="empty">加载中...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>快捷入口</h3></div>
+    <div class="card-body">
+      <div style="display:grid;gap:10px">
+        ${can('project:read') ? '<a class="btn" href="/" style="justify-content:flex-start">▦ 数据项目 — 接收简道云等数据源推送</a>' : ''}
+        ${can('integration:read') ? '<a class="btn" href="/integrations" style="justify-content:flex-start">⇋ 数据集成 — 接口采集与推送</a>' : ''}
+        ${can('dataset:read') ? '<a class="btn" href="/datasets" style="justify-content:flex-start">◫ 数据集 — 定义报表数据来源</a>' : ''}
+        ${can('report:read') ? '<a class="btn" href="/reports" style="justify-content:flex-start">◨ 报表中心 — 图表与大屏</a>' : ''}
+        ${can('ai:use') ? '<a class="btn" href="/ai" style="justify-content:flex-start">✦ AI 问数 — 自然语言查询数据</a>' : ''}
+        ${can('project:read') ? '<a class="btn" href="/governance" style="justify-content:flex-start">◍ 治理总览 — 表结构与数据质量</a>' : ''}
+      </div>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+async function load() {
+  const r = await api('/api/dashboard');
+  if (!r.ok) return toast(r.message, 'error');
+  const d = r.data;
+
+  const kpis = [
+    { label: '数据项目', value: d.stats.projects, foot: '启用 ' + d.stats.activeProjects + ' 个', ico: '▦', tone: 'brand' },
+    { label: '数据总量', value: d.stats.dataTotal, foot: '接收日志 ' + d.stats.logTotal, ico: '⛁', tone: 'green' },
+    { label: '数据源', value: d.stats.datasources, foot: 'MySQL / SQL Server', ico: '⛃', tone: 'cyan' },
+    { label: '数据集', value: d.stats.datasets, foot: '报表 ' + d.stats.reports + ' 个', ico: '◫', tone: 'orange' },
+    { label: '集成任务', value: d.stats.integrations, foot: '采集与推送', ico: '⇋', tone: 'purple' },
+    { label: '分享链接', value: d.stats.shares, foot: 'AI 问数 ' + d.stats.aiChats + ' 次', ico: '⇱', tone: 'pink' },
+  ];
+
+  document.getElementById('kpiGrid').innerHTML = kpis.map(k =>
+    '<div class="kpi-card tone-' + k.tone + '">' +
+      '<div class="kpi-top">' +
+        '<div class="kpi-label">' + esc(k.label) + '</div>' +
+        '<div class="kpi-ico">' + k.ico + '</div>' +
+      '</div>' +
+      '<div class="kpi-value">' + Number(k.value || 0).toLocaleString() + '</div>' +
+      '<div class="kpi-foot">' + esc(k.foot) + '</div>' +
+    '</div>'
+  ).join('');
+
+  // 趋势图
+  const trend = d.trend || [];
+  document.getElementById('trendTotal').textContent = '合计 ' + trend.reduce((s, t) => s + t.count, 0) + ' 条';
+  if (trend.length) {
+    Charts.render('trendChart', trend, {
+      chartType: 'area', categoryField: 'date', valueField: 'count', height: 280,
+    });
+  } else {
+    document.getElementById('trendChart').innerHTML = '<div class="empty-mini">近 7 天暂无数据</div>';
+  }
+
+  // 资产分布
+  const assets = [
+    { name: '数据项目', value: d.stats.projects },
+    { name: '数据集', value: d.stats.datasets },
+    { name: '报表', value: d.stats.reports },
+    { name: '集成任务', value: d.stats.integrations },
+    { name: '数据源', value: d.stats.datasources },
+  ].filter(a => a.value > 0);
+
+  if (assets.length) {
+    Charts.render('assetChart', assets, {
+      chartType: 'doughnut', categoryField: 'name', valueField: 'value', height: 280,
+    });
+  } else {
+    document.getElementById('assetChart').innerHTML = '<div class="empty-mini">暂无数据资产</div>';
+  }
+
+  // 日志
+  const body = document.getElementById('logBody');
+  if (!d.recentLogs.length) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">暂无接收日志</td></tr>';
+  } else {
+    const OP = { data_create:'数据提交', data_update:'数据修改', data_remove:'数据删除', data_recover:'数据恢复', form_update:'表单变更', api_pull:'接口采集' };
+    body.innerHTML = d.recentLogs.map(l => '<tr>' +
+      '<td><a href="/projects/' + l.projectId + '">' + esc(l.projectName) + '</a></td>' +
+      '<td>' + esc(l.op_label || OP[l.op] || l.op || '-') + '</td>' +
+      '<td><code class="mini">' + esc(l.data_id || '-') + '</code></td>' +
+      '<td>' + esc(l.form_name || '-') + '</td>' +
+      '<td>' + (l.result === 'success' ? '<span class="tag tag-ok">成功</span>' : '<span class="tag tag-err">' + esc(l.result) + '</span>') + '</td>' +
+      '<td class="small">' + fmtTime(l.created_at) + '</td>' +
+    '</tr>').join('');
+  }
+}
+
+load();
+window.addEventListener('resize', debounce(load, 400));
+</script>

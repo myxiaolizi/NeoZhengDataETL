@@ -1,0 +1,115 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>${esc(report.name)}</h1>
+    <p class="sub">
+      <span class="tag tag-primary">报表</span>
+      ${report.category ? '<span class="muted">' + esc(report.category) + '</span>' : ''}
+      <span class="muted">浏览 ${report.viewCount} 次</span>
+    </p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" onclick="load()">刷新</button>
+    <a class="btn" href="/api/reports/${report.id}/export">导出 CSV</a>
+    ${can('share:write') ? '<button class="btn" onclick="share()">分享</button>' : ''}
+    ${can('report:write') ? '<a class="btn" href="/reports/' + report.id + '/design">设计</a>' : ''}
+    <a class="btn btn-ghost" href="/reports">返回</a>
+  </div>
+</div>
+
+<div class="chart-box">
+  <div class="cb-title">
+    <span id="chartTitle">${esc(report.name)}</span>
+    <span class="muted small" id="chartInfo"></span>
+  </div>
+  <div class="chart-canvas" id="chartCanvas" style="min-height:${(report.config && report.config.height) || 420}px"></div>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <div class="card-header">
+    <h3>数据明细</h3>
+    <span class="muted small" id="rowInfo"></span>
+  </div>
+  <div class="table-wrap" style="max-height:520px;overflow:auto">
+    <table class="table table-fixed">
+      <thead id="dataHead"></thead>
+      <tbody id="dataBody"><tr><td class="empty">加载中...</td></tr></tbody>
+    </table>
+  </div>
+  <div class="pager" id="pager"></div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const RID = <%= report.id %>;
+const REPORT = <%- JSON.stringify({ id: report.id, name: report.name, code: report.code, config: report.config }) %>;
+let ROWS = [];
+let COLUMNS = [];
+let PAGE = 1;
+const PAGE_SIZE = 50;
+
+async function load() {
+  const r = await api('/api/reports/' + RID + '/run', { method: 'POST', body: { limit: 5000 } });
+  if (!r.ok) {
+    document.getElementById('chartCanvas').innerHTML = '<div class="empty-mini">' + esc(r.message) + '</div>';
+    return;
+  }
+
+  ROWS = r.data.rows;
+  COLUMNS = r.data.columns.map(c => c.name);
+
+  document.getElementById('chartInfo').textContent =
+    r.data.rowCount + ' 行 · ' + COLUMNS.length + ' 列 · ' + r.data.elapsed + 'ms';
+  document.getElementById('rowInfo').textContent = '共 ' + ROWS.length + ' 行';
+
+  drawChart();
+  renderTable();
+}
+
+function drawChart() {
+  const el = document.getElementById('chartCanvas');
+  if (!ROWS.length) { el.innerHTML = '<div class="empty-mini">暂无数据</div>'; return; }
+
+  const cfg = Object.assign({ height: 420 }, REPORT.config || {});
+  if (!cfg.chartType) cfg.chartType = 'bar';
+  document.getElementById('chartTitle').textContent = cfg.title || REPORT.name;
+  Charts.render(el, ROWS, cfg);
+}
+
+function renderTable() {
+  document.getElementById('dataHead').innerHTML =
+    '<tr>' + COLUMNS.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>';
+
+  const start = (PAGE - 1) * PAGE_SIZE;
+  const pageRows = ROWS.slice(start, start + PAGE_SIZE);
+
+  document.getElementById('dataBody').innerHTML = pageRows.map(row =>
+    '<tr>' + COLUMNS.map(c => {
+      const v = row[c];
+      const s = v === null || v === undefined ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+      return '<td title="' + esc(s) + '"><span class="cell-inner">' + esc(s.slice(0, 80)) + '</span></td>';
+    }).join('') + '</tr>'
+  ).join('') || '<tr><td colspan="' + COLUMNS.length + '" class="empty">无数据</td></tr>';
+
+  renderPager('pager', ROWS.length, PAGE, PAGE_SIZE, (p) => { PAGE = p; renderTable(); });
+}
+
+async function share() {
+  const days = prompt('分享有效期（天），0 表示永久有效：', '0');
+  if (days === null) return;
+  const pwd = prompt('访问密码（留空表示无需密码）：', '');
+  if (pwd === null) return;
+
+  const r = await api('/api/shares', {
+    method: 'POST',
+    body: { targetType: 'report', targetId: RID, expiresDays: Number(days) || 0, password: pwd || '' },
+  });
+  if (!r.ok) return toast(r.message || '分享失败', 'error');
+  if (confirm('分享链接已创建：\\n\\n' + r.data.url + '\\n\\n是否复制到剪贴板？')) copyText(r.data.url);
+}
+
+load();
+window.addEventListener('resize', debounce(drawChart, 400));
+</script>

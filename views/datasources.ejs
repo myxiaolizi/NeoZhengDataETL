@@ -1,0 +1,497 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>数据源管理</h1>
+    <p class="sub">连接企业各类数据系统 · 支持 <span id="typeCount">81</span> 种数据源类型</p>
+  </div>
+  <div class="head-actions">
+    <input class="input" id="kw" placeholder="搜索数据源" style="width:200px">
+    <button class="btn btn-primary" onclick="openTypePicker()">+ 新增数据源</button>
+  </div>
+</div>
+
+<div class="alert alert-info">
+  <b>说明：</b>「本机数据库」为平台元数据库（来自 <code>.env</code> 配置，不可删除）。
+  新增其他数据源后，可在新建项目时选择把数据存储到该数据源，也可在数据集中作为取数来源。
+</div>
+
+<div class="ds-grid" id="dsGrid"></div>
+
+<!-- ══════════ 类型选择弹窗 ══════════ -->
+<div class="modal-mask" id="typePickerModal">
+  <div class="modal modal-full">
+    <div class="modal-head">
+      <h3>选择数据源类型</h3>
+      <button class="modal-close" onclick="closeModal('typePickerModal')">×</button>
+    </div>
+    <div class="modal-body" style="padding:0">
+      <div class="tp-layout">
+        <div class="tp-cats" id="tpCats"></div>
+        <div class="tp-types" id="tpTypes"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <span class="muted small" id="tpHint">请选择左侧分类，再点击右侧类型</span>
+      <div style="flex:1"></div>
+      <button class="btn btn-ghost" onclick="closeModal('typePickerModal')">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ 连接配置弹窗 ══════════ -->
+<div class="modal-mask" id="dsModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3 id="dsModalTitle">配置数据源</h3>
+      <button class="modal-close" onclick="closeModal('dsModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="d_id">
+      <input type="hidden" id="d_type">
+
+      <div class="ds-type-banner" id="typeBanner"></div>
+
+      <label class="field">
+        <span>数据源名称 <i class="req">*</i></span>
+        <input class="input" id="d_name" placeholder="例如：生产库 MySQL">
+      </label>
+
+      <div id="connFields"></div>
+
+      <label class="field">
+        <span>备注</span>
+        <input class="input" id="d_remark" placeholder="可选">
+      </label>
+
+      <div class="form-actions" style="justify-content:flex-start;border:none;padding-top:0">
+        <button class="btn" onclick="testConn()">测试连接</button>
+        <span class="muted small" id="testResult" style="align-self:center"></span>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('dsModal')">取消</button>
+      <button class="btn btn-primary" id="saveDsBtn" onclick="saveDs()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 表清单 -->
+<div class="modal-mask" id="tableModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>数据源表清单</h3>
+      <button class="modal-close" onclick="closeModal('tableModal')">×</button>
+    </div>
+    <div class="modal-body">
+      <input class="input" id="tbl_kw" placeholder="搜索表名" style="margin-bottom:12px">
+      <div class="table-wrap" style="max-height:400px;overflow:auto">
+        <table class="table table-fixed">
+          <thead><tr><th style="width:60px">#</th><th>表名</th><th>说明</th></tr></thead>
+          <tbody id="tblBody"><tr><td colspan="3" class="empty">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('tableModal')">关闭</button>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const CAN_WRITE = <%= can('datasource:write') ? 'true' : 'false' %>;
+
+let LIST = [];
+let CATALOG = [];
+let STATS = {};
+let ACTIVE_CAT = null;
+let SELECTED_TYPE = null;
+let CURRENT_DS = null;
+let currentDsId = null;
+
+/* ══════════ 加载 ══════════ */
+async function load() {
+  const r = await api('/api/datasources');
+  if (!r.ok) return toast(r.message, 'error');
+  LIST = r.data.list;
+  CATALOG = r.data.catalog || [];
+  STATS = r.data.stats || {};
+  document.getElementById('typeCount').textContent = STATS.types || 0;
+  render();
+}
+
+function render() {
+  const kw = document.getElementById('kw').value.trim().toLowerCase();
+  let list = LIST;
+  if (kw) list = list.filter(d =>
+    String(d.name).toLowerCase().includes(kw) ||
+    String(d.type).toLowerCase().includes(kw) ||
+    String(d.host || '').toLowerCase().includes(kw));
+
+  const grid = document.getElementById('dsGrid');
+  if (!list.length) {
+    grid.innerHTML = '<div class="empty-mini">暂无数据源，点击右上角「新增数据源」开始</div>';
+    return;
+  }
+
+  grid.innerHTML = list.map(d => {
+    const isDefault = d.isDefault;
+    const testTag = d.lastTestOk === null || d.lastTestOk === undefined
+      ? '<span class="tag tag-off tag-sm">未测试</span>'
+      : (d.lastTestOk ? '<span class="tag tag-ok tag-sm">连接正常</span>' : '<span class="tag tag-err tag-sm">连接失败</span>');
+
+    const typeInfo = findType(d.type);
+    const typeName = typeInfo ? typeInfo.name : d.type;
+    const catName = typeInfo ? typeInfo.categoryName : '';
+
+    return '<div class="ds-card">' +
+      '<div class="ds-head">' +
+        '<div style="min-width:0">' +
+          '<div class="ds-name">' + esc(d.name) + '</div>' +
+          '<div class="muted small" style="margin-top:3px">' +
+            (isDefault ? '平台元数据库' : esc(d.remark || catName || '自定义数据源')) + '</div>' +
+        '</div>' +
+        '<span class="ds-type">' + esc(typeName) + '</span>' +
+      '</div>' +
+      '<div class="ds-info">' +
+        (d.host ? '<div>地址：<code>' + esc(d.host) + (d.port ? ':' + d.port : '') + '</code></div>' : '') +
+        (d.database ? '<div>库/对象：<code>' + esc(d.database) + '</code></div>' : '') +
+        (d.user ? '<div>账号：<code>' + esc(d.user) + '</code></div>' : '') +
+        '<div style="margin-top:6px">' + testTag +
+          (d.lastTestMsg ? ' <span class="muted small">' + esc(String(d.lastTestMsg).slice(0, 40)) + '</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="ds-foot">' +
+        '<button class="btn btn-sm" data-test="' + d.id + '">测试连接</button>' +
+        (typeInfo && typeInfo.conn === 'sql'
+          ? '<button class="btn btn-sm" data-tables="' + d.id + '">查看表</button>' : '') +
+        (isDefault ? '' : (CAN_WRITE ? '<button class="btn btn-sm" data-edit="' + d.id + '">编辑</button>' +
+          '<button class="btn btn-sm btn-danger" data-del="' + d.id + '">删除</button>' : '')) +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  grid.querySelectorAll('button[data-test]').forEach(b =>
+    b.addEventListener('click', () => testDs(Number(b.dataset.test))));
+  grid.querySelectorAll('button[data-tables]').forEach(b =>
+    b.addEventListener('click', () => showTables(Number(b.dataset.tables))));
+  grid.querySelectorAll('button[data-edit]').forEach(b =>
+    b.addEventListener('click', () => editDs(Number(b.dataset.edit))));
+  grid.querySelectorAll('button[data-del]').forEach(b =>
+    b.addEventListener('click', () => delDs(Number(b.dataset.del))));
+}
+
+function findType(key) {
+  for (const c of CATALOG) {
+    const t = c.types.find(x => x.key === key);
+    if (t) return Object.assign({}, t, { categoryName: c.name, categoryKey: c.key });
+  }
+  return null;
+}
+
+/* ══════════ 类型选择器 ══════════ */
+function openTypePicker() {
+  ACTIVE_CAT = CATALOG[0] ? CATALOG[0].key : null;
+  renderCats();
+  renderTypes();
+  openModal('typePickerModal');
+}
+
+function renderCats() {
+  document.getElementById('tpCats').innerHTML = CATALOG.map(c =>
+    '<div class="tp-cat' + (c.key === ACTIVE_CAT ? ' active' : '') + '" data-cat="' + c.key + '">' +
+      '<span class="tc-ico">' + c.icon + '</span>' +
+      '<div class="tc-body">' +
+        '<div class="tc-name">' + esc(c.name) + '</div>' +
+        '<div class="tc-count">' + c.types.length + ' 种</div>' +
+      '</div>' +
+    '</div>').join('');
+
+  document.querySelectorAll('.tp-cat').forEach(el => {
+    el.addEventListener('click', () => {
+      ACTIVE_CAT = el.dataset.cat;
+      renderCats();
+      renderTypes();
+    });
+  });
+}
+
+function renderTypes() {
+  const cat = CATALOG.find(c => c.key === ACTIVE_CAT);
+  if (!cat) return;
+
+  document.getElementById('tpTypes').innerHTML =
+    '<div class="tp-types-head">' +
+      '<h4>' + cat.icon + ' ' + esc(cat.name) + '</h4>' +
+      '<p>' + esc(cat.desc) + '</p>' +
+    '</div>' +
+    '<div class="tp-type-grid">' + cat.types.map(t =>
+      '<div class="tp-type' + (t.available ? '' : ' disabled') + '" data-type="' + t.key + '">' +
+        '<div class="tt-top">' +
+          '<span class="tt-name">' + esc(t.name) + '</span>' +
+          (t.available ? '' : '<span class="tag tag-warn tag-sm">需装驱动</span>') +
+        '</div>' +
+        '<div class="tt-desc">' + esc(t.desc) + '</div>' +
+        '<div class="tt-meta">' +
+          '<span class="tt-conn">' + (t.conn === 'sql' ? '数据库' : '接口') + '</span>' +
+          (t.defaultPort ? '<span>:' + t.defaultPort + '</span>' : '') +
+          (t.resourceCount ? '<span>' + t.resourceCount + ' 个资源</span>' : '') +
+        '</div>' +
+      '</div>').join('') + '</div>';
+
+  document.querySelectorAll('.tp-type').forEach(el => {
+    el.addEventListener('click', () => {
+      if (el.classList.contains('disabled')) {
+        toast('该类型需要先安装驱动，请查看使用说明', 'error');
+        return;
+      }
+      selectType(el.dataset.type);
+    });
+  });
+}
+
+async function selectType(key) {
+  const r = await api('/api/datasource-types/' + key);
+  if (!r.ok) return toast(r.message, 'error');
+  SELECTED_TYPE = r.data;
+  closeModal('typePickerModal');
+  openConnForm(SELECTED_TYPE);
+}
+
+/* ══════════ 连接表单 ══════════ */
+const FIELD_LABELS = {
+  host: '主机地址', port: '端口', user: '用户名', password: '密码', database: '数据库名',
+  account: '账号', warehouse: '仓库', endpoint: '接入点', bucket: 'Bucket',
+  accessKeyId: 'AccessKey ID', accessKeySecret: 'AccessKey Secret',
+  secretId: 'SecretId', secretKey: 'SecretKey', region: '地域',
+  appKey: 'AppKey', appSecret: 'AppSecret', agentId: 'AgentId',
+  corpId: 'CorpId', corpSecret: 'CorpSecret',
+  appId: 'AppId', appSecret2: 'AppSecret', appToken: 'AppToken', tableId: 'TableId',
+  baseId: 'BaseId', sheetId: 'SheetId',
+  mchId: '商户号', apiKey: 'API Key', apiV3Key: 'APIv3 Key', certPath: '证书路径',
+  privateKey: '应用私钥', alipayPublicKey: '支付宝公钥',
+  sessionKey: 'SessionKey', shopId: '门店ID',
+  project: '项目名', accessKey: 'AccessKey', secretKey2: 'SecretKey',
+  brokers: 'Broker 地址', topic: 'Topic', groupId: 'GroupId',
+  saslUser: 'SASL 用户', saslPassword: 'SASL 密码',
+  namesrv: 'NameServer', serviceUrl: '服务地址',
+  namespace: '命名空间', username: '用户名', token: 'Token',
+  org: '组织', index: '索引名', collection: '集合名', space: '图空间',
+  baseUrl: '接口地址', authType: '鉴权方式', headers: '请求头',
+  webhook: 'Webhook 地址', secret: '密钥',
+  tenantId: '租户ID', orgCode: '机构编码', accountId: '账套ID',
+  instanceUrl: '实例地址', clientId: 'ClientId', clientSecret: 'ClientSecret',
+  ashost: '主机', sysnr: '系统编号', client: '客户端',
+  wsdl: 'WSDL 地址', path: '路径', query: '查询语句',
+  appKey2: 'AppKey', accessKey2: 'AccessKey',
+};
+
+const PASSWORD_FIELDS = ['password', 'appSecret', 'corpSecret', 'accessKeySecret', 'secretKey',
+  'apiKey', 'apiV3Key', 'privateKey', 'sessionKey', 'saslPassword', 'token', 'secret',
+  'clientSecret', 'secretKey2', 'accessKey'];
+
+function openConnForm(type) {
+  document.getElementById('dsModalTitle').textContent = '配置 ' + type.name;
+  document.getElementById('d_id').value = '';
+  document.getElementById('d_type').value = type.key;
+  document.getElementById('d_name').value = type.name;
+  document.getElementById('d_remark').value = '';
+  document.getElementById('testResult').textContent = '';
+
+  document.getElementById('typeBanner').innerHTML =
+    '<div class="tb-ico">' + (type.conn === 'sql' ? '⛁' : '⇄') + '</div>' +
+    '<div>' +
+      '<div class="tb-name">' + esc(type.name) + '</div>' +
+      '<div class="tb-desc">' + esc(type.desc) + '</div>' +
+      (type.resources && type.resources.length
+        ? '<div class="tb-res">可采集：' + type.resources.map(r => esc(r.name)).join(' · ') + '</div>'
+        : '') +
+    '</div>';
+
+  // 生成字段
+  const fields = type.fields || [];
+  const rows = [];
+  let pair = [];
+
+  fields.forEach((f, i) => {
+    const label = FIELD_LABELS[f] || f;
+    const isPwd = PASSWORD_FIELDS.includes(f);
+    const isPort = f === 'port';
+    const isNum = isPort;
+
+    const input = '<input class="input" id="f_' + f + '"' +
+      (isPwd ? ' type="password" autocomplete="new-password"' : isNum ? ' type="number"' : '') +
+      (isPort && type.defaultPort ? ' value="' + type.defaultPort + '"' : '') +
+      ' placeholder="' + esc(label) + '">';
+
+    const html = '<label class="field"><span>' + esc(label) +
+      (['host', 'database', 'baseUrl', 'appKey', 'appId', 'corpId', 'mchId', 'endpoint'].includes(f)
+        ? ' <i class="req">*</i>' : '') +
+      '</span>' + input + '</label>';
+
+    if (f === 'host' || f === 'port') {
+      pair.push(html);
+      if (pair.length === 2) { rows.push('<div class="form-row">' + pair.join('') + '</div>'); pair = []; }
+    } else if (f === 'user' || f === 'password') {
+      pair.push(html);
+      if (pair.length === 2) { rows.push('<div class="form-row">' + pair.join('') + '</div>'); pair = []; }
+    } else if (f === 'appKey' || f === 'appSecret') {
+      pair.push(html);
+      if (pair.length === 2) { rows.push('<div class="form-row">' + pair.join('') + '</div>'); pair = []; }
+    } else if (f === 'accessKeyId' || f === 'accessKeySecret') {
+      pair.push(html);
+      if (pair.length === 2) { rows.push('<div class="form-row">' + pair.join('') + '</div>'); pair = []; }
+    } else {
+      rows.push(html);
+    }
+  });
+  if (pair.length) rows.push('<div class="form-row">' + pair.join('') + '</div>');
+
+  document.getElementById('connFields').innerHTML = rows.join('') ||
+    '<div class="alert alert-info">该类型无需连接参数，保存后将生成接收地址</div>';
+
+  openModal('dsModal');
+}
+
+function collectForm() {
+  const type = SELECTED_TYPE || findType(document.getElementById('d_type').value);
+  const out = {
+    name: document.getElementById('d_name').value.trim(),
+    type: document.getElementById('d_type').value,
+    remark: document.getElementById('d_remark').value.trim(),
+  };
+
+  const extras = {};
+  (type.fields || []).forEach(f => {
+    const el = document.getElementById('f_' + f);
+    if (!el) return;
+    const v = el.value.trim();
+    if (f === 'host') out.host = v;
+    else if (f === 'port') out.port = Number(v) || type.defaultPort || 0;
+    else if (f === 'user' || f === 'username') out.user = v;
+    else if (f === 'password') out.password = v;
+    else if (f === 'database') out.database = v;
+    else extras[f] = v;
+  });
+
+  out.options = Object.keys(extras).length ? extras : null;
+  return out;
+}
+
+async function testConn() {
+  const body = collectForm();
+  if (!body.type) return toast('请先选择数据源类型', 'error');
+  const el = document.getElementById('testResult');
+  el.textContent = '正在测试...';
+  el.style.color = 'var(--text-muted)';
+
+  const r = await api('/api/datasources/test-raw', { method: 'POST', body });
+  el.textContent = r.message || (r.ok ? '连接成功' : '连接失败');
+  el.style.color = r.ok ? 'var(--success)' : 'var(--danger)';
+}
+
+async function saveDs() {
+  const id = document.getElementById('d_id').value;
+  const body = collectForm();
+  if (!body.name) return toast('请填写数据源名称', 'error');
+
+  const btn = document.getElementById('saveDsBtn');
+  btn.disabled = true; btn.textContent = '保存中...';
+  const r = id
+    ? await api('/api/datasources/' + id, { method: 'PUT', body })
+    : await api('/api/datasources', { method: 'POST', body });
+  btn.disabled = false; btn.textContent = '保存';
+
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  toast(r.message || '保存成功', 'success');
+  closeModal('dsModal');
+  load();
+}
+
+function editDs(id) {
+  const d = LIST.find(x => x.id === id);
+  if (!d) return;
+  CURRENT_DS = d;
+
+  const type = findType(d.type);
+  if (!type) return toast('未知的数据源类型：' + d.type, 'error');
+
+  SELECTED_TYPE = {
+    key: d.type, name: type.name, desc: type.desc, conn: type.conn,
+    fields: typeFields(d.type), resources: type.resources || [],
+  };
+
+  openConnForm(SELECTED_TYPE);
+  document.getElementById('dsModalTitle').textContent = '编辑数据源：' + d.name;
+  document.getElementById('d_id').value = d.id;
+  document.getElementById('d_name').value = d.name;
+  document.getElementById('d_remark').value = d.remark || '';
+
+  // 回填
+  if (d.host) { const el = document.getElementById('f_host'); if (el) el.value = d.host; }
+  if (d.port) { const el = document.getElementById('f_port'); if (el) el.value = d.port; }
+  if (d.user) { const el = document.getElementById('f_user'); if (el) el.value = d.user; }
+  if (d.database) { const el = document.getElementById('f_database'); if (el) el.value = d.database; }
+}
+
+function typeFields(key) {
+  const map = {
+    mysql: ['host', 'port', 'user', 'password', 'database'],
+    mssql: ['host', 'port', 'user', 'password', 'database'],
+    postgres: ['host', 'port', 'user', 'password', 'database'],
+    oracle: ['host', 'port', 'user', 'password', 'database'],
+    sqlite: ['database'],
+    mongodb: ['host', 'port', 'user', 'password', 'database'],
+    redis: ['host', 'port', 'password', 'database'],
+    clickhouse: ['host', 'port', 'user', 'password', 'database'],
+    dingtalk: ['appKey', 'appSecret', 'agentId'],
+    wecom: ['corpId', 'corpSecret', 'agentId'],
+    feishu: ['appId', 'appSecret'],
+    wps: ['appId', 'appSecret'],
+  };
+  return map[key] || ['host', 'port', 'user', 'password', 'database'];
+}
+
+async function testDs(id) {
+  toast('正在测试连接...');
+  const r = await api('/api/datasources/' + id + '/test', { method: 'POST' });
+  toast(r.message || (r.ok ? '连接成功' : '连接失败'), r.ok ? 'success' : 'error');
+  load();
+}
+
+async function delDs(id) {
+  const d = LIST.find(x => x.id === id);
+  if (!confirm('确定删除数据源「' + (d ? d.name : id) + '」？')) return;
+  const r = await api('/api/datasources/' + id, { method: 'DELETE' });
+  if (!r.ok) return toast(r.message || '删除失败', 'error');
+  toast('已删除', 'success');
+  load();
+}
+
+async function showTables(id) {
+  currentDsId = id;
+  document.getElementById('tbl_kw').value = '';
+  openModal('tableModal');
+  loadTables();
+}
+
+async function loadTables() {
+  if (!currentDsId) return;
+  const kw = document.getElementById('tbl_kw').value.trim();
+  const r = await api('/api/datasources/' + currentDsId + '/tables?keyword=' + encodeURIComponent(kw));
+  const body = document.getElementById('tblBody');
+  if (!r.ok) { body.innerHTML = '<tr><td colspan="3" class="empty">' + esc(r.message) + '</td></tr>'; return; }
+  if (!r.data.length) { body.innerHTML = '<tr><td colspan="3" class="empty">暂无数据表</td></tr>'; return; }
+  body.innerHTML = r.data.map((t, i) => '<tr>' +
+    '<td>' + (i + 1) + '</td>' +
+    '<td><code>' + esc(t.name) + '</code></td>' +
+    '<td class="small muted">' + esc(t.comment || '-') + '</td>' +
+  '</tr>').join('');
+}
+
+document.getElementById('kw').addEventListener('input', debounce(render, 300));
+document.getElementById('tbl_kw').addEventListener('input', debounce(loadTables, 400));
+load();
+</script>

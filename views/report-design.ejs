@@ -1,0 +1,261 @@
+<% var body = '' %>
+<% body += `
+<div class="page-head">
+  <div>
+    <h1>${esc(report.name)}</h1>
+    <p class="sub">
+      <span class="tag tag-primary">报表设计器</span>
+      <span class="muted">数据集：<span id="dsName">-</span></span>
+    </p>
+  </div>
+  <div class="head-actions">
+    <button class="btn" onclick="refreshData()">刷新数据</button>
+    <a class="btn" href="/reports/${report.id}/view">预览</a>
+    <button class="btn btn-primary" onclick="save()">保存报表</button>
+    <a class="btn btn-ghost" href="/reports">返回</a>
+  </div>
+</div>
+
+<div class="design-layout">
+  <div class="design-side">
+    <div class="design-side-head">图表类型</div>
+    <div class="design-side-body">
+      <div class="chart-type-grid" id="typeGrid"></div>
+
+      <div style="margin-top:20px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">基础配置</div>
+        <label class="field">
+          <span>报表标题</span>
+          <input class="input" id="c_title" placeholder="显示在图表上方">
+        </label>
+        <label class="field">
+          <span>图表高度</span>
+          <input class="input" type="number" id="c_height" value="360" min="160" max="1200">
+        </label>
+      </div>
+
+      <div style="margin-top:16px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">字段绑定</div>
+        <label class="field">
+          <span>分类字段（X 轴）</span>
+          <select class="input" id="c_category"></select>
+        </label>
+        <label class="field">
+          <span>数值字段（Y 轴，可多选）</span>
+          <div id="valueFields" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px"></div>
+        </label>
+        <label class="field">
+          <span>仪表盘最大值</span>
+          <input class="input" type="number" id="c_gaugeMax" placeholder="留空自动计算">
+        </label>
+      </div>
+
+      <div style="margin-top:16px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">可用字段</div>
+        <div id="fieldChips" style="max-height:180px;overflow-y:auto"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="design-main">
+    <div class="chart-box">
+      <div class="cb-title">
+        <span id="previewTitle">预览</span>
+        <span class="muted small" id="previewInfo"></span>
+      </div>
+      <div class="chart-canvas" id="chartCanvas" style="min-height:360px"></div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <h3>数据预览（前 50 行）</h3>
+        <span class="muted small" id="rowInfo"></span>
+      </div>
+      <div class="table-wrap" style="max-height:340px;overflow:auto">
+        <table class="table table-fixed">
+          <thead id="dataHead"></thead>
+          <tbody id="dataBody"><tr><td class="empty">加载中...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+` %>
+<%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
+
+<script>
+const RID = <%= report.id %>;
+const REPORT = <%- JSON.stringify({ id: report.id, name: report.name, reportType: report.reportType, datasetId: report.datasetId, config: report.config }) %>;
+
+let CHART_TYPES = [];
+let COLUMNS = [];
+let ROWS = [];
+let CONFIG = Object.assign({}, REPORT.config || {});
+let SELECTED_VALUES = (CONFIG.valueFields || (CONFIG.valueField ? [CONFIG.valueField] : [])).slice();
+
+const TYPE_ICONS = {
+  table: '▤', bar: '▥', line: '⌇', area: '◣', pie: '◔', doughnut: '◎',
+  scatter: '⁙', radar: '◇', funnel: '▽', gauge: '◐', number: '#', map: '◉',
+};
+
+async function init() {
+  const [tr, dr] = await Promise.all([api('/api/chart-types'), api('/api/datasets')]);
+  if (tr.ok) CHART_TYPES = tr.data;
+  if (dr.ok) {
+    const d = dr.data.find(x => x.id === REPORT.datasetId);
+    document.getElementById('dsName').textContent = d ? d.name : '未绑定';
+  }
+
+  renderTypeGrid();
+  await refreshData();
+  bindEvents();
+}
+
+function renderTypeGrid() {
+  document.getElementById('typeGrid').innerHTML = CHART_TYPES.map(t =>
+    '<div class="chart-type-item' + ((CONFIG.chartType || 'bar') === t.key ? ' active' : '') +
+    '" data-type="' + t.key + '">' +
+      '<span class="ct-ico">' + (TYPE_ICONS[t.key] || '◫') + '</span>' + esc(t.name) +
+    '</div>').join('');
+
+  document.querySelectorAll('.chart-type-item').forEach(el => {
+    el.addEventListener('click', () => {
+      CONFIG.chartType = el.dataset.type;
+      renderTypeGrid();
+      draw();
+    });
+  });
+}
+
+async function refreshData() {
+  if (!REPORT.datasetId) {
+    document.getElementById('chartCanvas').innerHTML =
+      '<div class="empty-mini">该报表未绑定数据集<br><br>' +
+      '<a class="btn btn-primary" href="/reports">返回报表中心</a> ' +
+      '<a class="btn" href="/datasets">去创建数据集</a></div>';
+    return;
+  }
+  const r = await api('/api/datasets/' + REPORT.datasetId + '/preview', { method: 'POST', body: { limit: 500 } });
+  if (!r.ok) {
+    document.getElementById('chartCanvas').innerHTML =
+      '<div class="empty-mini" style="color:var(--danger)">数据集取数失败<br><br>' +
+      esc(r.message) + '<br><br>' +
+      '<a class="btn" href="/reports">返回报表中心</a></div>';
+    toast(r.message, 'error');
+    return;
+  }
+
+  ROWS = r.data.rows;
+  COLUMNS = r.data.columns.map(c => c.name);
+
+  document.getElementById('previewInfo').textContent =
+    r.data.rowCount + ' 行 · ' + COLUMNS.length + ' 列 · ' + r.data.elapsed + 'ms';
+  document.getElementById('rowInfo').textContent = '共 ' + ROWS.length + ' 行';
+
+  fillFieldSelectors();
+  renderDataTable();
+  draw();
+}
+
+function fillFieldSelectors() {
+  const catSel = document.getElementById('c_category');
+  catSel.innerHTML = '<option value="">（不设置）</option>' + COLUMNS.map(c =>
+    '<option value="' + esc(c) + '"' + (CONFIG.categoryField === c ? ' selected' : '') + '>' + esc(c) + '</option>').join('');
+
+  document.getElementById('valueFields').innerHTML = COLUMNS.map(c =>
+    '<label class="perm-item" style="padding:3px 4px">' +
+      '<input type="checkbox" data-vf="' + esc(c) + '"' + (SELECTED_VALUES.includes(c) ? ' checked' : '') + '>' +
+      '<div class="pi-name">' + esc(c) + '</div>' +
+    '</label>').join('');
+
+  document.querySelectorAll('#valueFields input[data-vf]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      SELECTED_VALUES = Array.from(document.querySelectorAll('#valueFields input[data-vf]:checked'))
+        .map(x => x.dataset.vf);
+      CONFIG.valueFields = SELECTED_VALUES;
+      CONFIG.valueField = SELECTED_VALUES[0] || null;
+      draw();
+    });
+  });
+
+  document.getElementById('fieldChips').innerHTML = COLUMNS.map(c =>
+    '<span class="field-chip" data-chip="' + esc(c) + '">' + esc(c) + '</span>').join('');
+
+  document.querySelectorAll('#fieldChips .field-chip').forEach(el => {
+    el.addEventListener('click', () => {
+      const c = el.dataset.chip;
+      if (!SELECTED_VALUES.includes(c)) {
+        SELECTED_VALUES.push(c);
+        CONFIG.valueFields = SELECTED_VALUES;
+        CONFIG.valueField = SELECTED_VALUES[0] || null;
+        fillFieldSelectors();
+        draw();
+      }
+    });
+  });
+}
+
+function renderDataTable() {
+  document.getElementById('dataHead').innerHTML = '<tr>' + COLUMNS.map(c => '<th>' + esc(c) + '</th>').join('') + '</tr>';
+  document.getElementById('dataBody').innerHTML = ROWS.slice(0, 50).map(row =>
+    '<tr>' + COLUMNS.map(c => {
+      const v = row[c];
+      const s = v === null || v === undefined ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+      return '<td title="' + esc(s) + '"><span class="cell-inner">' + esc(s.slice(0, 60)) + '</span></td>';
+    }).join('') + '</tr>'
+  ).join('') || '<tr><td colspan="' + COLUMNS.length + '" class="empty">无数据</td></tr>';
+}
+
+function draw() {
+  const el = document.getElementById('chartCanvas');
+  if (!ROWS.length) { el.innerHTML = '<div class="empty-mini">暂无数据</div>'; return; }
+
+  const cfg = Object.assign({}, CONFIG);
+  cfg.height = Number(document.getElementById('c_height').value) || 360;
+  cfg.categoryField = document.getElementById('c_category').value || cfg.categoryField;
+  cfg.valueFields = SELECTED_VALUES;
+  cfg.valueField = SELECTED_VALUES[0] || null;
+  cfg.gaugeMax = Number(document.getElementById('c_gaugeMax').value) || cfg.gaugeMax;
+  cfg.title = document.getElementById('c_title').value;
+
+  if (!cfg.chartType) cfg.chartType = 'bar';
+
+  document.getElementById('previewTitle').textContent = cfg.title || REPORT.name;
+  Charts.render(el, ROWS, cfg);
+}
+
+function bindEvents() {
+  document.getElementById('c_category').addEventListener('change', () => {
+    CONFIG.categoryField = document.getElementById('c_category').value;
+    draw();
+  });
+  document.getElementById('c_height').addEventListener('input', debounce(draw, 300));
+  document.getElementById('c_title').addEventListener('input', debounce(draw, 300));
+  document.getElementById('c_gaugeMax').addEventListener('input', debounce(draw, 400));
+}
+
+async function save() {
+  const cfg = Object.assign({}, CONFIG, {
+    chartType: CONFIG.chartType || 'bar',
+    categoryField: document.getElementById('c_category').value,
+    valueFields: SELECTED_VALUES,
+    valueField: SELECTED_VALUES[0] || null,
+    height: Number(document.getElementById('c_height').value) || 360,
+    title: document.getElementById('c_title').value,
+    gaugeMax: Number(document.getElementById('c_gaugeMax').value) || undefined,
+  });
+
+  const r = await api('/api/reports/' + RID, { method: 'PUT', body: { config: cfg } });
+  if (!r.ok) return toast(r.message || '保存失败', 'error');
+  CONFIG = cfg;
+  toast('报表已保存', 'success');
+}
+
+// 初始化表单值
+document.getElementById('c_height').value = (REPORT.config && REPORT.config.height) || 360;
+document.getElementById('c_title').value = (REPORT.config && REPORT.config.title) || '';
+document.getElementById('c_gaugeMax').value = (REPORT.config && REPORT.config.gaugeMax) || '';
+
+init();
+window.addEventListener('resize', debounce(draw, 400));
+</script>
