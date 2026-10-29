@@ -559,11 +559,15 @@ function hasAny(html, needles) {
   check('账户列表不含 password 键名', !/"password"\s*:/.test(accText));
   check('账户含 hasPassword 标记',
     accList.length === 0 || accList.every((a) => typeof a.hasPassword === 'boolean'));
-  // 常见真实密码样本不得出现（取自项目历史测试脚本的样本值）
-  const knownSecrets = ['r7aQVzCdncenWTU', 'ZecH4rLwisDSWZEA'];
-  check('账户接口不含已知密码明文',
-    knownSecrets.every((s) => !accText.includes(s)),
-    '已检查 ' + knownSecrets.length + ' 个样本');
+  // 已知真实密码样本不得出现：从环境变量读取，未配置则跳过该项（避免把明文写进仓库）
+  const knownSecrets = [process.env.MAIL_IMAP_PASS, process.env.DB_PASSWORD].filter(Boolean);
+  if (knownSecrets.length) {
+    check('账户接口不含已知密码明文',
+      knownSecrets.every((s) => !accText.includes(s)),
+      '已检查 ' + knownSecrets.length + ' 个样本');
+  } else {
+    console.log('  SKIP 账户接口不含已知密码明文（未设置 MAIL_IMAP_PASS / DB_PASSWORD 环境变量）');
+  }
 
   if (accList.length) {
     const oneAcc = await getJson('/api/mail-push/accounts/' + accList[0].id);

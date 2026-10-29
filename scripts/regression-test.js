@@ -140,8 +140,13 @@ async function json(path, opts) {
   console.log('── 6. 敏感信息保护 ──');
   const st = await json('/api/settings');
   const stText = JSON.stringify(st.json || {});
-  check('设置不含数据库密码', !stText.includes('ZecH4rLwisDSWZEA'));
-  check('设置不含邮箱密码', !stText.includes('r7aQVzCdncenWTU'));
+  // 敏感值从环境变量读取，未配置时改用结构断言（不出现密码字段名）
+  const DB_SECRET = process.env.DB_PASSWORD || '';
+  const MAIL_SECRET = process.env.MAIL_IMAP_PASS || '';
+  check('设置不含数据库密码',
+    DB_SECRET ? !stText.includes(DB_SECRET) : !/"(db_password|smtp_pass)"\s*:\s*"[^"]{4,}"/i.test(stText));
+  check('设置不含邮箱密码',
+    MAIL_SECRET ? !stText.includes(MAIL_SECRET) : !/"mail_imap_pass"\s*:\s*"[^"]{4,}"/i.test(stText));
   const smtpPass = st.json && st.json.data && st.json.data.values && st.json.data.values.smtp_pass;
   check('SMTP 密码已掩码', smtpPass === undefined || smtpPass === '' || smtpPass === '******',
     '实际=' + JSON.stringify(smtpPass));

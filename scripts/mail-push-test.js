@@ -159,7 +159,11 @@ function makeXlsx(rows) {
   check('status 含 enabled/accountCount', !!(st.json && st.json.data
     && 'enabled' in st.json.data && 'accountCount' in st.json.data),
     'keys=' + Object.keys((st.json && st.json.data) || {}).join(','));
-  check('status 不泄露邮箱密码', !JSON.stringify(st.json || {}).includes('r7aQVzCdncenWTU'));
+  // 密码泄露检测：从环境变量读取真实密码比对，未设置时改用结构断言（响应中不得出现 password 字段）
+  const KNOWN_SECRET = process.env.MAIL_IMAP_PASS || '';
+  const stRaw = JSON.stringify(st.json || {});
+  check('status 不泄露邮箱密码',
+    KNOWN_SECRET ? !stRaw.includes(KNOWN_SECRET) : !/"(password|pass)"/i.test(stRaw));
 
   /* ---------- 多账户 API ---------- */
   const acct = await getJson('/api/mail-push/accounts');
