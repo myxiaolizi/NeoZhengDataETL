@@ -66,7 +66,7 @@
 ` %>
 <%- include('layout', { body: body, title: title, active: active, currentUser: currentUser, can: can, isAdmin: isAdmin, settings: settings }) %>
 
-<script src="/public/js/dash.js"></script>
+<script src="/public/js/dash.js?v=<%= settings.asset_version || '20261028c' %>"></script>
 <script>
 const PROJECT_ID = <%= projectId %>;
 const TARGET = 500;

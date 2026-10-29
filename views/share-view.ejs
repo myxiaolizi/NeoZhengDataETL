@@ -53,7 +53,7 @@
     </div>
   </div>
 
-  <script src="/public/js/charts.js"></script>
+  <script src="/public/js/charts.js?v=<%= settings.asset_version || '20261028c' %>"></script>
   <script>
     const ROWS = <%- JSON.stringify(rows) %>;
     const COLUMNS = <%- JSON.stringify(columns.map(function (c) { return c.name; })) %>;

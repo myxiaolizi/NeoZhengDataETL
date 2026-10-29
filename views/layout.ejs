@@ -159,7 +159,7 @@
 </div>
 <div id="toast" class="toast"></div>
 <script src="/public/js/app.js?v=<%= settings.asset_version || '20261028c' %>"></script>
-<script src="/public/js/charts.js"></script>
+<script src="/public/js/charts.js?v=<%= settings.asset_version || '20261028c' %>"></script>
 <script>
   window.__USER__ = <%- JSON.stringify(_user ? { id: _user.id, username: _user.username, displayName: _user.displayName, role: _user.role, permissions: _user.permissions } : null) %>;
   window.__THEME__ = <%- JSON.stringify({ primary: settings.theme_color, palette: settings.chart_palette }) %>;
