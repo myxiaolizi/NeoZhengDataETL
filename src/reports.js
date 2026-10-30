@@ -603,8 +603,13 @@ async function createShare(input, userId) {
   const targetId = Number(input.targetId);
   if (!targetId) throw new Error('请选择要分享的报表');
 
-  const report = await getReport(targetId);
-  if (!report) throw new Error('报表不存在');
+  /**
+   * V7：支持分享「系统内置看板」（target_type = 'board'）。
+   * 内置看板不在 jdywh_reports 里，因此不查报表、标题直接用传入值。
+   */
+  const isBoard = targetType === 'board';
+  const report = isBoard ? null : await getReport(targetId);
+  if (!isBoard && !report) throw new Error('报表不存在');
 
   const token = crypto.randomBytes(12).toString('hex');
   const plain = input.password ? String(input.password) : null;
@@ -614,13 +619,17 @@ async function createShare(input, userId) {
     expiresAt = new Date(Date.now() + Number(input.expiresDays) * 86400000);
   }
 
+  const title = isBoard
+    ? String(input.title || '客户看板').slice(0, 191)
+    : String(input.title || report.name).slice(0, 191);
+
   const result = await db.query(
     `INSERT INTO jdywh_shares
        (token, target_type, target_id, title, password, password_plain, expires_at, allow_export, status, created_by)
      VALUES (?,?,?,?,?,?,?,?,1,?)`,
     [
       token, targetType, targetId,
-      String(input.title || report.name).slice(0, 191),
+      title,
       password, plain, expiresAt,
       input.allowExport ? 1 : 0,
       userId || null,
@@ -655,12 +664,34 @@ async function accessShare(token, password) {
   }
 
   await db.query('UPDATE jdywh_shares SET view_count = view_count + 1 WHERE id = ?', [row.id]);
+
+  /**
+   * V7：内置看板分享。
+   * target_type='board' 时 target_id 只是一个占位（1 = 中康客户看板），
+   * 直接返回看板标识，由前端 /s/:token 页面渲染看板。
+   */
+  if (row.target_type === 'board') {
+    return {
+      ok: true,
+      targetType: 'board',
+      targetName: row.title || '客户看板',
+      share: publicShare(row),
+      boardKey: Number(row.target_id) === 1 ? 'zk' : 'crm',
+      report: null,
+      rows: [],
+      columns: [],
+      rowCount: 0,
+    };
+  }
+
   const report = await getReport(row.target_id);
   if (!report) return { ok: false, code: 'not_found', message: '报表已被删除' };
 
   const data = await runReport(row.target_id, { limit: 2000 });
   return {
     ok: true,
+    targetType: 'report',
+    targetName: report.name,
     share: publicShare(row),
     report: data.report,
     rows: data.rows,

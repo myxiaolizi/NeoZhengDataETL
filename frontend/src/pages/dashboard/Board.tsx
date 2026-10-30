@@ -340,17 +340,18 @@ export default function Board() {
         </div>
       ) : data ? (
         <>
-          {/* 第 1 排：签约卡片区 */}
-          <SectionTitle>签约概览</SectionTitle>
+          {/* 第 1 排：签约卡片区（V7：按需求取消板块标题，卡片自身带标题） */}
           <SigningCards data={data} loading={loading} isMobile={isMobile} />
 
-          {/* 第 2 排：流程状态分布 */}
-          <SectionTitle>流程状态分布</SectionTitle>
-          <FlowPipeline data={data} loading={loading} isMobile={isMobile} />
+          {/* 第 2 排：流程状态分布（V7：同样取消板块标题） */}
+          <div style={{ marginTop: isMobile ? 12 : 14 }}>
+            <FlowPipeline data={data} loading={loading} isMobile={isMobile} />
+          </div>
 
           {/* 第 3 排：类型汇总 + 排行榜 */}
           <SectionTitle>类型汇总与排行</SectionTitle>
           <div
+            className="board-row3"
             style={{
               display: 'grid',
               gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 2fr)',
@@ -370,8 +371,8 @@ export default function Board() {
             </>
           )}
 
-          {/* 第 6 排：签约趋势 + 流程推进 */}
-          <SectionTitle>签约趋势与流程推进</SectionTitle>
+          {/* 第 6 排：签约趋势 + 流程处理（V7 改名） */}
+          <SectionTitle>签约趋势与流程处理</SectionTitle>
           <div
             style={{
               display: 'grid',

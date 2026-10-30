@@ -95,6 +95,14 @@ const BUILTIN_BOARDS: BuiltinBoard[] = [
     color: PALETTE.primary,
     tags: ['看板', 'CRM'],
   },
+  {
+    key: 'zk',
+    name: '中康智能体客户看板',
+    desc: '签约概览、流程状态分布、类型汇总与排行、签约趋势、客户运行情况与客户明细，共 9 个板块实时聚合。',
+    path: '/dashboard/board',
+    color: PALETTE.green,
+    tags: ['看板', 'CRM', '流程'],
+  },
 ];
 
 export default function ReportsPage() {

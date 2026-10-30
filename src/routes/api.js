@@ -157,10 +157,43 @@ router.get('/public/shares/:token', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * V7：看板的「公开分享」取数端点（无需登录，必须放在 requireAuthApi 之前）。
+ *
+ * 复用 reports.accessShare() 做完整校验（存在 / 未停用 / 未过期 / 密码），
+ * 只有 target_type='board' 且校验通过才返回看板数据，
+ * 避免匿名请求直接拉走全量客户数据。
+ */
+router.get('/public/board', async (req, res) => {
+  try {
+    const token = String(req.query.token || '').trim();
+    const pwd = req.query.pwd !== undefined ? String(req.query.pwd) : '';
+    if (!token) return res.status(400).json({ ok: false, message: '缺少分享令牌' });
+
+    const reports = require('../reports');
+    const chk = await reports.accessShare(token, pwd);
+    if (!chk || chk.ok !== true) {
+      const code = (chk && chk.code) || 'not_found';
+      // 密码错误 → 403；其它（不存在/停用/过期）→ 404
+      const status = code === 'password' ? 403 : 404;
+      return res.status(status).json({ ok: false, code, message: (chk && chk.message) || '分享链接不可用' });
+    }
+    if (chk.targetType !== 'board') {
+      return res.status(400).json({ ok: false, message: '该分享不是看板类型' });
+    }
+
+    const crmboard = require('../crmboard');
+    const data = await crmboard.buildBoard(req.query);
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error('[public/board]', err);
+    res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
 /* ══════════════ 以下接口需要登录 ══════════════ */
 
 router.use(auth.requireAuthApi);
-
 /* ══════════════ 当前用户 ══════════════ */
 
 router.get('/me', (req, res) => {
@@ -2585,16 +2618,13 @@ router.post('/flows/:id/preview', auth.requirePerm('flow:read'), async (req, res
         continue;
       }
       const t0 = Date.now();
-      const upstream = (flow.edges || []).filter((e) => e.to === node.id).map((e) => e.from);
-      let input = rows;
-      if (upstream.length) {
-        input = [];
-        upstream.forEach((uid) => { if (Array.isArray(outputs[uid])) input = input.concat(outputs[uid]); });
-      }
+      // 多上游默认拼接；join 节点额外归集左右两路（与正式执行同一套逻辑）
+      const collected = flows.collectInput(node, flow.edges, outputs);
+      const input = collected.upstream.length ? collected.rows : rows;
 
       const out = def && def.category === 'source'
         ? await flows.runSource(node, { flowId: flow.id, flowName: flow.name })
-        : flows.runClean(node, input, { flowId: flow.id });
+        : flows.runClean(node, input, { flowId: flow.id, inputs: collected.inputs });
 
       outputs[node.id] = out;
       rows = out;

@@ -31,8 +31,9 @@ export const MENU_GROUPS = [
 export const ROUTES: RouteConf[] = [
   // ---------- 概览 ----------
   { path: '/dashboard', name: '数据概览', icon: 'DashboardOutlined', group: 'overview', component: 'dashboard', mobile: true },
-  // V5.0 中康智能体客户看板（独立看板页，支持移动端 + 二维码进入）
-  { path: '/dashboard/board', name: '中康智能体客户看板', icon: 'FundProjectionScreenOutlined', group: 'analysis', component: 'dashboard/Board', mobile: true },
+  // V7.0 中康智能体客户看板：按要求并入「报表中心 → 系统内置看板」，
+  // 不再占用左侧独立菜单项（路由保留：可从报表中心卡片进入 / 手机二维码直达）
+  { path: '/dashboard/board', name: '中康智能体客户看板', icon: 'FundProjectionScreenOutlined', group: 'analysis', hideInMenu: true, component: 'dashboard/Board', mobile: true },
   // 客户签约看板 = 报表中心的内置看板：路由保留（页面可直接访问 / 可从报表中心进入），但不进左侧菜单
   { path: '/dashboard/crm', name: '客户签约看板', icon: 'FundOutlined', group: 'analysis', hideInMenu: true, component: 'dashboard/CrmDashboard', mobile: true },
 

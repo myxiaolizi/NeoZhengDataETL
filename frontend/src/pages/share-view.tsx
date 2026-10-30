@@ -1,17 +1,29 @@
 /**
  * 公开分享查看页（路由 /s/:token，无需登录，移动端优先）
  *
- * 数据来源：GET /api/public/shares/:token（后端只读接口，自动累加访问次数）
- *   不存在 / 已停用 → 404，已过期 → 410
- *   成功 → { share:{...}, targetType, targetName, payload:{ report, rows, columns } }
+ * 数据来源：
+ *   - 报表分享：GET /api/public/shares/:token
+ *   - 看板分享（V7）：GET /api/public/board?token=…（同样走 share 校验，支持密码）
  *
- * 支持：链接失效提示、图表 + 明细表、移动端单列
+ * 支持：链接失效提示、图表 + 明细表、看板整页渲染、移动端单列
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Button, Card, Empty, Grid, Result, Space, Spin, Statistic, Table, Tag, Typography } from 'antd';
 import { BarChartOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useParams } from 'react-router-dom';
 import Chart from '@/components/Chart';
+import SigningCards from '@/pages/dashboard/board/SigningCards';
+import FlowPipeline from '@/pages/dashboard/board/FlowPipeline';
+import TypeSummary from '@/pages/dashboard/board/TypeSummary';
+import Rankings from '@/pages/dashboard/board/Rankings';
+import ComparePanel from '@/pages/dashboard/board/ComparePanel';
+import SignTrend from '@/pages/dashboard/board/SignTrend';
+import FlowProgress from '@/pages/dashboard/board/FlowProgress';
+import RunMetrics from '@/pages/dashboard/board/RunMetrics';
+import RunBreakdown from '@/pages/dashboard/board/RunBreakdown';
+import RunTrend from '@/pages/dashboard/board/RunTrend';
+import DetailTable from '@/pages/dashboard/board/DetailTable';
+import { REGION_COLORS, CHAIN_TYPE_COLORS, type BoardData } from '@/api/crm-board';
 import { NEUTRAL, PALETTE, SIDER } from '@/theme';
 import { fmtNum, fmtTime } from '@/utils';
 import {
@@ -81,6 +93,12 @@ export default function ShareView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  /** V7：从 URL 读取访问密码（?pwd=xxx），分享链接可带密码直达 */
+  const urlPwd = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    return new URLSearchParams(window.location.search).get('pwd') || '';
+  }, []);
+
   const load = useCallback(async () => {
     if (!token) {
       setError('分享链接无效');
@@ -90,7 +108,7 @@ export default function ShareView() {
     setLoading(true);
     setError('');
     try {
-      const r = await fetchPublicShare(token);
+      const r = await fetchPublicShare(token, urlPwd || undefined);
       setData(r);
       if (!r.ok) setError(r.message || '分享链接不可用');
     } catch (e) {
@@ -98,7 +116,7 @@ export default function ShareView() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, urlPwd]);
 
   useEffect(() => {
     load();
@@ -109,6 +127,30 @@ export default function ShareView() {
   const report = data?.report;
   const config: ReportConfig = useMemo(() => (report?.config || {}) as ReportConfig, [report]);
   const built = useMemo(() => buildChartOption(rows, config, { limit: 60 }), [rows, config]);
+
+  /* ── V7：看板类型分享 → 渲染完整看板 ── */
+  const isBoardShare = (data as { targetType?: string } | null)?.targetType === 'board';
+  const [boardData, setBoardData] = useState<BoardData | null>(null);
+  const [boardErr, setBoardErr] = useState('');
+
+  useEffect(() => {
+    if (!isBoardShare) return undefined;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`/api/public/board?token=${encodeURIComponent(token || '')}${urlPwd ? `&pwd=${encodeURIComponent(urlPwd)}` : ''}`, {
+          credentials: 'same-origin',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!alive) return;
+        if (!r.ok || j.ok === false) throw new Error(j.message || `加载失败（HTTP ${r.status}）`);
+        setBoardData(j.data as BoardData);
+      } catch (e) {
+        if (alive) setBoardErr(e instanceof Error ? e.message : '看板数据加载失败');
+      }
+    })();
+    return () => { alive = false; };
+  }, [isBoardShare, token]);
 
   const tableColumns = useMemo(() => {
     if (!rows.length) return [];
@@ -152,6 +194,86 @@ export default function ShareView() {
           <Spin size="large" />
         </div>
       </Shell>
+    );
+  }
+
+  /* ── V7：看板分享 —— 整页渲染看板 ── */
+  if (isBoardShare) {
+    /* 注入 V7 设计令牌（公开页不套 BasicLayout，没有 .board-root 变量） */
+    const boardVars = {
+      '--bg': '#f2f6fc', '--panel': '#ffffff', '--panel2': '#f7faff',
+      '--line': '#dde8f6', '--line2': '#eaf2fb',
+      '--text': '#16253d', '--text2': '#5a7191', '--text3': '#93a7c2',
+      '--brand': '#2563eb', '--brand2': '#3b82f6', '--brand3': '#60a5fa', '--brandSoft': '#e9f2ff',
+      '--green': '#10b981', '--warn': '#f59e0b', '--danger': '#ef4444',
+      '--cyan': '#06b6d4', '--purple': '#8b5cf6',
+      '--radius': '16px', '--radius-sm': '11px',
+      '--bg-page': '#f2f6fc', '--bg-card': '#ffffff', '--bg-card-2': '#f7faff',
+      '--text-main': '#16253d', '--text-sub': '#5a7191', '--text-mute': '#93a7c2',
+      '--border': '#dde8f6', '--border-strong': '#60a5fa',
+    } as React.CSSProperties;
+
+    return (
+      <div className="board-root" style={{ ...boardVars, background: 'var(--bg)', minHeight: '100vh', padding: isMobile ? 12 : 20 }}>
+        <div style={{ maxWidth: 1680, margin: '0 auto' }}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: isMobile ? 17 : 21, fontWeight: 700, color: 'var(--text)' }}>
+              {data?.targetName || '中康智能体客户看板'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 3 }}>
+              共享看板 · 只读视图
+              {boardData?.meta?.syncedAt ? ` · 数据同步 ${fmtTime(boardData.meta.syncedAt)}` : ''}
+            </div>
+          </div>
+
+          {boardErr ? (
+            <Card style={{ borderRadius: 16 }}>
+              <Result
+                status="warning"
+                title="看板数据加载失败"
+                subTitle={boardErr}
+                extra={<Button icon={<ReloadOutlined />} onClick={() => window.location.reload()}>重新加载</Button>}
+              />
+            </Card>
+          ) : !boardData ? (
+            <div style={{ padding: 80, textAlign: 'center' }}><Spin size="large" /></div>
+          ) : (
+            <>
+              <div style={{ marginTop: 14 }}>
+                <SigningCards data={boardData} loading={false} isMobile={isMobile} />
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <FlowPipeline data={boardData} loading={false} isMobile={isMobile} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0,1fr) minmax(0,2fr)', gap: 12, marginTop: 14 }}>
+                <TypeSummary data={boardData} loading={false} isMobile={isMobile} />
+                <Rankings data={boardData} loading={false} isMobile={isMobile} />
+              </div>
+              {boardData.compare && (
+                <div style={{ marginTop: 14 }}>
+                  <ComparePanel data={boardData} loading={false} isMobile={isMobile} />
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'minmax(0,1.45fr) minmax(0,1fr)', gap: 12, marginTop: 14 }}>
+                <SignTrend data={boardData} loading={false} isMobile={isMobile} />
+                <FlowProgress data={boardData} loading={false} isMobile={isMobile} />
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <RunMetrics data={boardData} loading={false} isMobile={isMobile} />
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <RunBreakdown data={boardData} loading={false} isMobile={isMobile} />
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <RunTrend data={boardData} loading={false} isMobile={isMobile} />
+              </div>
+              <div style={{ marginTop: 14 }}>
+                <DetailTable data={boardData} loading={false} isMobile={isMobile} />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     );
   }
 

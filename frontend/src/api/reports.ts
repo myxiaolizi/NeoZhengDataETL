@@ -297,6 +297,12 @@ export interface PublicShareResult {
   code?: 'password' | 'not_found' | 'expired' | 'disabled' | 'unknown';
   message?: string;
   title?: string;
+  /** V7：分享目标类型（report = 报表，board = 内置看板） */
+  targetType?: string;
+  /** V7：分享目标名称（看板分享时用于页头标题） */
+  targetName?: string;
+  /** V7：看板标识（board 分享时返回） */
+  boardKey?: string;
   report?: ReportItem;
   rows?: RowData[];
   columns?: DatasetColumn[];
@@ -328,6 +334,25 @@ export async function fetchPublicShare(token: string, password?: string): Promis
     if (!data || !data.share) {
       return { ok: false, code: 'not_found', message: '分享内容为空' };
     }
+
+    /**
+     * V7：看板类型分享（targetType='board'）。
+     * 后端 publicShare 不带 payload，前端会用 /api/public/board 单独取看板数据，
+     * 因此这里直接放行，交给 share-view 走看板渲染分支。
+     */
+    if (data.targetType === 'board') {
+      return {
+        ok: true,
+        targetType: 'board',
+        targetName: data.targetName || '客户看板',
+        title: data.targetName || '客户看板',
+        rowCount: 0,
+        rows: [],
+        columns: [],
+        share: data.share,
+      };
+    }
+
     if (data.targetType !== 'report' || !data.payload || !data.payload.report) {
       return {
         ok: false,

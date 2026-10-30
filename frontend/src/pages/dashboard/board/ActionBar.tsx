@@ -72,6 +72,8 @@ const ICON = {
   theme: <Svg><path d="M12 21a9 9 0 110-18c4.97 0 9 3.58 9 8 0 2.5-2 4-4 4h-2a2 2 0 00-1.5 3.3A2 2 0 0112 21z" /><circle cx="7.5" cy="10.5" r="1" fill="currentColor" /><circle cx="12" cy="7.5" r="1" fill="currentColor" /><circle cx="16.5" cy="10.5" r="1" fill="currentColor" /></Svg>,
   /** 手机 */
   mobile: <Svg><rect x="6" y="2" width="12" height="20" rx="2.5" /><path d="M11 18h2" /></Svg>,
+  /** V7 分享：链接/分享节点 */
+  share: <Svg><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></Svg>,
 };
 
 export default function ActionBar({
@@ -80,6 +82,22 @@ export default function ActionBar({
 }: Props) {
   const [qrOpen, setQrOpen] = useState(false);
   const [spin, setSpin] = useState(false);
+
+  /* ── V7：分享（链接 + 密码） ── */
+  const [shareOpen, setShareOpen] = useState(false);
+  const [sharePwd, setSharePwd] = useState('');
+  const [shareDays, setShareDays] = useState(7);
+  const [shareTitle, setShareTitle] = useState('中康智能体客户看板');
+  const [shareUrl, setShareUrl] = useState('');
+  const [shareSaving, setShareSaving] = useState(false);
+
+  /** 生成 6 位随机密码 */
+  const genPwd = () => {
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    let out = '';
+    for (let i = 0; i < 6; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
+    return out;
+  };
 
   /** 手机版地址 */
   const mobileUrl = useMemo(() => {
@@ -99,6 +117,56 @@ export default function ActionBar({
       message.success('链接已复制');
     } catch {
       message.warning('复制失败，请手动选择链接复制');
+    }
+  };
+
+  /** 打开分享弹窗：带默认随机密码 */
+  const openShare = () => {
+    setSharePwd(genPwd());
+    setShareDays(7);
+    setShareUrl('');
+    setShareOpen(true);
+  };
+
+  /** 创建分享链接（target_type='board'，target_id=1 表示中康客户看板） */
+  const createShare = async () => {
+    setShareSaving(true);
+    try {
+      const res = await fetch('/api/shares', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetType: 'board',
+          targetId: 1,
+          title: shareTitle || '中康智能体客户看板',
+          password: sharePwd || undefined,
+          expiresDays: shareDays > 0 ? shareDays : undefined,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.ok === false) {
+        throw new Error(json.message || `创建失败（HTTP ${res.status}）`);
+      }
+      const token = json.data?.token || json.token;
+      if (!token) throw new Error('未返回分享令牌');
+      setShareUrl(`${window.location.origin}/s/${token}`);
+      message.success('分享链接已生成');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '创建分享失败');
+    } finally {
+      setShareSaving(false);
+    }
+  };
+
+  /** 复制分享链接 */
+  const copyShareUrl = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      message.success('分享链接已复制');
+    } catch {
+      message.warning('复制失败，请手动选择');
     }
   };
 
@@ -267,6 +335,144 @@ export default function ActionBar({
         tip="手机扫码进入手机版"
         onClick={() => setQrOpen(true)}
       />
+
+      {/* 6. V7 分享（链接 + 密码） */}
+      <IconBtn
+        icon={ICON.share}
+        tip="分享看板（生成带密码的链接）"
+        onClick={openShare}
+      />
+
+      {/* V7 分享弹窗 */}
+      <Modal
+        title={<Space size={6}><span style={{ display: 'inline-flex' }}>{ICON.share}</span><span>分享看板</span></Space>}
+        open={shareOpen}
+        onCancel={() => setShareOpen(false)}
+        footer={null}
+        width={440}
+        centered
+      >
+        <div style={{ padding: '4px 0 8px' }}>
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>分享标题</div>
+            <input
+              value={shareTitle}
+              onChange={(e) => setShareTitle(e.target.value)}
+              placeholder="看板标题"
+              style={{
+                width: '100%', height: 34, padding: '0 10px', borderRadius: 9,
+                border: '1px solid var(--line)', background: 'var(--panel2)',
+                color: 'var(--text)', fontSize: 13, outline: 'none',
+              }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>访问密码</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  value={sharePwd}
+                  onChange={(e) => setSharePwd(e.target.value)}
+                  placeholder="留空则无需密码"
+                  style={{
+                    flex: 1, height: 34, padding: '0 10px', borderRadius: 9,
+                    border: '1px solid var(--line)', background: 'var(--panel2)',
+                    color: 'var(--text)', fontSize: 13, outline: 'none',
+                    fontFamily: 'monospace', letterSpacing: 1,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setSharePwd(genPwd())}
+                  title="重新生成"
+                  style={{ ...BTN, height: 34, width: 38 }}
+                >
+                  ↻
+                </button>
+              </div>
+            </div>
+            <div style={{ width: 110 }}>
+              <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>有效期</div>
+              <select
+                value={shareDays}
+                onChange={(e) => setShareDays(Number(e.target.value))}
+                style={{
+                  width: '100%', height: 34, padding: '0 8px', borderRadius: 9,
+                  border: '1px solid var(--line)', background: 'var(--panel2)',
+                  color: 'var(--text)', fontSize: 13, outline: 'none',
+                }}
+              >
+                <option value={7}>7 天</option>
+                <option value={30}>30 天</option>
+                <option value={0}>永久</option>
+              </select>
+            </div>
+          </div>
+
+          {shareUrl ? (
+            <div
+              style={{
+                padding: '10px 12px', borderRadius: 10, marginBottom: 12,
+                background: 'var(--brandSoft)', border: '1px solid var(--line)',
+              }}
+            >
+              <div style={{ fontSize: 11.5, color: 'var(--text2)', marginBottom: 4 }}>分享链接</div>
+              <div style={{ fontSize: 12.5, color: 'var(--brand)', wordBreak: 'break-all', marginBottom: 8 }}>
+                {shareUrl}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={copyShareUrl}
+                  style={{ ...BTN, width: 'auto', padding: '0 12px', height: 30, fontSize: 12 }}
+                >
+                  <CopyOutlined style={{ marginRight: 5 }} />复制链接
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(`${shareUrl}\n访问密码：${sharePwd || '（无）'}`);
+                      message.success('链接与密码已复制');
+                    } catch { message.warning('复制失败'); }
+                  }}
+                  style={{ ...BTN, width: 'auto', padding: '0 12px', height: 30, fontSize: 12 }}
+                >
+                  复制链接+密码
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12, lineHeight: 1.7 }}>
+              生成的链接可在未登录状态下访问本看板；设置了密码则需要先输入密码。
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setShareOpen(false)}
+              style={{ ...BTN, width: 'auto', padding: '0 16px', height: 34, fontSize: 13 }}
+            >
+              关闭
+            </button>
+            <button
+              type="button"
+              onClick={createShare}
+              disabled={shareSaving}
+              style={{
+                ...BTN, width: 'auto', padding: '0 18px', height: 34, fontSize: 13,
+                background: 'linear-gradient(135deg, var(--brand), var(--brand2))',
+                borderColor: 'transparent', color: '#fff', fontWeight: 600,
+                opacity: shareSaving ? 0.6 : 1,
+              }}
+            >
+              {shareSaving ? '生成中…' : (shareUrl ? '重新生成' : '生成分享链接')}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         title={<Space size={6}><span style={{ display: 'inline-flex' }}>{ICON.mobile}</span><span>手机版</span></Space>}

@@ -12,7 +12,7 @@ import {
   Button, Checkbox, Divider, Drawer, Empty, Space, Table, Tooltip, Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { DownloadOutlined, SettingOutlined } from '@ant-design/icons';
+import { SettingOutlined } from '@ant-design/icons';
 import { BoardData, DetailColumnConf, DetailFullRow } from '@/api/crm-board';
 import { fmtNum, fmtPct } from './theme';
 
@@ -61,6 +61,14 @@ const CSS = `
 .vb11-btn:hover{border-color:var(--brand3);color:var(--brand)}
 .vb11-btn:disabled{opacity:.45;cursor:not-allowed}
 .vb11-btn svg{font-size:13px}
+/* V7：搜索框（替换原导出按钮位置） */
+.vb11-search{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 9px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--text3);transition:all .15s;min-width:170px}
+.vb11-search:focus-within{border-color:var(--brand3);background:var(--panel);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 12%,transparent)}
+.vb11-search input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:var(--text);font-size:12px;font-family:inherit}
+.vb11-search input::placeholder{color:var(--text3)}
+.vb11-clear{width:16px;height:16px;border:0;border-radius:50%;background:var(--line);color:var(--text2);font-size:12px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:0;font-family:inherit}
+.vb11-clear:hover{background:var(--danger);color:#fff}
+@media(max-width:768px){.vb11-search{min-width:120px}}
 .vb11-b{padding:12px 14px 6px;flex:1;min-width:0}
 
 /* 表格：表头 panel2 / 斑马纹 / hover brandSoft / 超期左竖条 */
@@ -250,12 +258,6 @@ function renderCell(row: DetailFullRow, col: DetailColumnConf): React.ReactNode 
   }
 }
 
-/** 转 CSV 单元格 */
-function csvCell(v: unknown): string {
-  const s = v === null || v === undefined ? '' : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
 export default function DetailTable({ data, loading, isMobile }: Props) {
   const columns: DetailColumnConf[] = useMemo(() => {
     const list = data?.detail?.columns;
@@ -275,28 +277,87 @@ export default function DetailTable({ data, loading, isMobile }: Props) {
 
   const [visible, setVisible] = useState<string[]>(defaultVisible);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  /** V7：搜索框（连锁ID 或 连锁名称） */
+  const [search, setSearch] = useState('');
 
   // 列配置变化（如筛选后列集合变化）时重置
   useEffect(() => { setVisible(defaultVisible); }, [defaultVisible.join('|')]);
 
-  /** 生成 antd Table columns */
+  /** V7：搜索过滤（连锁ID / 连锁名称，包含匹配、忽略大小写） */
+  const searched = useMemo(() => {
+    const kw = search.trim().toLowerCase();
+    if (!kw) return rows;
+    return rows.filter((r) => {
+      const id = String((r as unknown as Record<string, unknown>).chainId ?? '').toLowerCase();
+      const name = String((r as unknown as Record<string, unknown>).chainName ?? '').toLowerCase();
+      return id.includes(kw) || name.includes(kw);
+    });
+  }, [rows, search]);
+
+  /** 该列所有去重取值（用于列筛选下拉） */
+  const distinctOf = useMemo(() => {
+    const cache = new Map<string, { text: string; value: string }[]>();
+    return (key: string) => {
+      if (cache.has(key)) return cache.get(key)!;
+      const set = new Set<string>();
+      searched.forEach((r) => {
+        const v = (r as unknown as Record<string, unknown>)[key];
+        if (v === null || v === undefined || v === '') return;
+        set.add(String(v));
+      });
+      const list = Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+        .slice(0, 200)
+        .map((v) => ({ text: v, value: v }));
+      cache.set(key, list);
+      return list;
+    };
+  }, [searched]);
+
+  /** 生成 antd Table columns（V7：每列都带 filters + sorter） */
   const tableColumns: ColumnsType<DetailFullRow> = useMemo(() => {
     const picked = columns.filter((c) => visible.includes(String(c.key)));
+    const NUMERIC = new Set([
+      'seq', 'stores', 'submitDays', 'openedStrategies', 'runningStrategies',
+      'reachedPeople', 'reachRate', 'couponRate', 'nodeDays', 'totalDays',
+      'currentNodeHours',
+    ]);
     return picked.map((c) => {
-      const isSeq = c.key === 'seq';
-      const isName = c.key === 'chainName';
+      const key = String(c.key);
+      const isSeq = key === 'seq';
+      const isName = key === 'chainName';
+      const isNum = NUMERIC.has(key);
+      // 「当前节点处理时长」是字符串（如 "8.7天"），排序用小时数
+      const sortKey = key === 'currentNodeDuration' ? 'currentNodeHours' : key;
       return {
         title: c.title,
-        dataIndex: c.key as string,
-        key: String(c.key),
+        dataIndex: key,
+        key,
         width: c.width,
         align: c.align,
         fixed: isSeq ? ('left' as const) : undefined,
         ellipsis: isName,
-        render: (_: any, row: DetailFullRow) => renderCell(row, c),
+        /* V7：列筛选（多选该列所有值） */
+        filters: distinctOf(key),
+        filterSearch: distinctOf(key).length > 10,
+        onFilter: (value: boolean | React.Key, row: DetailFullRow) => {
+          const v = (row as unknown as Record<string, unknown>)[key];
+          // 空值归到「(空)」便于筛选
+          const cell = v === null || v === undefined || v === '' ? '(空)' : String(v);
+          return cell === String(value);
+        },
+        /* V7：列排序 */
+        sorter: (a: DetailFullRow, b: DetailFullRow) => {
+          const av = (a as unknown as Record<string, unknown>)[sortKey];
+          const bv = (b as unknown as Record<string, unknown>)[sortKey];
+          if (isNum) return (Number(av) || 0) - (Number(bv) || 0);
+          return String(av ?? '').localeCompare(String(bv ?? ''), 'zh-CN');
+        },
+        sortDirections: ['descend', 'ascend'] as const,
+        showSorterTooltip: { title: `点击按「${c.title}」排序` },
+        render: (_: unknown, row: DetailFullRow) => renderCell(row, c),
       };
     });
-  }, [columns, visible]);
+  }, [columns, visible, distinctOf]);
 
   const toggleColumn = (key: string, on: boolean) => {
     setVisible((cur) => {
@@ -307,25 +368,6 @@ export default function DetailTable({ data, loading, isMobile }: Props) {
   };
 
   const resetColumns = () => setVisible(defaultVisible);
-
-  /** 导出 CSV（当前可见列 + 全部行） */
-  const exportCsv = () => {
-    const picked = columns.filter((c) => visible.includes(String(c.key)));
-    const header = picked.map((c) => csvCell(c.title)).join(',');
-    const body = rows.map((r) => picked.map((c) => csvCell((r as any)[c.key])).join(','));
-    const csv = `\uFEFF${[header, ...body].join('\r\n')}`;
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    const d = new Date();
-    const p = (x: number) => String(x).padStart(2, '0');
-    a.href = url;
-    a.download = `客户明细_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
 
   const canUncheck = visible.length > MIN_VISIBLE;
 
@@ -338,15 +380,30 @@ export default function DetailTable({ data, loading, isMobile }: Props) {
           <h3>
             <span className="vb11-dot" />
             客户明细
-            <span className="vb11-hint">共 {fmtNum(rows.length)} 条</span>
+            <span className="vb11-hint">
+              共 {fmtNum(searched.length)} 条
+              {search ? `（已从 ${fmtNum(rows.length)} 条中筛选）` : ''}
+            </span>
           </h3>
           <div className="vb11-tools">
-            <Tooltip title="导出当前可见列的全部数据为 CSV">
-              <button type="button" className="vb11-btn" onClick={exportCsv} disabled={!rows.length}>
-                <DownloadOutlined />
-                {isMobile ? null : '导出'}
-              </button>
-            </Tooltip>
+            {/* V7：搜索框替换原导出按钮 */}
+            <div className="vb11-search">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M20 20l-3.5-3.5" />
+              </svg>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={isMobile ? '搜索连锁' : '搜索连锁ID或名称'}
+                aria-label="搜索连锁ID或名称"
+              />
+              {search && (
+                <button type="button" className="vb11-clear" onClick={() => setSearch('')} aria-label="清空搜索">
+                  ×
+                </button>
+              )}
+            </div>
             <button type="button" className="vb11-btn" onClick={() => setDrawerOpen(true)}>
               <SettingOutlined />
               {isMobile ? null : '列设置'}
@@ -364,7 +421,7 @@ export default function DetailTable({ data, loading, isMobile }: Props) {
               loading={loading}
               rowKey={(r) => `${r.chainId}-${r.seq}`}
               columns={tableColumns}
-              dataSource={rows}
+              dataSource={searched}
               bordered={false}
               scroll={{ x: 'max-content' }}
               rowClassName={(r) => (r.status === '超期' ? 'board-row-overdue' : '')}
