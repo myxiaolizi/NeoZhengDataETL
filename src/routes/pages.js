@@ -9,6 +9,33 @@ const projectGroups = require('../project-groups');
 
 const router = express.Router();
 
+/**
+ * V4.0 SPA 接管：页面渲染交给 React 前端，本路由只保留「服务端表单处理」职责。
+ *
+ * 保留：
+ *   POST /login /register /forgot-password /reset-password  —— 表单提交（前端 fetch 后解析结果）
+ *   GET  /logout                                           —— 退出必须清 Cookie，不能在纯前端做
+ *   GET  /verify-email                                     —— 邮件链接直接落地，需要服务端校验 token
+ *
+ * 其余 GET 页面请求一律 next('router')，交给后面的 SPA 中间件渲染 index.html。
+ * 可用环境变量 JDY_LEGACY_PAGES=1 临时回退到旧 EJS 渲染（应急用）。
+ */
+const LEGACY_PAGES = String(process.env.JDY_LEGACY_PAGES || '') === '1';
+
+/** 由 pages.js 自己处理的 GET 路径（白名单） */
+const SERVER_GET_PATHS = new Set(['/logout', '/verify-email']);
+
+if (!LEGACY_PAGES) {
+  router.use((req, res, next) => {
+    // 非 GET/HEAD 一律放行（表单 POST 由下面的路由处理）
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    // 白名单内的 GET 继续走本文件
+    if (SERVER_GET_PATHS.has(req.path)) return next();
+    // 其余全部交给 SPA
+    return next('router');
+  });
+}
+
 function baseUrl(req) {
   const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
   const host = req.headers['x-forwarded-host'] || req.headers.host;

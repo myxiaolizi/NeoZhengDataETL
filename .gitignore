@@ -28,6 +28,14 @@ _sanitize.log
 
 # 打包产物
 *.zip
+*.tar.gz
 
 # 调试截图与临时 HTML
 browser-screenshots/
+
+# Ant Design 参考仓库（仅本地对照用，88MB，不入库）
+ant-design/
+
+# 根目录误建的空文件
+/integrations.tsx
+/-w

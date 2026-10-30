@@ -1,0 +1,10 @@
+﻿node_modules
+dist
+dist-ssr
+*.local
+.vite
+.DS_Store
+
+# TS 临时检查目录
+.tmp-tscheck/
+

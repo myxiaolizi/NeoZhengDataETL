@@ -66,22 +66,33 @@ app.get('/healthz', async (req, res) => {
 app.use('/jdy', require('./routes/push'));
 app.use('/api', require('./routes/api'));
 app.use('/f', require('./routes/public-forms'));
+
+/*
+ * V4.0：前端已迁移为 React SPA。
+ *
+ * 旧的 EJS 页面路由（routes/pages.js）仍保留挂载，原因：
+ *   1) 它承载 /login /register /forgot-password /reset-password 的表单 POST 处理
+ *      （提交后 302 或渲染 HTML，前端 fetch 后解析结果）
+ *   2) 邮件里的 /s/:token 分享链接、/f/:token 公开表单入口仍走它
+ *   3) 作为前端构建产物缺失时的降级路径
+ *
+ * 但 **GET 页面渲染** 会被下面的 SPA 中间件接管（它在 pages 之后挂载，
+ * 只处理未被前面路由命中的 GET 请求），因此用户实际看到的始终是 SPA。
+ */
 app.use('/', require('./routes/pages'));
+
+/* ---- SPA 静态托管与前端路由回退 ---- */
+require('./routes/spa').mountSpa(app);
 
 /* ---- 404 ---- */
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ ok: false, message: '接口不存在' });
   }
-  res.status(404).render('error', {
-    title: '404',
-    message: '页面不存在',
-    active: '',
-    currentUser: req.user,
-    can: () => false,
-    isAdmin: false,
-    settings: res.locals.settings || settings.DEFAULTS,
-  });
+  if (req.path.startsWith('/jdy/')) {
+    return res.status(404).json({ ok: false, message: '推送接口不存在' });
+  }
+  res.status(404).type('text/plain').send('Not Found');
 });
 
 /* ---- 错误处理 ---- */
@@ -144,8 +155,8 @@ function removePidFile() {
 
 async function start() {
   console.log('---------------------------------------------');
-  console.log(' 数据中台 v3.0');
-  console.log(' 数据集成 · 数据治理 · 报表 BI · 可视化大屏 · AI 问数');
+  console.log(' 数据中台 v4.0');
+  console.log(' React 18 + Ant Design 6 · 数据集成 · 数据治理 · 报表 BI · AI 问数');
   console.log('---------------------------------------------');
   console.log(` 环境      : ${config.env}`);
   console.log(` 数据库    : ${config.db.user}@${config.db.host}:${config.db.port}/${config.db.database}`);

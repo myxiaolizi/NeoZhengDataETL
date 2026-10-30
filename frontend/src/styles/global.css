@@ -1,0 +1,31 @@
+/** 全局样式：仅做必要的 reset 与移动端适配，组件样式全部交给 Ant Design */
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  background: #FFFFFF;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+a { text-decoration: none; }
+
+/* 移动端：禁止长按选中导致的操作干扰，保留输入框可选 */
+@media (max-width: 768px) {
+  * { -webkit-tap-highlight-color: transparent; }
+  input, textarea, select { user-select: text; }
+}
+
+/* 代码块 */
+pre, code {
+  font-family: 'SF Mono', 'Fira Code', Consolas, Menlo, monospace;
+}
+
+/* 滚动条轻量化 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(0, 51, 120, .18); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 51, 120, .32); }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ProComponents 表格容器自适应 */
+.ant-pro-table-list-toolbar-container { padding-block: 12px; }

@@ -25,6 +25,129 @@ const { quoteIdent } = require('../ident');
 
 const router = express.Router();
 
+/* ══════════════ 公开接口（无需登录，必须在 requireAuthApi 之前） ══════════════ */
+
+/**
+ * 站点公开信息
+ *
+ * 供宣传页、注册页、页脚读取站点名称/描述等展示型配置。
+ * 只暴露白名单字段，绝不返回 smtp_pass / ai_api_key / webhook_token 等敏感项。
+ */
+const PUBLIC_SETTING_KEYS = [
+  'site_name', 'site_short', 'site_subtitle', 'site_logo_text',
+  'site_description', 'site_footer',
+  'theme_color', 'allow_registration', 'require_email_verify',
+];
+
+router.get('/settings/public', async (req, res, next) => {
+  try {
+    const all = await settings.all();
+    const data = {};
+    for (const k of PUBLIC_SETTING_KEYS) {
+      data[k] = all[k] !== undefined ? all[k] : (settings.DEFAULTS[k] || '');
+    }
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({ ok: true, data });
+  } catch (err) { next(err); }
+});
+
+/**
+ * 公开分享数据（只读）
+ *
+ * 分享链接 /s/:token 由服务端渲染 HTML；V4 前端需要 JSON，故提供此接口。
+ *
+ * 安全：必须复用 reports.accessShare() 的完整校验链
+ * （存在性 / 是否停用 / 是否过期 / 访问密码 sha256 比对），
+ * 不能自己写一套简化查询，否则会给「设了密码的分享」开后门。
+ *
+ * 密码通过 query 参数 `pwd` 传入（前端密码框提交后重新请求）。
+ * 校验失败时不累加 view_count（accessShare 内部只在通过后才 +1）。
+ */
+router.get('/public/shares/:token', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ ok: false, message: '缺少分享令牌' });
+
+    const password = req.query.pwd !== undefined ? String(req.query.pwd) : '';
+
+    let result;
+    try {
+      result = await reports.accessShare(token, password);
+    } catch (execErr) {
+      /*
+       * accessShare 通过校验后会立即执行报表；若报表依赖的数据集/项目已被删除、
+       * 或数据源暂时不可用，这里会抛错。
+       *
+       * 这不是「分享不可用」，更不该变成 500：分享本身是有效的，
+       * 只是取数失败。返回 200 + execError，让前端展示报表结构 + 明确错误提示，
+       * 避免访问者看到一张白页。
+       */
+      console.warn('[share] 报表执行失败:', execErr.message);
+
+      // 仍需回一个占位结构，但不能泄漏任何数据
+      return res.status(200).json({
+        ok: true,
+        data: {
+          share: { token },
+          targetType: 'report',
+          targetName: '',
+          payload: { report: null, rows: [], columns: [], rowCount: 0 },
+          execError: execErr.message || '报表数据获取失败',
+        },
+      });
+    }
+
+    if (!result || result.ok !== true) {
+      const code = (result && result.code) || 'not_found';
+      const msg = (result && result.message) || '分享链接不可用';
+
+      // 仅在其未通过校验时给出提示，绝不泄漏数据
+      if (code === 'password') {
+        return res.status(403).json({
+          ok: false,
+          code: 'PASSWORD_REQUIRED',
+          message: msg,
+          data: null,
+        });
+      }
+      if (code === 'expired') {
+        return res.status(410).json({ ok: false, code: 'EXPIRED', message: msg });
+      }
+      if (code === 'disabled') {
+        return res.status(403).json({ ok: false, code: 'DISABLED', message: msg });
+      }
+      return res.status(404).json({ ok: false, code: 'NOT_FOUND', message: msg });
+    }
+
+    // accessShare 已返回 publicShare(row) 与报表数据，按前端约定重排结构
+    const s = result.share || {};
+    res.json({
+      ok: true,
+      data: {
+        share: {
+          id: s.id,
+          token: s.token,
+          targetType: s.targetType || s.target_type,
+          targetId: s.targetId || s.target_id,
+          expiresAt: s.expiresAt || s.expires_at,
+          viewCount: s.viewCount || s.view_count,
+          createdAt: s.createdAt || s.created_at,
+        },
+        targetType: s.targetType || s.target_type || 'report',
+        targetName: (result.report && result.report.name) || '',
+        payload: {
+          report: result.report || null,
+          rows: result.rows || [],
+          columns: result.columns || [],
+          rowCount: result.rowCount || 0,
+        },
+      },
+    });
+  } catch (err) { next(err); }
+});
+
+/* ══════════════ 以下接口需要登录 ══════════════ */
+
 router.use(auth.requireAuthApi);
 
 /* ══════════════ 当前用户 ══════════════ */
