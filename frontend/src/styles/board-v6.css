@@ -1,0 +1,225 @@
+/* ══════════════════════════════════════════════════════════
+ * V6.0 看板 · 动画与顶栏细节
+ *
+ * 设计令牌由 Board.tsx 以内联 style 注入 .board-root，
+ * 这里只放关键帧、滚动条、以及 antd 组件的暗色适配补丁。
+ * ══════════════════════════════════════════════════════════ */
+
+/* ---- 关键帧 ---- */
+@keyframes boardSpin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes boardPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .45; transform: scale(.8); }
+}
+
+@keyframes boardSlide {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+@keyframes boardFadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes boardShimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* ---- 筛选条：隐藏滚动条但保留滚动 ---- */
+.board-filterbar::-webkit-scrollbar { height: 0; display: none; }
+.board-filterbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ---- 顶栏：移动端不与 Layout 顶栏打架 ---- */
+.board-topbar { will-change: transform; }
+
+/* ---- 看板内 antd 组件暗色适配（V6 令牌） ---- */
+.board-root[data-theme='dark'] .ant-card {
+  background: var(--panel);
+  color: var(--text);
+}
+.board-root[data-theme='dark'] .ant-card-head {
+  color: var(--text);
+  background: transparent;
+  border-bottom-color: var(--line2);
+}
+.board-root[data-theme='dark'] .ant-card-head-title,
+.board-root[data-theme='dark'] .ant-card-extra { color: var(--text); }
+
+.board-root[data-theme='dark'] .ant-btn-default {
+  background: var(--panel2);
+  border-color: var(--line);
+  color: var(--text);
+}
+.board-root[data-theme='dark'] .ant-btn-default:hover {
+  border-color: var(--brand3);
+  color: var(--brand3);
+}
+.board-root[data-theme='dark'] .ant-btn-text,
+.board-root[data-theme='dark'] .ant-btn-link { color: var(--brand3); }
+.board-root[data-theme='dark'] .ant-btn-primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.board-root[data-theme='dark'] .ant-table { background: transparent; color: var(--text); }
+.board-root[data-theme='dark'] .ant-table-thead > tr > th {
+  background: var(--panel2) !important;
+  color: var(--text) !important;
+  border-bottom-color: var(--line) !important;
+}
+.board-root[data-theme='dark'] .ant-table-thead > tr > th::before {
+  background-color: var(--line) !important;
+}
+.board-root[data-theme='dark'] .ant-table-tbody > tr > td {
+  border-bottom-color: var(--line2) !important;
+  color: var(--text);
+}
+.board-root[data-theme='dark'] .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: var(--brandSoft) !important;
+}
+.board-root[data-theme='dark'] .ant-table-tbody > tr.ant-table-placeholder > td {
+  background: transparent !important;
+}
+.board-root[data-theme='dark'] .ant-table-cell-scrollbar {
+  background: var(--panel2) !important;
+}
+.board-root[data-theme='dark'] .ant-empty-description { color: var(--text2); }
+
+.board-root[data-theme='dark'] .ant-pagination,
+.board-root[data-theme='dark'] .ant-pagination-item a,
+.board-root[data-theme='dark'] .ant-pagination-prev button,
+.board-root[data-theme='dark'] .ant-pagination-next button,
+.board-root[data-theme='dark'] .ant-pagination-total-text,
+.board-root[data-theme='dark'] .ant-pagination-options,
+.board-root[data-theme='dark'] .ant-pagination-options-quick-jumper input {
+  color: var(--text);
+}
+.board-root[data-theme='dark'] .ant-pagination-item {
+  background: var(--panel2);
+  border-color: var(--line);
+}
+.board-root[data-theme='dark'] .ant-pagination-item-active {
+  background: color-mix(in srgb, var(--brand) 30%, transparent);
+  border-color: var(--brand);
+}
+.board-root[data-theme='dark'] .ant-pagination-item-active a { color: #fff; }
+.board-root[data-theme='dark'] .ant-pagination-options-quick-jumper input {
+  background: var(--panel2) !important;
+  border-color: var(--line) !important;
+}
+
+.board-root[data-theme='dark'] .ant-select-selector,
+.board-root[data-theme='dark'] .ant-input,
+.board-root[data-theme='dark'] .ant-input-affix-wrapper {
+  background: var(--panel2) !important;
+  border-color: var(--line) !important;
+  color: var(--text) !important;
+}
+.board-root[data-theme='dark'] .ant-input::placeholder { color: var(--text3); }
+
+.board-root[data-theme='dark'] .ant-tabs-tab { color: var(--text2); }
+.board-root[data-theme='dark'] .ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--brand3) !important; }
+
+.board-root[data-theme='dark'] .ant-progress-inner { background: var(--line2); }
+.board-root[data-theme='dark'] .ant-checkbox-wrapper { color: var(--text); }
+.board-root[data-theme='dark'] .ant-badge-count { box-shadow: none; }
+.board-root[data-theme='dark'] .ant-tag { border-color: var(--line); background: var(--panel2); color: var(--text); }
+
+/* ---- 弹层（挂 body 上，用 html data-theme 兜底） ---- */
+html[data-theme='dark'] .ant-modal-container,
+html[data-theme='dark'] .ant-modal-content,
+html[data-theme='dark'] .ant-drawer-content,
+html[data-theme='dark'] .ant-popover-inner,
+html[data-theme='dark'] .ant-dropdown-menu {
+  background: #101d33;
+  color: #e2e8f0;
+}
+html[data-theme='dark'] .ant-modal-header,
+html[data-theme='dark'] .ant-drawer-header {
+  background: transparent;
+  border-bottom-color: #1e3252;
+}
+html[data-theme='dark'] .ant-modal-title,
+html[data-theme='dark'] .ant-drawer-title,
+html[data-theme='dark'] .ant-modal-body,
+html[data-theme='dark'] .ant-drawer-body,
+html[data-theme='dark'] .ant-modal-footer { color: #e2e8f0; }
+html[data-theme='dark'] .ant-modal-close,
+html[data-theme='dark'] .ant-drawer-close { color: rgba(226,232,240,.72); }
+html[data-theme='dark'] .ant-modal-close:hover,
+html[data-theme='dark'] .ant-drawer-close:hover { color: #93c5fd; }
+
+html[data-theme='dark'] .ant-modal-body .ant-table,
+html[data-theme='dark'] .ant-drawer-body .ant-table { background: transparent; color: #e2e8f0; }
+html[data-theme='dark'] .ant-modal-body .ant-table-thead > tr > th,
+html[data-theme='dark'] .ant-drawer-body .ant-table-thead > tr > th {
+  background: #14233c !important;
+  color: #e2e8f0 !important;
+  border-bottom-color: #1e3252 !important;
+}
+html[data-theme='dark'] .ant-modal-body .ant-table-tbody > tr > td,
+html[data-theme='dark'] .ant-drawer-body .ant-table-tbody > tr > td {
+  color: #e2e8f0;
+  border-bottom-color: #182a45 !important;
+}
+html[data-theme='dark'] .ant-modal-body .ant-table-tbody > tr:hover > td,
+html[data-theme='dark'] .ant-drawer-body .ant-table-tbody > tr:hover > td {
+  background: #16294a !important;
+}
+html[data-theme='dark'] .ant-modal-body .ant-btn-default,
+html[data-theme='dark'] .ant-drawer-body .ant-btn-default {
+  background: #14233c;
+  border-color: #1e3252;
+  color: #e2e8f0;
+}
+html[data-theme='dark'] .ant-drawer-body .ant-checkbox-wrapper,
+html[data-theme='dark'] .ant-modal-body .ant-checkbox-wrapper { color: #e2e8f0; }
+html[data-theme='dark'] .ant-modal-body .ant-empty-description,
+html[data-theme='dark'] .ant-drawer-body .ant-empty-description { color: #94a8c4; }
+html[data-theme='dark'] .ant-modal-body .ant-pagination,
+html[data-theme='dark'] .ant-drawer-body .ant-pagination { color: #e2e8f0; }
+html[data-theme='dark'] .ant-modal-body .ant-pagination-item,
+html[data-theme='dark'] .ant-drawer-body .ant-pagination-item {
+  background: #14233c;
+  border-color: #1e3252;
+}
+html[data-theme='dark'] .ant-modal-body .ant-pagination-item a,
+html[data-theme='dark'] .ant-drawer-body .ant-pagination-item a { color: #e2e8f0; }
+html[data-theme='dark'] .ant-modal-body .ant-pagination-item-active,
+html[data-theme='dark'] .ant-drawer-body .ant-pagination-item-active {
+  background: rgba(37,99,235,.30);
+  border-color: #2563eb;
+}
+
+/* 日历 */
+html[data-theme='dark'] .ant-picker-calendar,
+html[data-theme='dark'] .ant-picker-calendar-header,
+html[data-theme='dark'] .ant-picker-content th,
+html[data-theme='dark'] .ant-picker-cell,
+html[data-theme='dark'] .ant-picker-cell-inner {
+  background: transparent;
+  color: #e2e8f0;
+}
+html[data-theme='dark'] .ant-picker-cell-in-view.ant-picker-cell-selected .ant-picker-cell-inner {
+  background: #2563eb;
+  color: #fff;
+}
+html[data-theme='dark'] .ant-picker-dropdown .ant-picker-panel-container {
+  background: #101d33;
+  border: 1px solid #1e3252;
+}
+html[data-theme='dark'] .ant-picker-header,
+html[data-theme='dark'] .ant-picker-header button { color: #e2e8f0; }
+html[data-theme='dark'] .ant-picker-panel,
+html[data-theme='dark'] .ant-picker-body { background: transparent; }
+
+/* 气泡 */
+html[data-theme='dark'] .ant-tooltip-inner { background: #14233c; color: #e2e8f0; }
+html[data-theme='dark'] .ant-tooltip-arrow::before { background: #14233c; }

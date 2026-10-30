@@ -5,6 +5,103 @@
 
 ---
 
+## [6.0.0] - 2026-10-30
+
+参考 `https://zk2.zhengl.vip/pc4.html` 的页面设计重构看板视觉与报表设计器，三项改动。
+
+### 1. 视觉升级 · 对齐 pc4 设计语言
+
+从参考站实测提取完整设计令牌，替换 V5 的旧配色：
+
+```css
+/* 浅色 */ --bg:#f2f6fc --panel:#ffffff --line:#dde8f6
+        --text:#16253d --text2:#5a7191 --text3:#93a7c2
+        --brand:#2563eb --brand2:#3b82f6 --brand3:#60a5fa
+        --green:#10b981 --warn:#f59e0b --danger:#ef4444
+        --cyan:#06b6d4 --purple:#8b5cf6 --radius:16px
+/* 深色 */ --bg:#0a1220 --panel:#101d33 --line:#1e3252 --text:#e2e8f0
+```
+
+- **卡片**：16px 圆角、`var(--shadow)`、标题前 6px 方点（带 16% 同色光晕）、hover 上浮 1px + `--shadow2`
+- **11 个组件全部重做**：
+  - 圆环卡改 SVG（中心大数字 + 右侧 10×10 圆角图例）
+  - 半圆进度改 SVG 弧（`PI*74`）+ 8px 渐变进度条
+  - 流程图 9 节点 + 8 箭头（伪元素渐变线 + 三角），0 数据节点淡化 55%
+  - 排行榜 22px 圆形奖牌（第1红/第2橙/第3黄，各带 38% 同色阴影）
+  - 热力矩阵 `color-mix` 渐变 + sticky 表头
+  - 明细表超期行 3px 红色竖条 + brand 渐变分页器
+  - 图表配色换 `['#3b82f6','#10b981','#06b6d4','#f59e0b','#8b5cf6','#ef4444']`
+- **等高修复**：第 1 排 6 卡实测由 227/275 不齐 → **全部 275px**（`grid-auto-rows:1fr`）
+- 明暗两套完整适配（含 Modal / Drawer / Popover / 日历 / Tooltip）
+
+### 2. 标题栏 + 筛选区合并为 1 行
+
+新增 `frontend/src/pages/dashboard/TopBar.tsx`：
+
+- **单行 sticky 顶栏**（61px 高）：毛玻璃 `backdrop-filter: saturate(200%) blur(18px)` + 底部 1px 分隔
+- 左：LOGO + 标题 + 同步时间（绿点脉冲，刷新时呼吸动画）
+- 中：6 个筛选按钮，**32px 高 / 9px 圆角 / 12.5px 字号 / 内联 SVG 图标**（替换 antd 图标）
+- 右：5 个 32×32 图标按钮
+- 刷新时顶栏底部有滑动进度条
+- 窄屏筛选条横向滚动不撑破页面
+
+**修复的 2 个真实缺陷**：
+
+1. **sticky 失效**：`board-root` 上设了 `overflowX:hidden` 使其成为滚动容器，`position:sticky` 完全失效。
+   改为不在根节点设 overflow，裁剪下移到 `.board-content`。实测滚动 900px 后 `barTop=0`。
+2. **375px 横向溢出 21px**：顶栏负 margin 撑宽父容器（379 vs 375）。补 `width: calc(100% + 40px)` + `boxSizing:border-box` + `overflowX:clip`。实测 `docSW=375=vw`。
+
+### 3. 报表设计器重构为「看板式」
+
+原设计器只能配「一个数据集 + 一个图表」。重构为**多卡片组合式看板设计器**。
+
+**数据模型**（存进报表现有 `config`，不新增数据库列）：
+```ts
+DashboardConfig { version: 2, mode: 'dashboard', title, subtitle, datasetId,
+                  filters?, widgets: DashboardWidget[], theme? }
+DashboardWidget { id, type, title, span(12栅格), height, datasetId?,
+                  metric, metrics, dimension, agg, chart?, columns? }
+WidgetType = kpi|donut|semiGauge|progress|flowMap|rank|bar|stackBar|line|combo|pie|heatmap|table|text
+```
+
+**新增文件**：
+- `components/DashboardRenderer.tsx` —— 按 widget.type 分发渲染，含单卡错误边界（一张卡崩不影响整页）
+- `components/dash-widgets/` —— **14 种 widget** 各一个文件 + `shared.tsx`（CardShell / 主题 / hover CSS）
+
+**设计器三栏**（`pages/reports/Design.tsx` 重写）：
+- 左栏 240px：组件库按「基础 / 图表 / 表格与文本」分组，15 项
+- 中栏：画布，12 栅格刻度参考，卡片可点击选中（品牌色描边）、↑↓ 调序、✕ 删除
+- 右栏 320px：选中 → 卡片属性（标题/类型/宽度/高度/主指标/多指标/分组维度/聚合方式）；未选中 → 全局设置
+- 顶部工具条：报表名 + 模板下拉 + 导出/导入 JSON + 重新加载 + 预览 + 保存
+- 空画布引导 + **3 套模板**（中康客户看板 / 销售经营看板 / 空白）
+- 属性改动实时反映到画布；未保存有标记 + 离开拦截
+- **兼容**：`config` 无 `mode:'dashboard'` 时旧报表仍走原单图表逻辑
+
+**View 页**：`isDashboardConfig()` 判定后走 `DashboardRenderer`，否则旧逻辑。
+
+### 验证
+
+| 测试 | 结果 |
+|---|---|
+| 顶栏合并（CDP 浏览器，30 项） | **30 / 30** |
+| 报表设计器三栏（23 项） | **23 / 23** |
+| 数值数据集端到端（13 项） | **13 / 13** |
+| **合计** | **66 / 66** |
+| `npx tsc --noEmit` | exit 0 |
+| `npm run build` | 通过（11.16s） |
+
+关键实测：
+- 顶栏单行「中心偏差 0px」、sticky 滚动后 `barTop=0`、1920/1440/1280/375 四档均**无横向溢出**
+- 设计器三栏实测 `240px 808px 320px`，点击组件卡片数 0→1→2，删除 2→1，改标题实时生效
+- 端到端：建带数值列的 SQL 数据集 → 5 卡片看板 → 预览页 **2 个 canvas 逐像素采样均非空**，KPI 显示「门店总数 1.21万」+ 南北区拆分
+- 保存后重载配置不丢（6 个卡片 / 5 个卡片往返验证）
+
+### 文档
+
+- 新增 `_work/V6-CONTRACT.md`：设计令牌、组件规范、合并布局、DashboardConfig 模型、文件归属
+
+---
+
 ## [5.0.0] - 2026-10-30
 
 ### 新增：中康智能体客户看板（`/dashboard/board`）

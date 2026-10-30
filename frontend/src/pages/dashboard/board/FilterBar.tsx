@@ -6,8 +6,7 @@
  */
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  Badge, Button, Calendar, Checkbox, DatePicker, Divider, Drawer, Empty, Input, Modal,
-  Space, Tooltip,
+  Badge, Button, Calendar, Checkbox, DatePicker, Divider, Drawer, Empty, Input, Modal,  Space, Tooltip,
 } from 'antd';
 import {
   CalendarOutlined, CloseOutlined, EnvironmentOutlined, FilterOutlined,
@@ -20,6 +19,77 @@ import type {
 } from '@/api/crm-board';
 
 const { RangePicker } = DatePicker;
+
+/* ══════════════ V6.0 紧凑顶栏样式（参考 zk2.zhengl.vip/pc4.html）══════════════ */
+
+/** 筛选按钮基础样式：32px 高、9px 圆角、描边幽灵按钮 */
+const BTN_BASE: React.CSSProperties = {
+  height: 32,
+  padding: '0 12px',
+  borderRadius: 9,
+  border: '1px solid var(--line)',
+  background: 'var(--panel2)',
+  color: 'var(--text2)',
+  fontSize: 12.5,
+  fontWeight: 550,
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 6,
+  cursor: 'pointer',
+  transition: 'all .15s',
+  userSelect: 'none',
+  whiteSpace: 'nowrap',
+  lineHeight: 1,
+};
+
+/** 已激活：品牌渐变实心 */
+const BTN_ON: React.CSSProperties = {
+  ...BTN_BASE,
+  background: 'linear-gradient(135deg, var(--brand), var(--brand2))',
+  borderColor: 'transparent',
+  color: '#fff',
+  boxShadow: '0 3px 9px color-mix(in srgb, var(--brand) 28%, transparent)',
+};
+
+/** 计数徽标 */
+function CountBadge({ n, on }: { n: number; on?: boolean }) {
+  return (
+    <span
+      style={{
+        fontSize: 10,
+        fontWeight: 700,
+        padding: '0 5px',
+        borderRadius: 6,
+        lineHeight: '15px',
+        background: on ? 'rgba(255,255,255,.26)' : 'var(--brandSoft)',
+        color: on ? '#fff' : 'var(--brand)',
+      }}
+    >
+      {n}
+    </span>
+  );
+}
+
+/** 内联 SVG 图标（16px，stroke 风格，与参考站一致） */
+const Svg = ({ d, extra }: { d: string; extra?: React.ReactNode }) => (
+  <svg
+    width="15" height="15" viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+    style={{ flexShrink: 0 }}
+  >
+    <path d={d} />
+    {extra}
+  </svg>
+);
+
+const ICON = {
+  calendar: <Svg d="M3 10h18M7 3v3M17 3v3M5 5h14a2 2 0 012 2v13a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />,
+  region: <><Svg d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1116 0z" /><circle cx="12" cy="10" r="3" fill="none" stroke="currentColor" strokeWidth="2" /></>,
+  type: <Svg d="M3 21h18M5 21V8l7-4 7 4v13M9 21v-6h6v6" />,
+  sales: <><Svg d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" fill="none" stroke="currentColor" strokeWidth="2" /></>,
+  filter: <Svg d="M3 5h18l-7 8v6l-4-2v-4L3 5z" />,
+  reset: <Svg d="M3 12a9 9 0 109-9 9 9 0 00-6.36 2.64L3 8M3 3v5h5" />,
+};
 
 interface Props {
   filters: BoardFilters;
@@ -149,28 +219,21 @@ function MultiSelect({
 
   return (
     <>
-      <Button
-        icon={icon}
+      <button
+        type="button"
         onClick={openPanel}
-        style={{
-          borderColor: active ? 'var(--primary)' : 'var(--border)',
-          color: active ? 'var(--primary)' : 'var(--text-main)',
-          background: active ? 'var(--bg-card-2)' : 'var(--bg-card)',
-          fontWeight: active ? 600 : 400,
+        style={active ? BTN_ON : BTN_BASE}
+        onMouseEnter={(e) => {
+          if (!active) { e.currentTarget.style.borderColor = 'var(--brand3)'; e.currentTarget.style.color = 'var(--brand)'; }
+        }}
+        onMouseLeave={(e) => {
+          if (!active) { e.currentTarget.style.borderColor = 'var(--line)'; e.currentTarget.style.color = 'var(--text2)'; }
         }}
       >
-        {multiLabel(values, allLabel)}
-        {active && (
-          <span
-            style={{
-              marginLeft: 6, fontSize: 11, padding: '0 5px', borderRadius: 8,
-              background: 'var(--primary)', color: '#fff', lineHeight: '16px',
-            }}
-          >
-            {values.length}
-          </span>
-        )}
-      </Button>
+        {icon}
+        <span>{multiLabel(values, allLabel)}</span>
+        {active && <CountBadge n={values.length} on />}
+      </button>
 
       <Modal
         title={
@@ -334,18 +397,20 @@ function DateFilter({ filters, onChange, isMobile }: {
 
   return (
     <>
-      <Button
-        icon={<CalendarOutlined />}
+      <button
+        type="button"
         onClick={openPanel}
-        style={{
-          borderColor: active ? 'var(--primary)' : 'var(--border)',
-          color: active ? 'var(--primary)' : 'var(--text-main)',
-          background: active ? 'var(--bg-card-2)' : 'var(--bg-card)',
-          fontWeight: active ? 600 : 400,
+        style={active ? BTN_ON : BTN_BASE}
+        onMouseEnter={(e) => {
+          if (!active) { e.currentTarget.style.borderColor = 'var(--brand3)'; e.currentTarget.style.color = 'var(--brand)'; }
+        }}
+        onMouseLeave={(e) => {
+          if (!active) { e.currentTarget.style.borderColor = 'var(--line)'; e.currentTarget.style.color = 'var(--text2)'; }
         }}
       >
-        {label}
-      </Button>
+        {ICON.calendar}
+        <span>{label}</span>
+      </button>
 
       <Modal
         title={<Space size={6}><CalendarOutlined /><span>日期筛选</span></Space>}
@@ -497,20 +562,21 @@ function AllFilters({ filters, onChange, options, counts }: AllFilterProps) {
 
   return (
     <>
-      <Badge count={activeCount} size="small" offset={[-2, 2]}>
-        <Button
-          icon={<FilterOutlined />}
-          onClick={openPanel}
-          style={{
-            borderColor: activeCount ? 'var(--primary)' : 'var(--border)',
-            color: activeCount ? 'var(--primary)' : 'var(--text-main)',
-            background: activeCount ? 'var(--bg-card-2)' : 'var(--bg-card)',
-            fontWeight: activeCount ? 600 : 400,
-          }}
-        >
-          {activeCount ? `全部筛选条件 +${activeCount}` : '全部筛选条件'}
-        </Button>
-      </Badge>
+      <button
+        type="button"
+        onClick={openPanel}
+        style={activeCount ? BTN_ON : BTN_BASE}
+        onMouseEnter={(e) => {
+          if (!activeCount) { e.currentTarget.style.borderColor = 'var(--brand3)'; e.currentTarget.style.color = 'var(--brand)'; }
+        }}
+        onMouseLeave={(e) => {
+          if (!activeCount) { e.currentTarget.style.borderColor = 'var(--line)'; e.currentTarget.style.color = 'var(--text2)'; }
+        }}
+      >
+        {ICON.filter}
+        <span>{activeCount ? `全部条件` : '全部筛选条件'}</span>
+        {activeCount > 0 && <CountBadge n={activeCount} on />}
+      </button>
 
       <Drawer
         title="全部筛选条件"
@@ -615,12 +681,17 @@ export default function FilterBar({
     <div
       style={{
         display: 'flex',
-        flexWrap: isMobile ? 'nowrap' : 'wrap',
+        flexWrap: 'nowrap',
         gap: 8,
         alignItems: 'center',
-        overflowX: isMobile ? 'auto' : 'visible',
-        paddingBottom: isMobile ? 4 : 0,
+        // 窄屏横向滚动而不是撑爆顶栏
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        minWidth: 0,
+        // 隐藏滚动条（视觉更干净）
+        scrollbarWidth: 'none',
       }}
+      className="board-filterbar"
     >
       {/* 1. 日期 */}
       <DateFilter filters={filters} onChange={onChange} isMobile={isMobile} />
@@ -628,48 +699,33 @@ export default function FilterBar({
       {/* 2. 区域 */}
       <MultiSelect
         label="区域"
-        icon={<EnvironmentOutlined />}
+        icon={ICON.region}
         values={filters.regions}
         options={options.regions}
         counts={counts.region}
         onApply={(v) => onChange({ regions: v })}
       />
-      {regionActive && regionCount !== undefined && (
-        <span style={{ fontSize: 12, color: 'var(--text-sub)', whiteSpace: 'nowrap' }}>
-          {regionCount} 家
-        </span>
-      )}
 
       {/* 3. 连锁类型 */}
       <MultiSelect
         label="连锁类型"
-        icon={<ShopOutlined />}
+        icon={ICON.type}
         values={filters.chainTypes}
         options={options.chainTypes}
         counts={counts.chainType}
         onApply={(v) => onChange({ chainTypes: v })}
       />
-      {typeActive && typeCount !== undefined && (
-        <span style={{ fontSize: 12, color: 'var(--text-sub)', whiteSpace: 'nowrap' }}>
-          {typeCount} 家
-        </span>
-      )}
 
       {/* 4. 销售 */}
       <MultiSelect
         label="销售"
-        icon={<TeamOutlined />}
+        icon={ICON.sales}
         values={filters.sales}
         options={options.sales}
         counts={counts.sales}
         onApply={(v) => onChange({ sales: v })}
         searchable
       />
-      {salesActive && salesCount !== undefined && (
-        <span style={{ fontSize: 12, color: 'var(--text-sub)', whiteSpace: 'nowrap' }}>
-          {salesCount} 家
-        </span>
-      )}
 
       {/* 5. 全部筛选条件 */}
       <AllFilters
@@ -681,14 +737,29 @@ export default function FilterBar({
 
       {/* 6. 重置 */}
       <Tooltip title="清空所有筛选条件">
-        <Button
-          icon={<ReloadOutlined />}
+        <button
+          type="button"
           onClick={onReset}
           disabled={!anyActive}
-          style={{ borderColor: 'var(--border)', color: 'var(--text-main)' }}
+          style={{
+            ...BTN_BASE,
+            opacity: anyActive ? 1 : 0.45,
+            cursor: anyActive ? 'pointer' : 'not-allowed',
+          }}
+          onMouseEnter={(e) => {
+            if (!anyActive) return;
+            e.currentTarget.style.borderColor = 'var(--brand3)';
+            e.currentTarget.style.color = 'var(--brand)';
+          }}
+          onMouseLeave={(e) => {
+            if (!anyActive) return;
+            e.currentTarget.style.borderColor = 'var(--line)';
+            e.currentTarget.style.color = 'var(--text2)';
+          }}
         >
-          重置
-        </Button>
+          {ICON.reset}
+          <span>重置</span>
+        </button>
       </Tooltip>
     </div>
   );

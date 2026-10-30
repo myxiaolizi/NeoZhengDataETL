@@ -1,27 +1,15 @@
-/** 第 6 排右：流程推进（最近 5 个工作日）
+/** 第 6 排右：流程推进（最近 5 个工作日）— V6.0 视觉升级
  *
- * 呈现：
- *  - 热力矩阵（HTML table）：行 = 9 个流程节点，列 = 最近 5 个工作日
- *    单元格背景按值映射到主色梯度 rgba(54,135,255, alpha)，alpha = v/max*0.85 + 0.06
- *    0 值单元格用浅灰 rgba(181,181,182,.12)
- *  - 底部 3 个 Statistic：有开通策略的客户数（合计 / 南区 / 北区）
- *
- * 数据：data.row6.flowProgress（days / nodes / matrix[nodeIdx][dayIdx]）、data.row6.strategyClients
- * 口径见 _work/V5-CONTRACT.md §四 第 6 排。
+ * 呈现（口径不变）：
+ *  - 热力矩阵：行 = 9 个流程节点，列 = 最近 5 个工作日
+ *    单元格背景 color-mix(in srgb, var(--brand) N%, transparent)，0 值 var(--panel2)
+ *    表头 sticky 吸顶
+ *  - 底部 3 个指标：有开通策略客户数（合计 / 南区 var(--brand) / 北区 var(--cyan)）
  */
 import React, { useMemo } from 'react';
-import { Card, Empty, Statistic } from 'antd';
+import { Empty } from 'antd';
 import type { BoardData } from '@/api/crm-board';
-
-const C_SOUTH = '#45B4FF';
-const C_NORTH = '#FFC000';
-const C_MAIN = '#3687FF';
-const C_GRAY = 'rgba(181,181,182,.12)';
-
-/** 契约 §7.2：CSS 变量优先；变量未注入时回退 antd v6 主题变量，保证明暗都可读 */
-const T_MAIN = 'var(--text-main, var(--ant-color-text, #003378))';
-const T_SUB = 'var(--text-sub, var(--ant-color-text-secondary, rgba(0,51,120,.66)))';
-const BORDER = 'var(--border, var(--ant-color-border, rgba(54,135,255,.28)))';
+import { fmtNum } from './theme';
 
 export interface FlowProgressProps {
   data: BoardData;
@@ -34,21 +22,56 @@ function num(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** 热力色：v=0 → 浅灰；否则主色 alpha 梯度 */
-function heatBg(v: number, max: number): string {
-  if (!v || v <= 0) return C_GRAY;
+/** 热力强度：0~100（用于 color-mix 百分比） */
+function heatPct(v: number, max: number): number {
+  if (!v || v <= 0) return 0;
   const ratio = max > 0 ? v / max : 0;
-  const alpha = Math.min(ratio * 0.85 + 0.06, 0.95);
-  return `rgba(54,135,255,${alpha.toFixed(3)})`;
+  return Math.round(8 + Math.min(1, ratio) * 82); // 8% ~ 90%
 }
 
-/** 单元格文字色：背景够深时用白色 */
-function heatFg(v: number, max: number): string {
-  if (!v || v <= 0) return T_SUB;
-  const ratio = max > 0 ? v / max : 0;
-  const alpha = Math.min(ratio * 0.85 + 0.06, 0.95);
-  return alpha >= 0.5 ? '#FFFFFF' : T_MAIN;
+/* ══════════════ 局部样式（vb8- 前缀） ══════════════ */
+const CSS = `
+.vb8-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;height:100%;min-width:0}
+.vb8-card:hover{border-color:var(--brand3);box-shadow:var(--shadow2);transform:translateY(-1px)}
+.vb8-h{padding:13px 16px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent)}
+.vb8-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
+.vb8-dot{width:6px;height:6px;border-radius:2px;background:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 16%,transparent);flex-shrink:0}
+.vb8-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap}
+.vb8-b{padding:14px 16px;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
+
+.vb8-scroll{width:100%;overflow:auto;max-height:296px;border-radius:10px;background:var(--panel);min-width:0}
+.vb8-tbl{width:100%;border-collapse:separate;border-spacing:3px;font-variant-numeric:tabular-nums}
+.vb8-tbl thead th{
+  position:sticky;top:0;z-index:3;
+  padding:5px 6px;font-size:11px;font-weight:650;color:var(--text3);
+  background:var(--panel2);text-align:center;white-space:nowrap;
+  border-radius:6px;
 }
+.vb8-tbl thead th.first{text-align:left;padding-left:8px}
+.vb8-tbl thead th.tot{color:var(--brand)}
+.vb8-tbl tbody th{
+  padding:5px 8px;font-size:11.5px;font-weight:600;color:var(--text);text-align:left;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:86px;
+  background:var(--panel2);border-radius:6px;position:sticky;left:0;z-index:2;
+}
+.vb8-cell{
+  padding:6px 4px;text-align:center;font-size:11.5px;font-weight:700;
+  border-radius:6px;transition:background .2s ease;min-width:34px;
+}
+.vb8-cell.zero{background:var(--panel2);color:var(--text3);font-weight:500}
+.vb8-cell.tot{background:transparent;color:var(--brand);font-weight:750}
+.vb8-tbl tbody tr.sum th,.vb8-tbl tbody tr.sum td{font-weight:750}
+.vb8-tbl tbody tr.sum th{color:var(--text2);font-size:11px}
+.vb8-tbl tbody tr.sum td.tot{color:var(--brand)}
+
+.vb8-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}
+.vb8-stat{min-width:0;text-align:center;padding:6px 4px;border-radius:var(--radius-sm);background:var(--panel2);border:1px solid var(--line);transition:all .15s}
+.vb8-stat:hover{border-color:var(--line2)}
+.vb8-stat .t{font-size:10.5px;color:var(--text3);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;justify-content:center;gap:4px}
+.vb8-stat .t .d{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.vb8-stat .v{font-size:17px;font-weight:750;font-variant-numeric:tabular-nums;line-height:1.2;margin-top:2px}
+.vb8-empty{padding:36px 0}
+`;
 
 export default function FlowProgress({ data, loading, isMobile }: FlowProgressProps) {
   const fp = data?.row6?.flowProgress;
@@ -63,10 +86,7 @@ export default function FlowProgress({ data, loading, isMobile }: FlowProgressPr
       return days.map((__, ci) => num(src[ci]));
     });
     let mx = 0;
-    const rowT = rows.map((r) => {
-      const s = r.reduce((a, b) => a + b, 0);
-      return s;
-    });
+    const rowT = rows.map((r) => r.reduce((a, b) => a + b, 0));
     const colT = days.map((__, ci) => rows.reduce((a, r) => a + num(r[ci]), 0));
     rows.forEach((r) => r.forEach((v) => { if (v > mx) mx = v; }));
     return { grid: rows, max: mx, rowTotals: rowT, colTotals: colT };
@@ -75,125 +95,88 @@ export default function FlowProgress({ data, loading, isMobile }: FlowProgressPr
   // 只要有节点/日期就画矩阵（全 0 时就是一片浅灰，比 Empty 更如实）
   const hasData = days.length > 0 && nodes.length > 0;
 
-  const cellStyle: React.CSSProperties = {
-    padding: isMobile ? '5px 2px' : '6px 4px',
-    textAlign: 'center',
-    fontSize: isMobile ? 11 : 12,
-    fontWeight: 600,
-    border: `1px solid ${BORDER}`,
-    borderRadius: 4,
-    transition: 'background .2s',
-  };
-
-  const headStyle: React.CSSProperties = {
-    padding: isMobile ? '4px 2px' : '4px 6px',
-    textAlign: 'center',
-    fontSize: isMobile ? 10.5 : 12,
-    fontWeight: 500,
-    color: T_SUB,
-    whiteSpace: 'nowrap',
-  };
-
-  const nodeStyle: React.CSSProperties = {
-    padding: isMobile ? '5px 4px' : '6px 8px',
-    fontSize: isMobile ? 11 : 12.5,
-    color: T_MAIN,
-    whiteSpace: 'nowrap',
-    maxWidth: isMobile ? 62 : 92,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  };
-
   const stats = [
-    { title: '有开通策略客户数', value: sc?.total ?? 0, color: T_MAIN },
-    { title: '南区', value: sc?.south ?? 0, color: C_SOUTH },
-    { title: '北区', value: sc?.north ?? 0, color: C_NORTH },
+    { title: '有开通策略', value: sc?.total ?? 0, color: 'var(--text)', dot: 'var(--purple)' },
+    { title: '南区', value: sc?.south ?? 0, color: 'var(--brand)', dot: 'var(--brand)' },
+    { title: '北区', value: sc?.north ?? 0, color: 'var(--cyan)', dot: 'var(--cyan)' },
   ];
 
   return (
-    <Card
-      variant="outlined"
-      loading={loading && !nodes.length}
-      style={{ background: 'var(--bg-card, var(--ant-color-bg-container, #FFFFFF))', border: `1px solid ${BORDER}`, borderRadius: 12, height: '100%' }}
-      styles={{ body: { padding: isMobile ? 12 : 16 } }}
-      title={<span style={{ fontSize: 14, fontWeight: 600, color: T_MAIN }}>流程推进</span>}
-      extra={<span style={{ fontSize: 12, color: T_SUB }}>最近 5 个工作日</span>}
-    >
-      {!hasData ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无流程推进数据" style={{ padding: '40px 0' }} />
-      ) : (
-        <div style={{ width: '100%', overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 3, tableLayout: 'auto' }}>
-            <thead>
-              <tr>
-                <th style={{ ...headStyle, textAlign: 'left', paddingLeft: 0 }}>节点</th>
-                {days.map((d) => (
-                  <th key={d} style={headStyle}>{d}</th>
-                ))}
-                <th style={{ ...headStyle, color: C_MAIN }}>合计</th>
-              </tr>
-            </thead>
-            <tbody>
-              {nodes.map((node, ri) => (
-                <tr key={node}>
-                  <td style={nodeStyle} title={node}>{node}</td>
-                  {days.map((d, ci) => {
-                    const v = num(grid[ri]?.[ci]);
-                    return (
-                      <td
-                        key={`${node}-${d}`}
-                        style={{
-                          ...cellStyle,
-                          background: heatBg(v, max),
-                          color: heatFg(v, max),
-                        }}
-                      >
-                        {v || 0}
-                      </td>
-                    );
-                  })}
-                  <td style={{ ...cellStyle, background: 'transparent', color: C_MAIN }}>{rowTotals[ri] || 0}</td>
-                </tr>
-              ))}
-              <tr>
-                <td style={{ ...nodeStyle, color: T_SUB, fontSize: isMobile ? 10.5 : 12 }}>当日合计</td>
-                {colTotals.map((v, ci) => (
-                  <td
-                    key={`sum-${ci}`}
-                    style={{ ...cellStyle, background: 'transparent', color: C_MAIN, borderStyle: 'dashed' }}
-                  >
-                    {v || 0}
-                  </td>
-                ))}
-                <td style={{ ...cellStyle, background: 'transparent', color: C_MAIN }}>
-                  {colTotals.reduce((a, b) => a + b, 0)}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+    <>
+      <style>{CSS}</style>
+      <div className="vb8-card">
+        <div className="vb8-h">
+          <h3>
+            <span className="vb8-dot" />
+            流程推进
+          </h3>
+          <span className="vb8-hint">最近 5 个工作日</span>
         </div>
-      )}
+        <div className="vb8-b">
+          {!hasData ? (
+            <div className="vb8-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无流程推进数据" /></div>
+          ) : (
+            <div className="vb8-scroll">
+              <table className="vb8-tbl">
+                <thead>
+                  <tr>
+                    <th className="first">节点</th>
+                    {days.map((d) => <th key={d}>{d}</th>)}
+                    <th className="tot">合计</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {nodes.map((node, ri) => (
+                    <tr key={node}>
+                      <th title={node}>{node}</th>
+                      {days.map((d, ci) => {
+                        const v = num(grid[ri]?.[ci]);
+                        const pct = heatPct(v, max);
+                        const deep = pct >= 52;
+                        return (
+                          <td
+                            key={`${node}-${d}`}
+                            className={`vb8-cell${v <= 0 ? ' zero' : ''}`}
+                            style={v > 0
+                              ? {
+                                background: `color-mix(in srgb, var(--brand) ${pct}%, transparent)`,
+                                color: deep ? '#fff' : 'var(--text)',
+                              }
+                              : undefined}
+                            title={`${node} · ${d}：${v}`}
+                          >
+                            {v || 0}
+                          </td>
+                        );
+                      })}
+                      <td className="vb8-cell tot">{fmtNum(rowTotals[ri] || 0)}</td>
+                    </tr>
+                  ))}
+                  <tr className="sum">
+                    <th>当日合计</th>
+                    {colTotals.map((v, ci) => (
+                      <td key={`sum-${ci}`} className="vb8-cell tot">{fmtNum(v || 0)}</td>
+                    ))}
+                    <td className="vb8-cell tot">{fmtNum(colTotals.reduce((a, b) => a + b, 0))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          )}
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobile ? 'repeat(3, 1fr)' : 'repeat(3, 1fr)',
-          gap: 8,
-          marginTop: 12,
-          paddingTop: 12,
-          borderTop: `1px solid ${BORDER}`,
-        }}
-      >
-        {stats.map((s) => (
-          <div key={s.title} style={{ minWidth: 0, textAlign: 'center' }}>
-            <Statistic
-              title={<span style={{ fontSize: isMobile ? 11 : 12, color: T_SUB }}>{s.title}</span>}
-              value={num(s.value)}
-              valueStyle={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: s.color, lineHeight: 1.3 }}
-            />
+          <div className="vb8-stats">
+            {stats.map((s) => (
+              <div key={s.title} className="vb8-stat">
+                <div className="t">
+                  <span className="d" style={{ background: s.dot }} />
+                  {s.title}
+                </div>
+                <div className="v" style={{ color: s.color }}>{fmtNum(num(s.value))}</div>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
       </div>
-    </Card>
+    </>
   );
 }

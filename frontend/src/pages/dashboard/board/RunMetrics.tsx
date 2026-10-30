@@ -1,28 +1,15 @@
-/** 第 7 排：客户运行情况（5 组指标，每组都含 合计 / 南区 / 北区）
+/** 第 7 排：客户运行情况（5 组指标，每组含 合计 / 南区 / 北区）— V6.0 视觉升级
  *
- * 数据：data.row7
- *  1) openedStrategy  有开通策略连锁数 + 策略数   (ChainStrategyMetric)
- *  2) runningStrategy 有运行策略连锁数 + 策略数   (ChainStrategyMetric)
- *  3) reachRate / couponRate  触达到店率 + 优惠券核销率  (RateMetric, 0~1 → fmtPct)
- *  4) conversion  转化销售额 (AmountMetric) + 人均转化销售 (perCapita)
- *  5) people  触达人数 + 优惠券发放人数 (PeopleMetric)
- *
- * 口径见 _work/V5-CONTRACT.md §3.2 第 11~13 条。
+ * 数据与口径不变：data.row7
+ *  1) openedStrategy  2) runningStrategy  3) reachRate / couponRate
+ *  4) conversion      5) people
+ * 视觉对齐 pc4.html：每组一张小卡（内部 panel2 底 + line 描边），
+ * 表头行 合计 / 南区 / 北区；南区 var(--brand)、北区 var(--cyan)；数字 tabular-nums。
  */
 import React, { useMemo } from 'react';
-import { Card, Empty } from 'antd';
+import { Empty } from 'antd';
 import type { BoardData, MetricPair, Row7Data } from '@/api/crm-board';
 import { fmtMoney, fmtNum, fmtPct } from './theme';
-
-const C_SOUTH = '#45B4FF';
-const C_NORTH = '#FFC000';
-
-/** 契约 §7.2：CSS 变量优先；变量未注入时回退 antd v6 主题变量，保证明暗都可读 */
-const T_MAIN = 'var(--text-main, var(--ant-color-text, #003378))';
-const T_SUB = 'var(--text-sub, var(--ant-color-text-secondary, rgba(0,51,120,.66)))';
-const BORDER = 'var(--border, var(--ant-color-border, rgba(54,135,255,.28)))';
-const BG_CARD = 'var(--bg-card, var(--ant-color-bg-container, #FFFFFF))';
-const BG_SUB = 'var(--bg-card-2, var(--ant-color-fill-quaternary, rgba(54,135,255,.035)))';
 
 export interface RunMetricsProps {
   data: BoardData;
@@ -62,6 +49,40 @@ function format(v: number, fmt: Fmt): string {
   return fmtNum(v);
 }
 
+/* ══════════════ 局部样式（vb9- 前缀） ══════════════ */
+const CSS = `
+.vb9-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;height:100%;min-width:0}
+.vb9-card:hover{border-color:var(--brand3);box-shadow:var(--shadow2);transform:translateY(-1px)}
+.vb9-h{padding:13px 16px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent)}
+.vb9-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
+.vb9-dot{width:6px;height:6px;border-radius:2px;background:var(--cyan);box-shadow:0 0 0 3px color-mix(in srgb,var(--cyan) 16%,transparent);flex-shrink:0}
+.vb9-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap}
+.vb9-b{padding:14px 16px;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
+
+.vb9-grid{display:grid;gap:12px;grid-template-columns:repeat(5,minmax(0,1fr))}
+@media(max-width:1400px){.vb9-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:900px){.vb9-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:560px){.vb9-grid{grid-template-columns:1fr}}
+
+.vb9-grp{background:var(--panel2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:11px 12px;min-width:0;display:flex;flex-direction:column;transition:all .18s}
+.vb9-grp:hover{border-color:var(--brand3);background:var(--brandSoft)}
+.vb9-grp .gt{font-size:12.5px;font-weight:680;color:var(--text);line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vb9-grp .gh{font-size:10px;color:var(--text3);font-weight:550;margin-top:1px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.vb9-rows{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,.82fr) minmax(0,.82fr);column-gap:6px;margin-top:9px}
+.vb9-th{font-size:10.5px;color:var(--text3);font-weight:600;padding:2px 0;text-align:right;white-space:nowrap}
+.vb9-th.l{text-align:left}
+.vb9-th.s{color:var(--brand)}
+.vb9-th.n{color:var(--cyan)}
+.vb9-lb{font-size:11.5px;color:var(--text2);padding:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vb9-v{font-size:12.5px;font-weight:700;color:var(--text);padding:3px 0;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.vb9-v.t{font-size:13px;font-weight:750}
+.vb9-v.s{color:var(--brand)}
+.vb9-v.n{color:var(--cyan)}
+.vb9-divider{grid-column:1/-1;height:1px;background:var(--line2);margin:2px 0}
+.vb9-empty{padding:34px 0}
+`;
+
 export default function RunMetrics({ data, loading, isMobile }: RunMetricsProps) {
   const r7 = data?.row7 as Row7Data | undefined;
 
@@ -87,141 +108,80 @@ export default function RunMetrics({ data, loading, isMobile }: RunMetricsProps)
         key: 'opened',
         title: '有开通策略',
         hint: '开通策略数 > 0 的连锁',
-        lines: [
-          mk('连锁数', openedChains, 'num'),
-          mk('策略数', openedStrats, 'num'),
-        ],
+        lines: [mk('连锁数', openedChains, 'num'), mk('策略数', openedStrats, 'num')],
       },
       {
         key: 'running',
         title: '有运行策略',
         hint: '运行策略数 > 0 的连锁',
-        lines: [
-          mk('连锁数', runChains, 'num'),
-          mk('策略数', runStrats, 'num'),
-        ],
+        lines: [mk('连锁数', runChains, 'num'), mk('策略数', runStrats, 'num')],
       },
       {
         key: 'rate',
         title: '到店率 / 核销率',
         hint: '到店÷发送 · 用券÷发券',
-        lines: [
-          mk('触达到店率', reach, 'pct'),
-          mk('优惠券核销率', coupon, 'pct'),
-        ],
+        lines: [mk('触达到店率', reach, 'pct'), mk('优惠券核销率', coupon, 'pct')],
       },
       {
         key: 'conversion',
         title: '转化销售',
         hint: '销售额 ÷ 到店人数',
-        lines: [
-          mk('转化销售额', conv, 'money'),
-          mk('人均转化销售', perCapita, 'money'),
-        ],
+        lines: [mk('转化销售额', conv, 'money'), mk('人均转化销售', perCapita, 'money')],
       },
       {
         key: 'people',
         title: '触达 / 发券人数',
         hint: '发送人数与发券人数',
-        lines: [
-          mk('触达人数', reached, 'num'),
-          mk('优惠券发放人数', couponIssued, 'num'),
-        ],
+        lines: [mk('触达人数', reached, 'num'), mk('优惠券发放人数', couponIssued, 'num')],
       },
     ];
   }, [r7]);
 
-  const headCell: React.CSSProperties = {
-    fontSize: isMobile ? 11 : 11.5,
-    color: T_SUB,
-    fontWeight: 500,
-    padding: '2px 0',
-    textAlign: 'right',
-    whiteSpace: 'nowrap',
-  };
-  const labelCell: React.CSSProperties = {
-    fontSize: isMobile ? 12 : 12.5,
-    color: T_SUB,
-    padding: '3px 0',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-  };
-  const valCell = (color: string, strong = false): React.CSSProperties => ({
-    fontSize: strong ? (isMobile ? 14 : 15) : (isMobile ? 12.5 : 13),
-    fontWeight: strong ? 700 : 600,
-    color,
-    padding: '3px 0',
-    textAlign: 'right',
-    whiteSpace: 'nowrap',
-    fontVariantNumeric: 'tabular-nums',
-  });
-
   const hasData = groups.length > 0;
 
   return (
-    <Card
-      variant="outlined"
-      loading={loading && !r7}
-      style={{ background: BG_CARD, border: `1px solid ${BORDER}`, borderRadius: 12, height: '100%' }}
-      styles={{ body: { padding: isMobile ? 12 : 16 } }}
-      title={<span style={{ fontSize: 14, fontWeight: 600, color: T_MAIN }}>客户运行情况</span>}
-      extra={<span style={{ fontSize: 12, color: T_SUB }}>汇总 · 南区 · 北区</span>}
-    >
-      {!hasData ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无运行数据" style={{ padding: '48px 0' }} />
-      ) : (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(196px, 1fr))',
-            gap: isMobile ? 8 : 12,
-          }}
-        >
-          {groups.map((g) => (
-            <div
-              key={g.key}
-              style={{
-                background: BG_SUB,
-                border: `1px solid ${BORDER}`,
-                borderRadius: 10,
-                padding: isMobile ? 10 : 12,
-                minWidth: 0,
-              }}
-            >
-              <div style={{ fontSize: isMobile ? 12.5 : 13, fontWeight: 600, color: T_MAIN, lineHeight: 1.4 }}>
-                {g.title}
-              </div>
-              {g.hint && (
-                <div style={{ fontSize: 10.5, color: T_SUB, marginTop: 1, lineHeight: 1.4 }}>{g.hint}</div>
-              )}
-
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, .8fr) minmax(0, .8fr)',
-                  columnGap: 6,
-                  marginTop: 8,
-                }}
-              >
-                <div style={{ ...headCell, textAlign: 'left' }}>指标</div>
-                <div style={headCell}>合计</div>
-                <div style={{ ...headCell, color: C_SOUTH }}>南区</div>
-                <div style={{ ...headCell, color: C_NORTH }}>北区</div>
-
-                {g.lines.map((ln) => (
-                  <React.Fragment key={ln.label}>
-                    <div style={labelCell} title={ln.label}>{ln.label}</div>
-                    <div style={valCell(T_MAIN, true)}>{format(ln.total, ln.fmt)}</div>
-                    <div style={valCell(C_SOUTH)}>{format(ln.south, ln.fmt)}</div>
-                    <div style={valCell(C_NORTH)}>{format(ln.north, ln.fmt)}</div>
-                  </React.Fragment>
-                ))}
-              </div>
-            </div>
-          ))}
+    <>
+      <style>{CSS}</style>
+      <div className="vb9-card">
+        <div className="vb9-h">
+          <h3>
+            <span className="vb9-dot" />
+            客户运行情况
+          </h3>
+          <span className="vb9-hint">汇总 · 南区 · 北区</span>
         </div>
-      )}
-    </Card>
+        <div className="vb9-b">
+          {!hasData ? (
+            <div className="vb9-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无运行数据" /></div>
+          ) : (
+            <div className="vb9-grid">
+              {groups.map((g) => (
+                <div key={g.key} className="vb9-grp">
+                  <div className="gt" title={g.title}>{g.title}</div>
+                  {g.hint && <div className="gh" title={g.hint}>{g.hint}</div>}
+
+                  <div className="vb9-rows">
+                    <div className="vb9-th l">指标</div>
+                    <div className="vb9-th">合计</div>
+                    <div className="vb9-th s">南区</div>
+                    <div className="vb9-th n">北区</div>
+                    <div className="vb9-divider" />
+
+                    {g.lines.map((ln) => (
+                      <React.Fragment key={ln.label}>
+                        <div className="vb9-lb" title={ln.label}>{ln.label}</div>
+                        <div className="vb9-v t">{format(ln.total, ln.fmt)}</div>
+                        <div className="vb9-v s">{format(ln.south, ln.fmt)}</div>
+                        <div className="vb9-v n">{format(ln.north, ln.fmt)}</div>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }

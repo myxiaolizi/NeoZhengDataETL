@@ -19,6 +19,22 @@
  *   DELETE /api/shares/:id              删除
  *   公开分享：后端暂无 JSON 接口，只有服务端渲染页 GET /s/:token（内嵌 ROWS/COLUMNS/REPORT）
  */
+import { createElement, type ReactNode } from 'react';
+import {
+  AppstoreOutlined,
+  AreaChartOutlined,
+  BarChartOutlined,
+  DashboardOutlined,
+  FontSizeOutlined,
+  FundOutlined,
+  LineChartOutlined,
+  NumberOutlined,
+  PieChartOutlined,
+  ShareAltOutlined,
+  SlidersOutlined,
+  TableOutlined,
+  TrophyOutlined,
+} from '@ant-design/icons';
 import { api, qs, ApiError } from '@/api/client';
 import type { EChartsOption } from 'echarts';
 import { CHART_COLORS, CHART_TEXT, CHART_SUB_TEXT, chartAxisStyle } from '@/components/Chart';
@@ -737,6 +753,329 @@ export function buildChartOption(
     categoryField: category,
   };
 }
+
+/* ══════════════════════════════════════════════════════════════
+ * V6.0 看板式报表（DashboardConfig）
+ *
+ * 契约来源：_work/V6-CONTRACT.md §4.2（数据模型写死，前后端共用）
+ * 存储位置：报表现有 config 字段（JSON），不新增数据库列
+ *   { version: 2, mode: 'dashboard', title, subtitle, datasetId,
+ *     filters: [], widgets: [], theme: { mode } }
+ * 本段为纯追加，未改动上方任何既有导出。
+ * ══════════════════════════════════════════════════════════════ */
+
+/** 看板卡片类型（14 种，见契约 §4.2） */
+export type WidgetType =
+  | 'kpi' // 大数字卡片（可带拆分）
+  | 'donut' // 圆环图（中心总数 + 图例）
+  | 'semiGauge' // 半圆进度
+  | 'progress' // 横向进度条组
+  | 'flowMap' // 横向流程节点链
+  | 'rank' // 排行榜（前 N + 奖牌 + 标签）
+  | 'bar' // 柱状图
+  | 'stackBar' // 堆叠柱
+  | 'line' // 折线
+  | 'combo' // 柱 + 线双轴
+  | 'pie' // 饼图
+  | 'heatmap' // 热力矩阵
+  | 'table' // 明细表
+  | 'text'; // 富文本/说明
+
+/** 12 栅格体系下的卡片宽度 */
+export type WidgetSpan = 3 | 4 | 6 | 8 | 12;
+
+/** 聚合方式 */
+export type WidgetAgg = 'sum' | 'count' | 'avg' | 'max' | 'min';
+
+/** 看板全局筛选器定义 */
+export interface DashboardFilterDef {
+  /** date / region / chainType / sales ... */
+  key: string;
+  /** 显示名 */
+  label: string;
+  type: 'date' | 'select' | 'multiSelect' | 'search';
+  /** 对应数据集列 */
+  field?: string;
+  /** select 的候选项（空则运行时从数据取） */
+  options?: string[];
+  width?: number;
+}
+
+/** 明细表列配置 */
+export interface DashboardWidgetColumn {
+  key: string;
+  title: string;
+  width?: number;
+  format?: string;
+}
+
+/** 看板卡片（widget） */
+export interface DashboardWidget {
+  /** 唯一，如 'w_1' */
+  id: string;
+  type: WidgetType;
+  title: string;
+  /** 栅格占位（12 栅格体系） */
+  span: WidgetSpan;
+  height?: number;
+  /** 数据源：不填则用 config.datasetId */
+  datasetId?: number | null;
+  /** 指标/维度配置（按 type 取用） */
+  metric?: string;
+  metrics?: string[];
+  dimension?: string;
+  dimensions?: string[];
+  /** 聚合方式 */
+  agg?: WidgetAgg;
+  /** 图表专属配置 */
+  chart?: Record<string, unknown>;
+  /** 列配置（table 用） */
+  columns?: DashboardWidgetColumn[];
+  /** 是否可点击下钻 */
+  drillable?: boolean;
+}
+
+/** 看板配置（存进报表 config 字段） */
+export interface DashboardConfig {
+  version: 2;
+  /** 标志是看板式 */
+  mode: 'dashboard';
+  title?: string;
+  subtitle?: string;
+  /** 默认数据集，widget 可覆盖 */
+  datasetId?: number | null;
+  /** 全局筛选器定义 */
+  filters?: DashboardFilterDef[];
+  /** 卡片列表，顺序 = 渲染顺序 */
+  widgets: DashboardWidget[];
+  /** 主题 */
+  theme?: { mode?: 'light' | 'dark'; accent?: string };
+}
+
+/** 设计器栅格总数 */
+export const DASHBOARD_GRID = 12;
+
+/** 全部卡片类型（顺序 = 设计器组件库顺序） */
+export const WIDGET_TYPES: WidgetType[] = [
+  'kpi',
+  'donut',
+  'semiGauge',
+  'progress',
+  'flowMap',
+  'rank',
+  'bar',
+  'stackBar',
+  'line',
+  'combo',
+  'pie',
+  'heatmap',
+  'table',
+  'text',
+];
+
+/** 卡片类型元数据（设计器左栏组件库用） */
+export const WIDGET_META: {
+  type: WidgetType;
+  name: string;
+  icon: ReactNode;
+  desc: string;
+  defaultSpan: WidgetSpan;
+}[] = [
+  { type: 'kpi', name: '指标卡', icon: createElement(NumberOutlined), desc: '大数字 + 可选拆分', defaultSpan: 3 },
+  { type: 'donut', name: '圆环图', icon: createElement(PieChartOutlined), desc: '中心总数 + 右侧图例', defaultSpan: 3 },
+  { type: 'semiGauge', name: '半圆进度', icon: createElement(DashboardOutlined), desc: '进度环 + 下方进度条', defaultSpan: 3 },
+  { type: 'progress', name: '进度条组', icon: createElement(SlidersOutlined), desc: '横向进度条列表', defaultSpan: 4 },
+  { type: 'flowMap', name: '流程图', icon: createElement(ShareAltOutlined), desc: '横向节点链', defaultSpan: 12 },
+  { type: 'rank', name: '排行榜', icon: createElement(TrophyOutlined), desc: '前 N 名 + 奖牌 + 标签', defaultSpan: 4 },
+  { type: 'bar', name: '柱状图', icon: createElement(BarChartOutlined), desc: '分类对比柱状图', defaultSpan: 6 },
+  { type: 'stackBar', name: '堆叠柱', icon: createElement(AreaChartOutlined), desc: '多指标堆叠对比', defaultSpan: 6 },
+  { type: 'line', name: '折线图', icon: createElement(LineChartOutlined), desc: '趋势折线', defaultSpan: 6 },
+  { type: 'combo', name: '组合图', icon: createElement(FundOutlined), desc: '柱 + 线双 y 轴', defaultSpan: 6 },
+  { type: 'pie', name: '饼图', icon: createElement(PieChartOutlined), desc: '占比饼图', defaultSpan: 4 },
+  { type: 'heatmap', name: '热力矩阵', icon: createElement(AppstoreOutlined), desc: '二维密度矩阵', defaultSpan: 6 },
+  { type: 'table', name: '明细表', icon: createElement(TableOutlined), desc: '分页明细表', defaultSpan: 12 },
+  { type: 'text', name: '富文本', icon: createElement(FontSizeOutlined), desc: '说明文字/备注', defaultSpan: 12 },
+];
+
+/** 判断一个 config 是否为看板式配置（空对象/老配置/缺字段均安全返回 false） */
+export function isDashboardConfig(c: unknown): c is DashboardConfig {
+  if (!c || typeof c !== 'object' || Array.isArray(c)) return false;
+  const o = c as Record<string, unknown>;
+  if (o.mode !== 'dashboard') return false;
+  return Array.isArray(o.widgets);
+}
+
+/**
+ * 归一化看板配置：补齐 version/mode/widgets，过滤非法 widget，纠正 span
+ * - config 为空时返回一份最小可用配置（空画布不崩）
+ * - 未知 type 的 widget 直接丢弃
+ */
+export function normalizeDashboardConfig(
+  raw: unknown,
+  fallbackDatasetId?: number | null
+): DashboardConfig {
+  const src = (raw && typeof raw === 'object' ? raw : {}) as Partial<DashboardConfig> & Record<string, unknown>;
+  const list = Array.isArray(src.widgets) ? src.widgets : [];
+  const widgets: DashboardWidget[] = [];
+  list.forEach((item, i) => {
+    if (!item || typeof item !== 'object') return;
+    const w = item as Partial<DashboardWidget>;
+    const type = (WIDGET_TYPES.includes(w.type as WidgetType) ? w.type : '') as WidgetType;
+    if (!type) return;
+    const span = [3, 4, 6, 8, 12].includes(Number(w.span)) ? (Number(w.span) as WidgetSpan) : 6;
+    widgets.push({
+      id: String(w.id || `w_${i + 1}`),
+      type,
+      title: String(w.title ?? '') || (WIDGET_META.find((m) => m.type === type)?.name || type),
+      span,
+      height: Number(w.height) > 0 ? Number(w.height) : undefined,
+      datasetId: w.datasetId === undefined ? undefined : w.datasetId === null ? null : Number(w.datasetId),
+      metric: w.metric ? String(w.metric) : undefined,
+      metrics: Array.isArray(w.metrics) ? w.metrics.map(String) : undefined,
+      dimension: w.dimension ? String(w.dimension) : undefined,
+      dimensions: Array.isArray(w.dimensions) ? w.dimensions.map(String) : undefined,
+      agg: (['sum', 'count', 'avg', 'max', 'min'] as string[]).includes(String(w.agg))
+        ? (w.agg as WidgetAgg)
+        : 'sum',
+      chart: w.chart && typeof w.chart === 'object' ? (w.chart as Record<string, unknown>) : undefined,
+      columns: Array.isArray(w.columns) ? (w.columns as DashboardWidgetColumn[]) : undefined,
+      drillable: !!w.drillable,
+    });
+  });
+  const dsId =
+    src.datasetId === null ? null : Number.isFinite(Number(src.datasetId)) ? Number(src.datasetId) : fallbackDatasetId ?? null;
+  return {
+    version: 2,
+    mode: 'dashboard',
+    title: src.title ? String(src.title) : undefined,
+    subtitle: src.subtitle ? String(src.subtitle) : undefined,
+    datasetId: dsId,
+    filters: Array.isArray(src.filters) ? (src.filters as DashboardFilterDef[]) : undefined,
+    widgets,
+    theme: src.theme && typeof src.theme === 'object' ? src.theme : { mode: 'light' },
+  };
+}
+
+/** 造一张卡片（模板与设计器共用） */
+function mkWidget(
+  id: string,
+  type: WidgetType,
+  title: string,
+  span: WidgetSpan,
+  extra: Partial<DashboardWidget> = {}
+): DashboardWidget {
+  const meta = WIDGET_META.find((m) => m.type === type);
+  return { id, type, title, span: span || (meta?.defaultSpan ?? 6), agg: 'sum', ...extra };
+}
+
+/**
+ * 预设模板（设计器一键应用）
+ * - zk-client：中康智能体客户看板（kpi×2 + donut + semiGauge + flowMap + rank + stackBar + table）
+ * - sales-ops：销售经营看板（kpi×3 + bar + line + rank + table）
+ * - blank：空白
+ *
+ * 指标/维度列名只是「期望列名」，渲染器找不到时会自动回退到数据集真实列，
+ * 因此换任何数据集都不会出现空图表。
+ */
+export const DASHBOARD_TEMPLATES: {
+  key: string;
+  name: string;
+  desc: string;
+  config: DashboardConfig;
+}[] = [
+  {
+    key: 'zk-client',
+    name: '中康客户看板',
+    desc: '圆环 + 大数字 + 半圆进度 + 流程链 + 排行 + 趋势 + 明细',
+    config: {
+      version: 2,
+      mode: 'dashboard',
+      title: '中康智能体客户看板',
+      subtitle: '签约 / 门店 / 任务进度一张图看清',
+      datasetId: null,
+      theme: { mode: 'light' },
+      widgets: [
+        mkWidget('w_1', 'donut', '签约客户', 3, {
+          dimension: '区域',
+          metric: '客户数',
+          chart: { centerLabel: '总客户数', countLabel: '家' },
+        }),
+        mkWidget('w_2', 'kpi', '门店总数', 3, {
+          dimension: '区域',
+          metric: '门店数',
+          chart: { split: true, unit: '家', dot: 'cyan' },
+        }),
+        mkWidget('w_3', 'semiGauge', '任务完成进度', 3, {
+          dimension: '区域',
+          metric: '任务数',
+          chart: { target: 500, hint: '目标 500 家', bars: true },
+        }),
+        mkWidget('w_4', 'kpi', '流程完成', 3, {
+          dimension: '区域',
+          metric: '已完成',
+          chart: { split: true, unit: '家', dot: 'green' },
+        }),
+        mkWidget('w_5', 'flowMap', '流程状态分布', 12, {
+          dimension: '流程状态',
+          metric: '客户数',
+        }),
+        mkWidget('w_6', 'rank', '销售排行榜', 4, {
+          dimension: '销售',
+          metric: '客户数',
+          chart: { topN: 5, tagField: '连锁类型', unit: '家' },
+        }),
+        mkWidget('w_7', 'stackBar', '签约趋势', 8, {
+          dimension: '日期',
+          metrics: ['签约客户数', '签约门店数'],
+          chart: { legend: true },
+        }),
+        mkWidget('w_8', 'table', '签约明细', 12, {
+          chart: { pageSize: 10 },
+        }),
+      ],
+    },
+  },
+  {
+    key: 'sales-ops',
+    name: '销售经营看板',
+    desc: '销售额 / 订单 / 客单价 + 区域柱 + 趋势折线 + 排行 + 明细',
+    config: {
+      version: 2,
+      mode: 'dashboard',
+      title: '销售经营看板',
+      subtitle: '业绩、订单、客单价与区域分布',
+      datasetId: null,
+      theme: { mode: 'light' },
+      widgets: [
+        mkWidget('w_1', 'kpi', '销售额', 4, { metric: '销售额', chart: { unit: '元', dot: 'brand' } }),
+        mkWidget('w_2', 'kpi', '订单数', 4, { metric: '订单数', chart: { unit: '单', dot: 'cyan' } }),
+        mkWidget('w_3', 'kpi', '客单价', 4, { metric: '客单价', agg: 'avg', chart: { unit: '元', dot: 'purple' } }),
+        mkWidget('w_4', 'bar', '各区域销售额', 6, { dimension: '区域', metric: '销售额' }),
+        mkWidget('w_5', 'rank', '销售排行榜', 6, {
+          dimension: '销售',
+          metric: '销售额',
+          chart: { topN: 5, unit: '元' },
+        }),
+        mkWidget('w_6', 'line', '销售趋势', 12, { dimension: '日期', metric: '销售额' }),
+        mkWidget('w_7', 'table', '销售明细', 12),
+      ],
+    },
+  },
+  {
+    key: 'blank',
+    name: '空白',
+    desc: '从零开始，从左侧组件库添加卡片',
+    config: {
+      version: 2,
+      mode: 'dashboard',
+      title: '新建看板',
+      subtitle: '',
+      datasetId: null,
+      theme: { mode: 'light' },
+      widgets: [],
+    },
+  },
+];
 
 /** 表格展示列（排除超长文本字段，避免表格被撑爆） */
 export function pickTableColumns(rows: RowData[], columns?: DatasetColumn[], max = 12): string[] {

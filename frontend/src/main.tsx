@@ -9,6 +9,7 @@ import 'dayjs/locale/zh-cn';
 import App from './App';
 import { NEUTRAL, PALETTE, SHADOW, SIDER } from './theme';
 import './styles/global.css';
+import './styles/board-v6.css';
 
 dayjs.locale('zh-cn');
 

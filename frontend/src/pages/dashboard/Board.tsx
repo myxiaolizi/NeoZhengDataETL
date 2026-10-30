@@ -9,13 +9,12 @@
  * 各排组件都在 ./board/ 下，纯展示，只吃 props。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Empty, Grid, Result, Skeleton, Space, Spin } from 'antd';
+import { Alert, Empty, Grid, Result, Skeleton } from 'antd';
 import dayjs from 'dayjs';
 import {
   BoardData, BoardFilters, emptyFilters, fetchBoard,
 } from '@/api/crm-board';
-import FilterBar from './board/FilterBar';
-import ActionBar from './board/ActionBar';
+import TopBar from './TopBar';
 import SigningCards from './board/SigningCards';
 import FlowPipeline from './board/FlowPipeline';
 import TypeSummary from './board/TypeSummary';
@@ -30,61 +29,127 @@ import DetailTable from './board/DetailTable';
 
 const { useBreakpoint } = Grid;
 
-const LOGO = 'https://wenjian.zhengl.vip/zkkj/logof.png';
-const TITLE = '中康智能体客户看板';
-
 const LS_DARK = 'crmboard.dark';
 const LS_PRIMARY = 'crmboard.primary';
 
-/** 主题色候选（只用契约 13 色里的深色系，保证白字/深字都能读） */
-const PRIMARY_OPTIONS = ['#3687FF', '#45B4FF', '#2D6FE4', '#003378', '#EC673C', '#A2D73C'];
+/** 主题色候选（V6：对齐参考站品牌色系） */
+const PRIMARY_OPTIONS = ['#2563eb', '#3b82f6', '#0ea5e9', '#10b981', '#8b5cf6', '#f59e0b'];
 
-/** 主题变量对象：直接作为内联 CSS 自定义属性挂在看板根节点上
+/**
+ * V6.0 设计令牌（从 https://zk2.zhengl.vip/pc4.html 实测提取）
  *
- * 说明：内联 style 支持 `--x: value` 自定义属性，子节点全部继承。
- * 比注入 <style> 更安全 —— 不会污染其它页面的 :root。
+ * 两套变量同时注入：
+ *   1. 新变量（--bg / --panel / --line / --text / --brand …）—— 参考站命名，V6 组件用
+ *   2. 旧变量别名（--bg-page / --bg-card / --text-main …）—— V5 组件仍在用，映射到新值
+ *
+ * 这样新旧组件可以共存，不会因为令牌改名而出现「透明背景」这类问题。
  */
 function themeVars(dark: boolean, primary: string): React.CSSProperties {
-  const base = dark
-    ? {
-      '--bg-page': '#071426',
-      '--bg-card': '#0E2038',
-      '--bg-card-2': '#12263F',
-      '--bg-hover': 'rgba(115,219,255,.10)',
-      '--text-main': '#DCDDDD',
-      '--text-sub': 'rgba(220,221,221,.66)',
-      '--text-mute': 'rgba(220,221,221,.42)',
-      '--border': 'rgba(115,219,255,.22)',
-      '--border-strong': 'rgba(115,219,255,.38)',
-      '--shadow': '0 1px 2px rgba(0,0,0,.32), 0 2px 10px rgba(0,0,0,.24)',
-    }
-    : {
-      '--bg-page': '#F5F8FF',
-      '--bg-card': '#FFFFFF',
-      '--bg-card-2': 'rgba(54,135,255,.035)',
-      '--bg-hover': 'rgba(115,219,255,.16)',
-      '--text-main': '#003378',
-      '--text-sub': 'rgba(0,51,120,.66)',
-      '--text-mute': 'rgba(0,51,120,.42)',
-      '--border': 'rgba(54,135,255,.28)',
-      '--border-strong': 'rgba(54,135,255,.45)',
-      '--shadow': '0 1px 2px rgba(0,51,120,.06), 0 2px 8px rgba(54,135,255,.08)',
-    };
-  return { ...base, '--primary': primary } as React.CSSProperties;
+  const light = {
+    /* ── 新令牌 ── */
+    '--bg': '#f2f6fc',
+    '--bg2': '#e8f0fb',
+    '--panel': '#ffffff',
+    '--panel2': '#f7faff',
+    '--line': '#dde8f6',
+    '--line2': '#eaf2fb',
+    '--text': '#16253d',
+    '--text2': '#5a7191',
+    '--text3': '#93a7c2',
+    '--brand': primary,
+    '--brand2': '#3b82f6',
+    '--brand3': '#60a5fa',
+    '--brandSoft': '#e9f2ff',
+    '--green': '#10b981',
+    '--green2': '#34d399',
+    '--greenSoft': '#e6f8f1',
+    '--warn': '#f59e0b',
+    '--danger': '#ef4444',
+    '--purple': '#8b5cf6',
+    '--cyan': '#06b6d4',
+    '--pink': '#ec4899',
+    '--orange-d': '#f59e0b',
+    '--shadow': '0 1px 2px rgba(20,52,102,.04), 0 4px 14px rgba(20,52,102,.055)',
+    '--shadow2': '0 2px 8px rgba(20,52,102,.07), 0 18px 44px rgba(20,52,102,.11)',
+    '--radius': '16px',
+    '--radius-sm': '11px',
+    '--primary': primary,
+    /* ── 旧变量别名（V5 组件兼容） ── */
+    '--bg-page': '#f2f6fc',
+    '--bg-card': '#ffffff',
+    '--bg-card-2': '#f7faff',
+    '--bg-hover': 'rgba(37,99,235,.07)',
+    '--text-main': '#16253d',
+    '--text-sub': '#5a7191',
+    '--text-mute': '#93a7c2',
+    '--border': '#dde8f6',
+    '--border-strong': '#60a5fa',
+  };
+  const darkVars = {
+    /* ── 新令牌 ── */
+    '--bg': '#0a1220',
+    '--bg2': '#0e1a2e',
+    '--panel': '#101d33',
+    '--panel2': '#14233c',
+    '--line': '#1e3252',
+    '--line2': '#182a45',
+    '--text': '#e2e8f0',
+    '--text2': '#94a8c4',
+    '--text3': '#6b82a3',
+    '--brand': primary,
+    '--brand2': '#60a5fa',
+    '--brand3': '#93c5fd',
+    '--brandSoft': '#16294a',
+    '--green': '#34d399',
+    '--green2': '#10b981',
+    '--greenSoft': '#0f2e26',
+    '--warn': '#fbbf24',
+    '--danger': '#f87171',
+    '--purple': '#a78bfa',
+    '--cyan': '#22d3ee',
+    '--pink': '#f472b6',
+    '--orange-d': '#fbbf24',
+    '--shadow': '0 1px 2px rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.30)',
+    '--shadow2': '0 2px 8px rgba(0,0,0,.40), 0 18px 44px rgba(0,0,0,.45)',
+    '--radius': '16px',
+    '--radius-sm': '11px',
+    '--primary': primary,
+    /* ── 旧变量别名 ── */
+    '--bg-page': '#0a1220',
+    '--bg-card': '#101d33',
+    '--bg-card-2': '#14233c',
+    '--bg-hover': 'rgba(96,165,250,.12)',
+    '--text-main': '#e2e8f0',
+    '--text-sub': '#94a8c4',
+    '--text-mute': '#6b82a3',
+    '--border': '#1e3252',
+    '--border-strong': '#93c5fd',
+  };
+  return (dark ? darkVars : light) as React.CSSProperties;
 }
 
-/** 排区标题 */
+/** 排区标题（V6：对齐参考站 — 更细的分隔与更克制的字重） */
 function SectionTitle({ children, extra }: { children: React.ReactNode; extra?: React.ReactNode }) {
   return (
     <div
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        margin: '20px 0 10px', gap: 12,
+        margin: '18px 0 10px', gap: 12,
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <span style={{ width: 3, height: 14, borderRadius: 2, background: 'var(--primary)', flexShrink: 0 }} />
-        <span style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text-main)', whiteSpace: 'nowrap' }}>
+        <span
+          style={{
+            width: 6, height: 6, borderRadius: 2, background: 'var(--brand)', flexShrink: 0,
+            boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent)',
+          }}
+        />
+        <span
+          style={{
+            fontSize: 13.5, fontWeight: 680, color: 'var(--text)',
+            whiteSpace: 'nowrap', letterSpacing: 0.2,
+          }}
+        >
           {children}
         </span>
       </div>
@@ -193,108 +258,60 @@ export default function Board() {
       className="board-root"
       data-theme={dark ? 'dark' : 'light'}
       style={{
-        // 覆盖 Layout 的白底，让暗色模式真正生效
+        // 覆盖 Layout 的白底，让明暗主题真正生效
         ...themeVars(dark, primary),
-        margin: isMobile ? -12 : -20,
+        // 抵消 Layout 的 padding，让底色铺满（用负 margin 撑满可视区）
+        // 移动端 Content padding 是 10，桌面是 16
+        margin: isMobile ? -10 : -16,
         padding: isMobile ? 12 : 20,
-        background: 'var(--bg-page)',
+        background: 'var(--bg)',
         minHeight: 'calc(100vh - 120px)',
-        color: 'var(--text-main)',
+        color: 'var(--text)',
         transition: 'background .2s ease',
-        // 兜底：任何子元素都不允许把整页撑出横向滚动条
-        // （宽表格自身在 .ant-table-content 内部横向滚动，不受影响）
-        maxWidth: '100%',
-        overflowX: 'hidden',
+        // 注意：这里**不能**设 overflow（含 overflowX:hidden）。
+        // 一旦设置，board-root 就变成滚动容器，内部 position:sticky 的顶栏会失效。
+        // 横向溢出由下面的内容区裁剪（见 .board-content）。
       }}
     >
+      {/* ══════════ 顶栏：标题 + 筛选 + 操作，合并为 1 行（sticky 吸顶）══════════ */}
+      <TopBar
+        syncedLabel={syncedLabel}
+        refreshing={refreshing}
+        filters={filters}
+        onChange={onChange}
+        onReset={onReset}
+        options={data?.meta.options || {
+          regions: [], chainTypes: [], sales: [], flowStatus: [], service: [],
+          solution: [], trainer: [], version: [], connectResult: [],
+          trainResult: [], openedStrategy: [],
+        }}
+        counts={data?.meta.counts || {
+          region: {}, chainType: {}, sales: {}, flowStatus: {}, service: {},
+          solution: {}, trainer: {}, version: {}, connectResult: {},
+          trainResult: {}, openedStrategy: {},
+        }}
+        validOnly={filters.validOnly}
+        onToggleValid={onToggleValid}
+        onRefresh={onRefresh}
+        dark={dark}
+        onToggleDark={() => setDark((d) => !d)}
+        primary={primary}
+        onPrimaryChange={setPrimary}
+      />
 
-      {/* ══════════ 标题栏 ══════════ */}
+      {/* 内容区：统一左右留白，与顶栏解耦 */}
       <div
+        className="board-content"
         style={{
-          display: 'flex', alignItems: 'center', gap: 12,
-          padding: isMobile ? '12px 14px' : '14px 20px',
-          background: 'var(--bg-card)',
-          border: '1px solid var(--border)',
-          borderRadius: 12,
-          boxShadow: 'var(--shadow)',
-          flexWrap: 'wrap',
+          paddingTop: isMobile ? 12 : 16,
+          // 横向溢出在这里裁剪（宽表格自身在 .ant-table-content 内部横滚）
+          maxWidth: '100%',
+          overflowX: 'hidden',
         }}
       >
-        <img
-          src={LOGO}
-          alt="LOGO"
-          style={{ width: isMobile ? 34 : 42, height: isMobile ? 34 : 42, objectFit: 'contain', flexShrink: 0 }}
-          onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
-        />
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div
-            style={{
-              fontSize: isMobile ? 17 : 22, fontWeight: 800, letterSpacing: 0.4,
-              color: 'var(--text-main)', lineHeight: 1.25,
-            }}
-          >
-            {TITLE}
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--text-mute)', marginTop: 3 }}>
-            {syncedLabel}
-          </div>
-        </div>
-        {refreshing && (
-          <span style={{ fontSize: 12, color: 'var(--text-sub)', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Spin size="small" /> 正在获取最新数据…
-          </span>
-        )}
-      </div>
-
-      {/* ══════════ 筛选区 ══════════ */}
-      <div
-        style={{
-          marginTop: 12,
-          padding: isMobile ? '10px 12px' : '12px 16px',
-          background: 'var(--bg-card)',
-          border: '1px solid var(--border)',
-          borderRadius: 12,
-          boxShadow: 'var(--shadow)',
-          display: 'flex',
-          flexDirection: isMobile ? 'column' : 'row',
-          alignItems: isMobile ? 'stretch' : 'center',
-          gap: 10,
-        }}
-      >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <FilterBar
-            filters={filters}
-            onChange={onChange}
-            onReset={onReset}
-            options={data?.meta.options || {
-              regions: [], chainTypes: [], sales: [], flowStatus: [], service: [],
-              solution: [], trainer: [], version: [], connectResult: [],
-              trainResult: [], openedStrategy: [],
-            }}
-            counts={data?.meta.counts || {
-              region: {}, chainType: {}, sales: {}, flowStatus: {}, service: {},
-              solution: {}, trainer: {}, version: {}, connectResult: {},
-              trainResult: {}, openedStrategy: {},
-            }}
-            isMobile={isMobile}
-          />
-        </div>
-        <div style={{ flexShrink: 0 }}>
-          <ActionBar
-            validOnly={filters.validOnly}
-            onToggleValid={onToggleValid}
-            onRefresh={onRefresh}
-            dark={dark}
-            onToggleDark={() => setDark((d) => !d)}
-            primary={primary}
-            onPrimaryChange={setPrimary}
-            isMobile={isMobile}
-          />
-        </div>
-      </div>
 
       {activeCount > 0 && (
-        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-mute)' }}>
+        <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text3)' }}>
           已应用 {activeCount} 个筛选条件
           {data && ` · 当前 ${data.row1.totalClients} 家客户 / ${data.row1.totalStores} 家门店`}
         </div>
@@ -384,12 +401,13 @@ export default function Board() {
           <DetailTable data={data} loading={loading} isMobile={isMobile} />
         </>
       ) : (
-        <div style={{ marginTop: 16, padding: 40, background: 'var(--bg-card)', borderRadius: 12, border: '1px solid var(--border)' }}>
+        <div style={{ marginTop: 16, padding: 40, background: 'var(--panel)', borderRadius: 16, border: '1px solid var(--line)' }}>
           <Empty description="暂无数据" />
         </div>
       )}
 
       <div style={{ height: 24 }} />
+      </div>{/* /内容区 */}
     </div>
   );
 }

@@ -33,6 +33,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import Page from '@/components/Page';
 import type { StatCardItem } from '@/components/StatCards';
 import Chart from '@/components/Chart';
+import DashboardRenderer from '@/components/DashboardRenderer';
 import { NEUTRAL, PALETTE } from '@/theme';
 import { useAppStore } from '@/stores/app';
 import { copyText, fmtAgo, fmtNum, fmtTime } from '@/utils';
@@ -41,6 +42,8 @@ import {
   createShare,
   getDataset,
   getReport,
+  isDashboardConfig,
+  normalizeDashboardConfig,
   pickTableColumns,
   reportExportUrl,
   runReport,
@@ -134,6 +137,12 @@ export default function ReportView() {
   const config: ReportConfig = (report?.config || {}) as ReportConfig;
   const built = useMemo(() => buildChartOption(rows, config, { limit: 60, tall: true }), [rows, config]);
   const chartHeight = isMobile ? 260 : Math.max(320, Math.min(Number(config.height) || 400, 560));
+
+  /* V6.0：看板式配置（多卡片组合）—— 有就用 DashboardRenderer 整页渲染 */
+  const dashConfig = useMemo(
+    () => (isDashboardConfig(config) ? normalizeDashboardConfig(config) : null),
+    [config],
+  );
 
   const tableColumns = useMemo(() => {
     if (!rows.length) return [];
@@ -330,6 +339,32 @@ export default function ReportView() {
           />
         )}
 
+        {/* V6.0 看板式渲染：多卡片组合，不走旧单图表逻辑 */}
+        {dashConfig ? (
+          <div style={{ marginTop: 4 }}>
+            {(dashConfig.title || dashConfig.subtitle || dashConfig.widgets.length > 0) && (
+              <div style={{ margin: '4px 0 12px' }}>
+                {dashConfig.title && (
+                  <div style={{ fontSize: isMobile ? 17 : 20, fontWeight: 700, color: NEUTRAL.text }}>
+                    {dashConfig.title}
+                  </div>
+                )}
+                {dashConfig.subtitle && (
+                  <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginTop: 3 }}>
+                    {dashConfig.subtitle}
+                  </div>
+                )}
+              </div>
+            )}
+            <DashboardRenderer
+              config={dashConfig}
+              rows={rows}
+              columns={columns}
+              isMobile={isMobile}
+              readonly
+            />
+          </div>
+        ) : (
         <Row gutter={[16, 16]}>
           {/* 图表 */}
           <Col xs={24} xl={16}>
@@ -449,6 +484,7 @@ export default function ReportView() {
             </Col>
           )}
         </Row>
+        )}
       </Page>
     </div>
   );

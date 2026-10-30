@@ -1,27 +1,15 @@
-/** 第 8 排：按策略模型 × 策略类型分南北区
+/** 第 8 排：按策略模型 × 策略类型分南北区 — V6.0 视觉升级
  *
- * 数据：data.row8.items（ModelTypeItem[]，每项 { model, type, south: Row7Data, north: Row7Data, total: Row7Data }）
+ * 数据与口径不变：data.row8.items（每项 { model, type, south/north/total: Row7Data }）
  * 呈现：分组表格
- *  - 行 = (策略模块, 策略类型)，「策略模块」列用 onCell rowSpan 合并同模块的行
- *  - 指标列：开通策略数 / 运行策略数 / 触达人数 / 到店率 / 优惠券核销率 / 转化销售额
- *  - 每个指标单元格内上下两行显示「南 X」「北 Y」，颜色区分南北区，一眼可比
- *
- * 口径见 _work/V5-CONTRACT.md §3.2 第 14 条。
+ *  - 「策略模块」列按同 model 合并单元格（原生 rowSpan，分页内计算，不跨页错位）
+ *  - 指标列内上下两行显示「南 X」「北 Y」，南区 var(--brand)、北区 var(--cyan)
+ * 视觉对齐 pc4.html：表头 var(--panel2)、斑马纹、hover var(--brandSoft)。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Card, Empty, Table } from 'antd';
-import type { ColumnsType } from 'antd/es/table';
+import { Empty, Pagination } from 'antd';
 import type { BoardData, ModelTypeItem, Row7Data } from '@/api/crm-board';
 import { fmtMoney, fmtNum, fmtPct } from './theme';
-
-const C_SOUTH = '#45B4FF';
-const C_NORTH = '#FFC000';
-
-/** 契约 §7.2：CSS 变量优先；变量未注入时回退 antd v6 主题变量，保证明暗都可读 */
-const T_MAIN = 'var(--text-main, var(--ant-color-text, #003378))';
-const T_SUB = 'var(--text-sub, var(--ant-color-text-secondary, rgba(0,51,120,.66)))';
-const BORDER = 'var(--border, var(--ant-color-border, rgba(54,135,255,.28)))';
-const BG_CARD = 'var(--bg-card, var(--ant-color-bg-container, #FFFFFF))';
 
 export interface RunBreakdownProps {
   data: BoardData;
@@ -89,21 +77,47 @@ function safeR7(v?: Partial<Row7Data> | null): Row7Data {
   };
 }
 
-/** 南北双值单元格 */
-function DualCell({ south, north, kind }: { south: number; north: number; kind: Fmt }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.35 }}>
-      <span style={{ color: C_SOUTH, fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-        <span style={{ fontSize: 10, opacity: 0.85, marginRight: 2 }}>南</span>
-        {fmt(south, kind)}
-      </span>
-      <span style={{ color: C_NORTH, fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
-        <span style={{ fontSize: 10, opacity: 0.85, marginRight: 2 }}>北</span>
-        {fmt(north, kind)}
-      </span>
-    </div>
-  );
+/* ══════════════ 局部样式（vb10- 前缀） ══════════════ */
+const CSS = `
+.vb10-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;min-width:0}
+.vb10-card:hover{border-color:var(--brand3);box-shadow:var(--shadow2);transform:translateY(-1px)}
+.vb10-h{padding:13px 16px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent)}
+.vb10-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.vb10-dot{width:6px;height:6px;border-radius:2px;background:var(--purple);box-shadow:0 0 0 3px color-mix(in srgb,var(--purple) 16%,transparent);flex-shrink:0}
+.vb10-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap;flex-shrink:0;display:flex;align-items:center;gap:6px}
+.vb10-hint .s{color:var(--brand);font-weight:700}
+.vb10-hint .n{color:var(--cyan);font-weight:700}
+.vb10-b{padding:14px 16px;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
+
+.vb10-scroll{width:100%;overflow-x:auto;border-radius:10px;min-width:0}
+.vb10-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;white-space:nowrap}
+.vb10-tbl thead th{
+  background:var(--panel2);color:var(--text3);font-weight:650;font-size:11px;
+  padding:9px 10px;text-align:right;border-bottom:1px solid var(--line);letter-spacing:.2px;
 }
+.vb10-tbl thead th.l{text-align:left}
+.vb10-tbl tbody td{
+  padding:8px 10px;border-bottom:1px solid var(--line2);text-align:right;
+  font-variant-numeric:tabular-nums;vertical-align:middle;
+}
+.vb10-tbl tbody td.l{text-align:left}
+.vb10-tbl tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--panel2) 55%,transparent)}
+.vb10-tbl tbody tr:hover td{background:var(--brandSoft)}
+.vb10-tbl tbody tr:last-child td{border-bottom:0}
+.vb10-tbl td.model{
+  font-size:12.5px;font-weight:700;color:var(--text);
+  border-right:1px solid var(--line);background:var(--panel2)!important;
+  vertical-align:middle;
+}
+.vb10-tbl tr:nth-child(even) td.model{background:color-mix(in srgb,var(--panel2) 82%,var(--panel))!important}
+.vb10-tbl td.type{font-size:12px;color:var(--text2)}
+.vb10-dual{display:flex;flex-direction:column;gap:2px;line-height:1.3}
+.vb10-dual .s{color:var(--brand);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.vb10-dual .n{color:var(--cyan);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.vb10-dual .tag{font-size:9.5px;opacity:.8;margin-right:3px;font-weight:600}
+.vb10-pager{display:flex;justify-content:flex-end;margin-top:10px}
+.vb10-empty{padding:34px 0}
+`;
 
 export default function RunBreakdown({ data, loading, isMobile }: RunBreakdownProps) {
   const items = Array.isArray(data?.row8?.items) ? (data?.row8?.items ?? []) : [];
@@ -132,7 +146,7 @@ export default function RunBreakdown({ data, loading, isMobile }: RunBreakdownPr
     return rows.slice((cur - 1) * pageSize, cur * pageSize);
   }, [rows, page, pageSize]);
 
-  /** 当前页内每个 model 的行数与起始下标，用于 rowSpan */
+  /** 当前页内每个 model 的行数与起始判断，用于 rowSpan */
   const spanMap = useMemo(() => {
     const map = new Map<string, { span: number; start: boolean }>();
     const counts = new Map<string, number>();
@@ -146,109 +160,129 @@ export default function RunBreakdown({ data, loading, isMobile }: RunBreakdownPr
     return map;
   }, [pageRows]);
 
-  const columns = useMemo<ColumnsType<Row>>(() => {
-    const metricCol = (
-      title: string,
-      pick: (r: Row) => { south: number; north: number },
-      kind: Fmt,
-      width: number,
-    ): ColumnsType<Row>[number] => ({
-      title,
-      key: title,
-      width,
-      align: 'right',
-      render: (_: unknown, r: Row) => {
-        const v = pick(r);
-        return <DualCell south={num(v.south)} north={num(v.north)} kind={kind} />;
-      },
-    });
+  const total = rows.length;
+  const curPage = Math.min(page, Math.max(Math.ceil(total / pageSize), 1));
 
-    return [
-      {
-        title: '策略模块',
-        dataIndex: 'model',
-        key: 'model',
-        width: isMobile ? 88 : 130,
-        onCell: (r: Row) => {
-          const s = spanMap.get(r.key);
-          return { rowSpan: s ? s.span : 1 };
-        },
-        render: (v: string) => (
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: T_MAIN }}>{v}</span>
-        ),
-      },
-      {
-        title: '策略类型',
-        dataIndex: 'type',
-        key: 'type',
-        width: isMobile ? 92 : 140,
-        render: (v: string) => (
-          <span style={{ fontSize: 12, color: T_SUB }}>{v}</span>
-        ),
-      },
-      metricCol('开通策略数', (r) => ({
+  /** 指标列定义：标题 + 取值器 + 格式 */
+  const metricCols: { title: string; pick: (r: Row) => { south: number; north: number }; kind: Fmt }[] = [
+    {
+      title: '开通策略数',
+      pick: (r) => ({
         south: own(r.south.openedStrategy?.strategies, 'south'),
         north: own(r.north.openedStrategy?.strategies, 'north'),
-      }), 'num', 92),
-      metricCol('运行策略数', (r) => ({
+      }),
+      kind: 'num',
+    },
+    {
+      title: '运行策略数',
+      pick: (r) => ({
         south: own(r.south.runningStrategy?.strategies, 'south'),
         north: own(r.north.runningStrategy?.strategies, 'north'),
-      }), 'num', 92),
-      metricCol('触达人数', (r) => ({
+      }),
+      kind: 'num',
+    },
+    {
+      title: '触达人数',
+      pick: (r) => ({
         south: own(r.south.people?.reached, 'south'),
         north: own(r.north.people?.reached, 'north'),
-      }), 'num', 92),
-      metricCol('到店率', (r) => ({
+      }),
+      kind: 'num',
+    },
+    {
+      title: '到店率',
+      pick: (r) => ({
         south: own(r.south.reachRate, 'south'),
         north: own(r.north.reachRate, 'north'),
-      }), 'pct', 88),
-      metricCol('优惠券核销率', (r) => ({
+      }),
+      kind: 'pct',
+    },
+    {
+      title: '优惠券核销率',
+      pick: (r) => ({
         south: own(r.south.couponRate, 'south'),
         north: own(r.north.couponRate, 'north'),
-      }), 'pct', 104),
-      metricCol('转化销售额', (r) => ({
+      }),
+      kind: 'pct',
+    },
+    {
+      title: '转化销售额',
+      pick: (r) => ({
         south: own(r.south.conversion, 'south'),
         north: own(r.north.conversion, 'north'),
-      }), 'money', 112),
-    ];
-  }, [spanMap, isMobile]);
-
-  const total = rows.length;
+      }),
+      kind: 'money',
+    },
+  ];
 
   return (
-    <Card
-      variant="outlined"
-      loading={loading && !total}
-      style={{ background: BG_CARD, border: `1px solid ${BORDER}`, borderRadius: 12, height: '100%' }}
-      styles={{ body: { padding: isMobile ? 12 : 16 } }}
-      title={<span style={{ fontSize: 14, fontWeight: 600, color: T_MAIN }}>按策略模型和策略类型分南北区</span>}
-      extra={
-        <span style={{ fontSize: 12, color: T_SUB }}>
-          共 {fmtNum(total)} 组 · <span style={{ color: C_SOUTH }}>南</span> / <span style={{ color: C_NORTH }}>北</span>
-        </span>
-      }
-    >
-      {!total ? (
-        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无策略模型数据" style={{ padding: '48px 0' }} />
-      ) : (
-        <Table<Row>
-          size="small"
-          rowKey="key"
-          columns={columns}
-          dataSource={pageRows}
-          bordered
-          scroll={{ x: 'max-content', y: 400 }}
-          pagination={{
-            current: Math.min(page, Math.max(Math.ceil(total / pageSize), 1)),
-            pageSize,
-            total,
-            size: 'small',
-            showSizeChanger: false,
-            showTotal: (t) => `共 ${t} 组`,
-            onChange: (p) => setPage(p),
-          }}
-        />
-      )}
-    </Card>
+    <>
+      <style>{CSS}</style>
+      <div className="vb10-card">
+        <div className="vb10-h">
+          <h3>
+            <span className="vb10-dot" />
+            按策略模型和策略类型分南北区
+          </h3>
+          <span className="vb10-hint">
+            共 {fmtNum(total)} 组 · <span className="s">南</span>/<span className="n">北</span>
+          </span>
+        </div>
+        <div className="vb10-b">
+          {!total ? (
+            <div className="vb10-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无策略模型数据" /></div>
+          ) : (
+            <>
+              <div className="vb10-scroll">
+                <table className="vb10-tbl">
+                  <thead>
+                    <tr>
+                      <th className="l">策略模块</th>
+                      <th className="l">策略类型</th>
+                      {metricCols.map((c) => <th key={c.title}>{c.title}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageRows.map((r) => {
+                      const s = spanMap.get(r.key);
+                      return (
+                        <tr key={r.key}>
+                          {s?.start && (
+                            <td className="model l" rowSpan={s.span}>{r.model}</td>
+                          )}
+                          <td className="type l">{r.type}</td>
+                          {metricCols.map((c) => {
+                            const v = c.pick(r);
+                            return (
+                              <td key={c.title}>
+                                <div className="vb10-dual">
+                                  <span className="s"><span className="tag">南</span>{fmt(num(v.south), c.kind)}</span>
+                                  <span className="n"><span className="tag">北</span>{fmt(num(v.north), c.kind)}</span>
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="vb10-pager">
+                <Pagination
+                  size="small"
+                  current={curPage}
+                  pageSize={pageSize}
+                  total={total}
+                  showSizeChanger={false}
+                  showTotal={(t) => `共 ${t} 组`}
+                  onChange={(p) => setPage(p)}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </>
   );
 }

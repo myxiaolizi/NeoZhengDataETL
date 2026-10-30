@@ -1,30 +1,27 @@
-/** 第 6 排左：签约趋势（最近 30 天）
+/** 第 6 排左：签约趋势（最近 30 天）— V6.0 视觉升级
  *
- * 呈现：
- *  - 堆叠柱形图：签约客户数，南区 #45B4FF / 北区 #FFC000
- *  - 折线：签约门店数（不分南北，走右侧第二个 y 轴，#3687FF）
- *  - 图例下方快捷多选「连锁类型」：只累加选中类型的 south/north，仍保持南北区两色
+ * 呈现（行为与口径不变）：
+ *  - 堆叠柱形图：签约客户数，南区 var(--brand) / 北区 var(--green)
+ *  - 折线：签约门店数（右轴，var(--cyan)）
+ *  - 图例下方快捷多选「连锁类型」：只累加选中类型的 south/north
  *
- * 数据：data.row6.signTrend（days / south / north / stores / byChainType）
- * 口径见 _work/V5-CONTRACT.md §四 第 6 排。
+ * 视觉对齐 pc4.html：卡片 16px 圆角 + 方点标题；echarts 用契约新配色
+ * ['#3b82f6','#10b981','#06b6d4','#f59e0b','#8b5cf6','#ef4444']，
+ * tooltip 背景 var(--panel) / 边框 var(--line) / 圆角 11px，坐标轴 var(--line)/var(--text3)。
+ * 注意：echarts 画在 canvas 上，不认 CSS 变量，因此运行时从 .board-root 解析实际色值。
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, Card, Empty, Space, Tag } from 'antd';
+import { Empty } from 'antd';
 import type { EChartsOption } from 'echarts';
 import type { BoardData, SignTrendData } from '@/api/crm-board';
-import { CHAIN_TYPE_COLORS } from '@/api/crm-board';
 import EChart from '../EChart';
-import { tooltipStyle, useChartPalette } from './theme';
+import { useThemeMode } from './theme';
 
-/** 契约 §7.1：南北区固定配色 */
-const C_SOUTH = '#45B4FF';
-const C_NORTH = '#FFC000';
-const C_STORE = '#3687FF';
-
-/** 契约 §7.2：CSS 变量优先；变量未注入时回退 antd v6 主题变量，保证明暗都可读 */
-const T_MAIN = 'var(--text-main, var(--ant-color-text, #003378))';
-const T_SUB = 'var(--text-sub, var(--ant-color-text-secondary, rgba(0,51,120,.66)))';
-const BORDER = 'var(--border, var(--ant-color-border, rgba(54,135,255,.28)))';
+/** 契约 §2.1 新配色序列 */
+const SERIES = ['#3b82f6', '#10b981', '#06b6d4', '#f59e0b', '#8b5cf6', '#ef4444'];
+const C_SOUTH = SERIES[0]; // 南区
+const C_NORTH = SERIES[1]; // 北区
+const C_STORE = SERIES[2]; // 门店数折线
 
 type Bucket = { south: number[]; north: number[] };
 
@@ -69,8 +66,58 @@ export function sumPicked(
   return { south, north };
 }
 
+/* ── 运行时解析 CSS 变量 ── */
+function readVar(name: string, fallback: string): string {
+  if (typeof window === 'undefined') return fallback;
+  const el = document.querySelector('.board-root') || document.documentElement;
+  const v = getComputedStyle(el).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+function useTokens() {
+  const mode = useThemeMode();
+  return useMemo(() => {
+    void mode;
+    return {
+      axis: readVar('--text3', '#93a7c2'),
+      axis2: readVar('--text2', '#5a7191'),
+      split: readVar('--line', '#dde8f6'),
+      line: readVar('--line', '#dde8f6'),
+      panel: readVar('--panel', '#ffffff'),
+      panel2: readVar('--panel2', '#f7faff'),
+      text: readVar('--text', '#16253d'),
+      text3: readVar('--text3', '#93a7c2'),
+      brand: readVar('--brand', '#2563eb'),
+      brandSoft: readVar('--brandSoft', '#e9f2ff'),
+    };
+  }, [mode]);
+}
+
+/* ══════════════ 局部样式（vb6- 前缀） ══════════════ */
+const CSS = `
+.vb6-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;height:100%;min-width:0}
+.vb6-card:hover{border-color:var(--brand3);box-shadow:var(--shadow2);transform:translateY(-1px)}
+.vb6-h{padding:13px 16px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent)}
+.vb6-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
+.vb6-dot{width:6px;height:6px;border-radius:2px;background:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 16%,transparent);flex-shrink:0}
+.vb6-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap}
+.vb6-b{padding:14px 16px;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
+
+/* 类型多选 chip（参照 pc4 .chip） */
+.vb6-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:9px}
+.vb6-chips .lb{font-size:11.5px;color:var(--text3);font-weight:600;margin-right:2px;white-space:nowrap}
+.vb6-chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:8px;cursor:pointer;user-select:none;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:11.5px;font-weight:550;transition:all .15s;white-space:nowrap}
+.vb6-chip:hover{border-color:var(--brand3);color:var(--brand)}
+.vb6-chip .sw{width:7px;height:7px;border-radius:2px;flex-shrink:0;transition:all .15s}
+.vb6-chip.on{background:linear-gradient(135deg,var(--brand),var(--brand2));border-color:transparent;color:#fff;box-shadow:0 3px 9px color-mix(in srgb,var(--brand) 28%,transparent)}
+.vb6-chip.on .sw{background:#fff!important}
+.vb6-all{height:24px;padding:0 9px;border-radius:8px;border:1px dashed var(--line);background:transparent;color:var(--brand);font-size:11.5px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
+.vb6-all:hover{background:var(--brandSoft);border-color:var(--brand3)}
+.vb6-empty{padding:40px 0;display:flex;align-items:center;justify-content:center}
+`;
+
 export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
-  const pal = useChartPalette();
+  const tok = useTokens();
 
   const trend = data?.row6?.signTrend as SignTrendData | undefined;
   const days = Array.isArray(trend?.days) ? (trend?.days ?? []) : [];
@@ -90,11 +137,9 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
   /** 堆叠柱数据：全量 or 选中类型求和 */
   const bars = useMemo(() => {
     if (!n) return { south: [] as number[], north: [] as number[], mode: 'none' as 'none' | 'all' | 'picked' | 'empty' };
-    // 后端没给 byChainType（或为空）→ 退回全量 south/north
     if (!typeNames.length) {
       return { south: fitArr(trend?.south, n), north: fitArr(trend?.north, n), mode: 'all' as const };
     }
-    // 用户把所有类型都取消 → 空图
     if (!picked.length) return { south: [], north: [], mode: 'empty' as const };
     return { ...sumPicked(byChainType, picked, n), mode: 'picked' as const };
   }, [n, typeNames, picked, byChainType, trend]);
@@ -103,11 +148,15 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
 
   const option = useMemo<EChartsOption>(() => ({
     color: [C_SOUTH, C_NORTH, C_STORE],
-    grid: { left: 4, right: 4, top: isMobile ? 58 : 54, bottom: 2, containLabel: true },
+    grid: { left: 4, right: 4, top: isMobile ? 60 : 56, bottom: 2, containLabel: true },
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-      ...tooltipStyle(pal),
+      axisPointer: { type: 'shadow', shadowStyle: { color: `color-mix(in srgb, ${tok.brand} 9%, transparent)` } },
+      backgroundColor: tok.panel,
+      borderColor: tok.line,
+      borderWidth: 1,
+      textStyle: { color: tok.text, fontSize: 12 },
+      extraCssText: 'box-shadow:0 6px 18px rgba(20,52,102,.16);border-radius:11px;padding:8px 10px;',
     },
     legend: {
       top: 0,
@@ -115,33 +164,34 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
       itemWidth: 10,
       itemHeight: 8,
       itemGap: 14,
-      textStyle: { color: pal.legend, fontSize: 11 },
+      icon: 'roundRect',
+      textStyle: { color: tok.axis2, fontSize: 11 },
       data: ['南区', '北区', '门店数'],
     },
     xAxis: {
       type: 'category',
       data: days,
       axisTick: { show: false },
-      axisLine: { lineStyle: { color: pal.axisLine } },
-      axisLabel: { color: pal.axis, fontSize: 10, interval: isMobile ? 5 : 2 },
+      axisLine: { lineStyle: { color: tok.line } },
+      axisLabel: { color: tok.axis, fontSize: 10, interval: isMobile ? 5 : 2 },
     },
     yAxis: [
       {
         type: 'value',
         name: isMobile ? '' : '客户数',
         minInterval: 1,
-        nameTextStyle: { color: pal.axis, fontSize: 10, padding: [0, 0, 0, 4] },
-        axisLabel: { color: pal.axis, fontSize: 10 },
+        nameTextStyle: { color: tok.axis, fontSize: 10, padding: [0, 0, 0, 4] },
+        axisLabel: { color: tok.axis, fontSize: 10 },
         axisLine: { show: false },
         axisTick: { show: false },
-        splitLine: { lineStyle: { color: pal.split, type: 'dashed' } },
+        splitLine: { lineStyle: { color: tok.split, type: 'dashed' } },
       },
       {
         type: 'value',
         name: isMobile ? '' : '门店数',
         minInterval: 1,
-        nameTextStyle: { color: pal.axis, fontSize: 10, padding: [0, 4, 0, 0] },
-        axisLabel: { color: pal.axis, fontSize: 10 },
+        nameTextStyle: { color: tok.axis, fontSize: 10, padding: [0, 4, 0, 0] },
+        axisLabel: { color: tok.axis, fontSize: 10 },
         axisLine: { show: false },
         axisTick: { show: false },
         splitLine: { show: false },
@@ -154,7 +204,7 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
         stack: 'clients',
         barMaxWidth: 12,
         emphasis: { focus: 'series' },
-        itemStyle: { color: C_SOUTH },
+        itemStyle: { color: C_SOUTH, borderRadius: [0, 0, 0, 0] },
         data: bars.south,
       },
       {
@@ -163,7 +213,7 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
         stack: 'clients',
         barMaxWidth: 12,
         emphasis: { focus: 'series' },
-        itemStyle: { color: C_NORTH },
+        itemStyle: { color: C_NORTH, borderRadius: [3, 3, 0, 0] },
         data: bars.north,
       },
       {
@@ -176,22 +226,36 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
         showSymbol: !isMobile,
         itemStyle: { color: C_STORE },
         lineStyle: { width: 2, color: C_STORE },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(6,182,212,.18)' },
+              { offset: 1, color: 'rgba(6,182,212,0)' },
+            ],
+          },
+        },
         data: stores,
       },
     ],
-  }), [pal, days, bars, stores, isMobile]);
+  }), [tok, days, bars, stores, isMobile]);
 
   const height = isMobile ? 220 : 300;
 
   let body: React.ReactNode;
   if (!n) {
-    body = <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无签约趋势数据" style={{ padding: '48px 0' }} />;
+    body = (
+      <div className="vb6-empty">
+        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无签约趋势数据" />
+      </div>
+    );
   } else if (bars.mode === 'empty') {
     body = (
-      <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="vb6-empty" style={{ height }}>
         <Empty
           image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description={<span style={{ color: T_SUB, fontSize: 12 }}>请至少选择一种连锁类型</span>}
+          description={<span style={{ color: 'var(--text2)', fontSize: 12 }}>请至少选择一种连锁类型</span>}
         />
       </div>
     );
@@ -200,54 +264,46 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
   }
 
   return (
-    <Card
-      variant="outlined"
-      loading={loading && !n}
-      style={{ background: 'var(--bg-card, var(--ant-color-bg-container, #FFFFFF))', border: `1px solid ${BORDER}`, borderRadius: 12, height: '100%' }}
-      styles={{ body: { padding: isMobile ? 12 : 16 } }}
-      title={<span style={{ fontSize: 14, fontWeight: 600, color: T_MAIN }}>签约趋势</span>}
-      extra={<span style={{ fontSize: 12, color: T_SUB }}>最近 30 天</span>}
-    >
-      {typeNames.length > 0 && (
-        <Space size={[6, 6]} wrap style={{ marginBottom: 8 }}>
-          <span style={{ fontSize: 12, color: T_SUB }}>连锁类型</span>
-          {typeNames.map((t) => {
-            const checked = picked.includes(t);
-            const accent = CHAIN_TYPE_COLORS[t] || C_STORE;
-            return (
-              <Tag.CheckableTag
-                key={t}
-                checked={checked}
-                onChange={(ck) => {
-                  setPicked((prev) => (ck ? [...prev, t] : prev.filter((x) => x !== t)));
-                }}
-                style={{
-                  fontSize: 12,
-                  lineHeight: '20px',
-                  padding: '0 8px',
-                  border: `1px solid ${checked ? accent : BORDER}`,
-                  borderRadius: 4,
-                  background: checked ? accent : 'transparent',
-                  color: checked ? '#FFFFFF' : T_SUB,
-                }}
-              >
-                {t}
-              </Tag.CheckableTag>
-            );
-          })}
-          {!allSelected && typeNames.length > 0 && (
-            <Button
-              type="link"
-              size="small"
-              style={{ padding: 0, height: 20, fontSize: 12 }}
-              onClick={() => setPicked(typeNames)}
-            >
-              全选
-            </Button>
+    <>
+      <style>{CSS}</style>
+      <div className="vb6-card">
+        <div className="vb6-h">
+          <h3>
+            <span className="vb6-dot" />
+            签约趋势
+          </h3>
+          <span className="vb6-hint">最近 30 天</span>
+        </div>
+        <div className="vb6-b">
+          {typeNames.length > 0 && (
+            <div className="vb6-chips">
+              <span className="lb">连锁类型</span>
+              {typeNames.map((t) => {
+                const on = picked.includes(t);
+                return (
+                  <span
+                    key={t}
+                    className={`vb6-chip${on ? ' on' : ''}`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setPicked((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') setPicked((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]));
+                    }}
+                  >
+                    <span className="sw" style={{ background: on ? '#fff' : 'var(--brand)' }} />
+                    {t}
+                  </span>
+                );
+              })}
+              {!allSelected && typeNames.length > 0 && (
+                <button type="button" className="vb6-all" onClick={() => setPicked(typeNames)}>全选</button>
+              )}
+            </div>
           )}
-        </Space>
-      )}
-      {body}
-    </Card>
+          {body}
+        </div>
+      </div>
+    </>
   );
 }
