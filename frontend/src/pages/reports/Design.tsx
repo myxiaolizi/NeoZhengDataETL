@@ -17,7 +17,7 @@ import {
 import {
   ArrowDownOutlined, ArrowLeftOutlined, ArrowUpOutlined, BgColorsOutlined,
   CheckOutlined, DeleteOutlined, DownloadOutlined, EyeOutlined, LayoutOutlined,
-  PlusOutlined, ReloadOutlined, SaveOutlined, SettingOutlined, UploadOutlined,
+  PlusOutlined, SaveOutlined, SettingOutlined, UploadOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import Page from '@/components/Page';
@@ -501,7 +501,7 @@ export default function ReportDesign() {
 
   if (loading) {
     return (
-      <Page title="看板设计器">
+      <Page back="/reports" backText="返回报表中心" title="看板设计器">
         <div style={{ padding: 24, background: 'var(--panel)', borderRadius: 16, border: '1px solid var(--line)' }}>
           <Skeleton active paragraph={{ rows: 10 }} />
         </div>
@@ -511,7 +511,7 @@ export default function ReportDesign() {
 
   if (err) {
     return (
-      <Page title="看板设计器">
+      <Page back="/reports" backText="返回报表中心" title="看板设计器">
         <Alert type="error" showIcon message="加载失败" description={err} />
       </Page>
     );
@@ -561,9 +561,6 @@ export default function ReportDesign() {
         </Tooltip>
         <Tooltip title="导入配置 JSON">
           <Button icon={<UploadOutlined />} onClick={importJson} />
-        </Tooltip>
-        <Tooltip title="重新加载数据">
-          <Button icon={<ReloadOutlined />} onClick={() => { void loadData(); void loadReport(); }} />
         </Tooltip>
         <Button icon={<EyeOutlined />} onClick={() => navigate(`/reports/${id}/view`)}>预览</Button>
         <Button

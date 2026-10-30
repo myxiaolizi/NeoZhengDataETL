@@ -3,6 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <!--
+      这里的 <title> 只是**首屏占位**。
+      真实标题由前端在拿到站点设置后覆盖：
+        · stores/app.ts 的 fetchSite()（后台布局，BasicLayout 挂载时）
+        · stores/app.ts 的 useSiteBrand()（登录 / 注册 / 找回密码 / 重置密码等公开页）
+      两处都会执行 document.title = 站点名称（设置项 site_name），
+      因此「系统设置里改平台名称 → 刷新 → 浏览器标签页标题立即跟着变」。
+    -->
     <title>Neo Zheng DataETL</title>
   </head>
   <body>

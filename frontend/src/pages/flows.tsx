@@ -1,4 +1,4 @@
-/** 处理流程列表（V4.1 页面规范）：流程编排入口 / 新建 / 启停 / 执行 / 日志
+/** 处理流程列表（V6.1 页面规范）：流程编排入口 / 新建 / 启停 / 执行 / 日志
  *
  * 结构：本页名称 + 搜索区 + 新建 → 数据卡片 → 流程列表（桌面表格 / 移动端卡片）
  */
@@ -8,7 +8,7 @@ import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
   Alert, Button, Card, Col, Dropdown, Empty, Form, Grid, Input, Modal, Row, Select,
-  Space, Switch, Tag, Tooltip, message,
+  Space, Switch, Tag, message,
 } from 'antd';
 import {
   CopyOutlined, DeleteOutlined, EditOutlined, FileSearchOutlined, MoreOutlined,
@@ -507,11 +507,6 @@ export default function FlowsPage() {
             新建流程
           </Button>
         ) : null
-      }
-      extra={
-        <Tooltip title="刷新列表">
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading} aria-label="刷新" />
-        </Tooltip>
       }
       stats={statItems}
     >

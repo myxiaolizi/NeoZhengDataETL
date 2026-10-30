@@ -8,22 +8,19 @@
  *   失败 → 重新渲染注册页并带 `.alert-error`；未开放注册时是 `.error-page`
  *
  * 视觉与 login.tsx 完全一致：白底居中 Card + 渐变方形品牌标识。
+ *
+ * V6.1：品牌区（名称 / 副标题 / Logo 方块）改为读站点信息（useSiteBrand），
+ * 不再硬编码；document.title 同步跟随站点名称。
  */
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Alert, Button, Card, Form, Grid, Input, Result, Space, Typography } from 'antd';
 import { LockOutlined, MailOutlined, SmileOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import { api } from '@/api/client';
+import { useAppStore, useSiteBrand } from '@/stores/app';
 import { PALETTE, NEUTRAL } from '@/theme';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
-
-const BRAND = {
-  name: 'Neo Zheng DataETL',
-  subtitle: '企业数据集成平台 · V4.0',
-  logo: 'N',
-};
 
 /* ---------------- 认证表单提交（与服务端渲染表单等价） ---------------- */
 interface AuthResult {
@@ -97,27 +94,15 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [successInfo, setSuccessInfo] = useState('');
   const navigate = useNavigate();
+  const { brandName, brandSubtitle, brandLogoText } = useSiteBrand();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
 
-  /* 自助注册开关：来自公开设置接口，避免用户填完表单才被告知「未开放注册」 */
-  const [allowReg, setAllowReg] = useState<boolean | null>(null);
-  useEffect(() => {
-    let alive = true;
-    api
-      .get<Record<string, string>>('/settings/public', { silent: true })
-      .then((v) => {
-        if (!alive) return;
-        const raw = String((v && v.allow_registration) || '').toLowerCase();
-        setAllowReg(['1', 'true', 'yes', 'on'].includes(raw));
-      })
-      .catch(() => {
-        if (alive) setAllowReg(null); // 接口不可用时不阻塞，交给后端判定
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
+  /* 自助注册开关：来自公开设置接口（allow_registration）。
+     由 useSiteBrand() → store.fetchSite() 统一拉取，本页不再重复请求：
+     同一份 /api/settings/public 同时驱动品牌区、浏览器标题与注册开关，
+     避免「两个请求拿到不同缓存」导致提示与实际状态不一致。 */
+  const allowReg = useAppStore((s) => s.allowRegistration);
 
   const onFinish = async (values: any) => {
     setLoading(true);
@@ -168,13 +153,13 @@ export default function RegisterPage() {
               fontWeight: 700,
             }}
           >
-            {BRAND.logo}
+            {brandLogoText}
           </div>
           <Title level={4} style={{ margin: 0, color: NEUTRAL.text }}>
-            {BRAND.name}
+            {brandName}
           </Title>
           <Text type="secondary" style={{ fontSize: 12.5 }}>
-            {BRAND.subtitle}
+            {brandSubtitle}
           </Text>
         </div>
 

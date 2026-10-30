@@ -1,5 +1,5 @@
 /**
- * 报表查看（V4.1 统一规范：Page 顶部标题区 + stats 数据卡片 + @/theme 配色令牌）
+ * 报表查看（V6.1 统一规范：Page 顶部标题区 + stats 数据卡片 + @/theme 配色令牌）
  * - 图表主体 + 报表信息 + 数据明细表；移动端单列，图表与表格自适应
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,11 +22,9 @@ import {
   Tooltip,
 } from 'antd';
 import {
-  ArrowLeftOutlined,
   DownloadOutlined,
   EditOutlined,
   FullscreenOutlined,
-  ReloadOutlined,
   ShareAltOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -201,7 +199,7 @@ export default function ReportView() {
 
   if (loading && !report) {
     return (
-      <Page title="报表查看">
+      <Page back="/reports" backText="返回报表中心" title="报表查看">
         <Card style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12 }}>
           <Skeleton active paragraph={{ rows: 10 }} />
         </Card>
@@ -212,12 +210,9 @@ export default function ReportView() {
   if (!report) {
     return (
       <Page
+        back="/reports"
+        backText="返回报表中心"
         title="报表查看"
-        actions={
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/reports')}>
-            返回报表中心
-          </Button>
-        }
       >
         <Alert
           type="error"
@@ -237,12 +232,11 @@ export default function ReportView() {
   return (
     <div ref={wrapRef} style={{ background: NEUTRAL.pageBg, minHeight: '100%' }}>
       <Page
+        back="/reports"
+        backText="返回报表中心"
         title={report.name}
         actions={
           <>
-            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/reports')}>
-              返回
-            </Button>
             {canWrite && (
               <Button icon={<EditOutlined />} onClick={() => navigate(`/reports/${report.id}/design`)}>
                 设计
@@ -282,11 +276,6 @@ export default function ReportView() {
                 <Switch size="small" checked={autoRefresh} onChange={setAutoRefresh} />
                 自动
               </span>
-            </Tooltip>
-            <Tooltip title="刷新数据">
-              <Button icon={<ReloadOutlined />} onClick={() => load()} loading={loading}>
-                {isMobile ? '' : '刷新'}
-              </Button>
             </Tooltip>
             {!isMobile && (
               <Tooltip title="全屏查看">

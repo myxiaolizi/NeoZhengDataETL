@@ -14,11 +14,14 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  ArrowLeftOutlined, CopyOutlined, DatabaseOutlined, KeyOutlined, ReloadOutlined,
-  TableOutlined,
+  ArrowLeftOutlined, CopyOutlined, DatabaseOutlined, DownloadOutlined, KeyOutlined,
+  ReloadOutlined, TableOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import Page from '@/components/Page';
+import DataTable, {
+  filtersToQuery, type DataColumn, type FilterItem, type SortState,
+} from '@/components/DataTable';
 import type { StatCardItem } from '@/components/StatCards';
 import { usePermission } from '@/stores/app';
 import { NEUTRAL, PALETTE, SHADOW } from '@/theme';
@@ -396,9 +399,6 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
             { label: '失败', value: 'failed' },
           ]}
         />
-        <Button size={isMobile ? 'large' : 'middle'} icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
-          刷新
-        </Button>
         {can('log:clear') && (
           <Button size={isMobile ? 'large' : 'middle'} danger onClick={doClear}>清空日志</Button>
         )}
@@ -489,6 +489,17 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
 
 /* ══════════════ 数据 Tab ══════════════ */
 
+/**
+ * 数据明细（V6.1 统一实现）
+ *
+ * 改造要点（对应用户要求 7/8/9/10）：
+ *  - 搜索框从「单独占一行」改为进入表格标题栏，位于列设置按钮左侧；
+ *  - 新增列显示/隐藏 + 列排序（入口在标题栏最右端），按 storageKey 持久化；
+ *  - 新增筛选（多条件 AND，走服务端 `filters` 参数）；
+ *  - 表头排序走服务端 `sort`/`dir`；
+ *  - 去掉刷新按钮，改由搜索/筛选/排序/分页变化自动取数。
+ * 与「邮箱推送 · 数据项目」共用 @/components/DataTable，保证格式与功能完全一致。
+ */
 function DataTab({
   projectId, parsedColumns, isMobile,
 }: {
@@ -503,19 +514,32 @@ function DataTab({
   const [error, setError] = useState('');
   const [keywordInput, setKeywordInput] = useState('');
   const [keyword, setKeyword] = useState('');
+  const [sort, setSort] = useState<SortState | null>(null);
+  const [filters, setFilters] = useState<FilterItem[]>([]);
 
+  /**
+   * 取数：依赖只有稳定的标量（projectId/page/pageSize/keyword/sort/filters）
+   * + 稳定的 setter，**不含 data/columns 这类每次渲染都换引用的值**，
+   * 否则会像历史问题那样形成无限请求循环。
+   */
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const d = await fetchParsedRecords(projectId, { page, pageSize, keyword });
+      const d = await fetchParsedRecords(projectId, {
+        page,
+        pageSize,
+        keyword,
+        ...(sort ? { sort: sort.column, dir: sort.order } : {}),
+        ...(filters.length ? { filters: filtersToQuery(filters) } : {}),
+      });
       setData(d);
     } catch (e) {
       setError(e instanceof Error ? e.message : '解析数据加载失败');
     } finally {
       setLoading(false);
     }
-  }, [projectId, page, pageSize, keyword]);
+  }, [projectId, page, pageSize, keyword, sort, filters]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -527,98 +551,96 @@ function DataTab({
       .slice(0, 40);
   }, [data?.columns, parsedColumns]);
 
-  const columns = useMemo<ColumnsType<DataRow>>(() => {
-    const idField = data?.idField;
-    const first: ColumnsType<DataRow> = [
-      {
-        title: idField?.label || '数据 ID',
-        dataIndex: 'display_id',
-        key: 'display_id',
-        width: 170,
-        fixed: 'left',
-        ellipsis: true,
-        render: (_v, row) => (
-          <Text code style={{ fontSize: 11.5 }}>
-            {String(row.display_id || row.jdy_data_id || row.id || '-')}
-          </Text>
-        ),
-      },
-    ];
-    const rest: ColumnsType<DataRow> = effectiveColumns.map((c) => ({
-      title: c.comment || c.name,
-      dataIndex: c.name,
-      key: c.name,
-      width: 150,
-      ellipsis: true,
-      render: (v: unknown) => {
-        const text = cellText(v, 60);
-        return text ? <span style={{ fontSize: 12 }}>{text}</span> : <Text type="secondary">-</Text>;
-      },
+  /** 数据 ID 列（固定最前，不参与隐藏/排序，用 renderCell 兜底） */
+  const idLabel = data?.idField?.label || '数据 ID';
+
+  /** DataTable 的列定义：首列「数据 ID」+ 解析列 */
+  const dtColumns: DataColumn[] = useMemo(() => {
+    /*
+     * display_id 是后端**拼出来的合成列**（display_id = idField 列的值），
+     * 不是物理列。服务端的排序/筛选白名单只认真实物理列，所以这里必须
+     * 标记 sortable/filterable = false，否则用户点排序、加筛选都会被
+     * 静默丢弃，表现为「点了没反应」。
+     * 需要按 ID 过滤时，用「搜索」框（后端 keyword 覆盖 jdy_data_id）。
+     */
+    const idCol: DataColumn = {
+      name: 'display_id',
+      label: idLabel,
+      comment: 'jdy_data_id / 业务主键（合成列，不支持排序与筛选）',
+      sortable: false,
+      filterable: false,
+    };
+    const rest: DataColumn[] = effectiveColumns.map((c) => ({
+      name: c.name,
+      label: c.comment || c.name,
+      comment: c.comment || c.name,
+      type: c.type,
     }));
-    return [...first, ...rest];
-  }, [effectiveColumns, data?.idField]);
+    return [idCol, ...rest];
+  }, [effectiveColumns, idLabel]);
+
+  /** 单元格渲染：数据 ID 用 code 样式，其余走默认（由 DataTable 内部处理） */
+  const renderCell = useCallback((row: DataRow, col: DataColumn) => {
+    if (col.name === 'display_id') {
+      return (
+        <Text code style={{ fontSize: 11.5 }}>
+          {String(row.display_id || row.jdy_data_id || row.id || '-')}
+        </Text>
+      );
+    }
+    return undefined;
+  }, []);
+
+  const applySearch = useCallback(() => {
+    setKeyword(keywordInput.trim());
+    setPage(1);
+  }, [keywordInput]);
 
   return (
-    <Card
-      variant="outlined"
-      style={cardStyle}
-      styles={{ body: { padding: isMobile ? 12 : 14 } }}
-      title={<span style={cardTitleStyle}>解析后数据</span>}
-      extra={<Text type="secondary" style={{ fontSize: 12 }}>共 {fmtNum(data?.total || 0)} 行</Text>}
-    >
-      <Space size={8} wrap style={{ marginBottom: 10 }}>
-        <Input.Search
-          allowClear
-          placeholder="搜索数据ID / 表单名 / 任意字段值"
-          style={{ width: isMobile ? '100%' : 320 }}
-          size={isMobile ? 'large' : 'middle'}
-          value={keywordInput}
-          onChange={(e) => setKeywordInput(e.target.value)}
-          onSearch={(v) => { setKeyword(v.trim()); setPage(1); }}
-        />
-        <Button size={isMobile ? 'large' : 'middle'} icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
-          刷新
-        </Button>
-      </Space>
-
-      {error ? (
-        <Alert
-          type="error"
-          showIcon
-          title="数据加载失败"
-          description={error}
-          action={<Button size="small" icon={<ReloadOutlined />} onClick={() => void load()}>重试</Button>}
-        />
-      ) : (
-        <Table<DataRow>
-          rowKey={(row, i) => String(row.id ?? i)}
-          size="small"
-          loading={loading}
-          columns={columns}
-          dataSource={data?.list || []}
-          scroll={{ x: 'max-content' }}
-          locale={{
-            emptyText: (
-              <Empty
-                image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description="暂无解析数据（可先到「字段配置」执行同步结构回填）"
-              />
-            ),
-          }}
-          pagination={{
-            current: page,
-            pageSize,
-            total: data?.total || 0,
-            showSizeChanger: true,
-            pageSizeOptions: [10, 20, 50, 100],
-            showTotal: (t) => `共 ${t} 行`,
-            onChange: (p, ps) => { setPage(p); setPageSize(ps); },
-          }}
-        />
-      )}
-    </Card>
+    <div style={{ ...cardStyle, background: NEUTRAL.surface, border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, padding: isMobile ? 12 : 14 }}>
+      <DataTable<DataRow>
+        title="数据明细"
+        total={Number(data?.total || 0)}
+        rows={data?.list || []}
+        columns={dtColumns}
+        loading={loading}
+        error={error}
+        onRetry={() => void load()}
+        rowKey={(row, i) => String(row.id ?? i)}
+        searchPlaceholder="搜索数据ID / 表单名 / 任意字段值"
+        keywordInput={keywordInput}
+        onKeywordInputChange={setKeywordInput}
+        onSearch={applySearch}
+        onResetSearch={() => { setKeywordInput(''); setKeyword(''); setPage(1); }}
+        sort={sort}
+        onSortChange={(s) => { setSort(s); setPage(1); }}
+        filters={filters}
+        onFiltersChange={(f) => { setFilters(f); setPage(1); }}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={(p, s) => { setPage(p); setPageSize(s); }}
+        extra={(
+          <Button
+            size="small"
+            icon={<DownloadOutlined />}
+            onClick={() => { window.open(`/api/projects/${projectId}/export`, '_blank', 'noopener'); }}
+          >
+            {isMobile ? '' : '导出'}
+          </Button>
+        )}
+        storageKey="projects.detail.parsed"
+        renderCell={renderCell}
+        emptyText={(
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description="暂无解析数据（可先到「字段配置」执行同步结构回填）"
+          />
+        )}
+      />
+    </div>
   );
 }
+
 
 /* ══════════════ 页面 ══════════════ */
 
@@ -754,17 +776,10 @@ export default function ProjectDetailPage() {
 
   return (
     <Page
+      back="/projects"
+      backText="返回数据项目"
       title={project ? project.name : '项目详情'}
-      actions={
-        <>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/projects')}>
-            {isMobile ? '' : '返回列表'}
-          </Button>
-          <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
-            {isMobile ? '' : '刷新'}
-          </Button>
-        </>
-      }
+      /* V6.1：返回按钮移到标题最左侧（Page.back），页面不再提供刷新按钮 */
       subTabs={
         <Tabs
           activeKey={tab}

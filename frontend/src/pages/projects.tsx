@@ -1,8 +1,9 @@
 /**
- * 数据项目列表（V4.1 页面规范）
+ * 数据项目列表（V6.1 页面规范）
  *
- * 结构：本页名称 + 搜索区（分组筛选 / 关键字）+ 新建 → 数据卡片（5 个）→ 分组快筛条 + 项目卡片网格
- * 交互：新建/编辑/删除项目、分组管理、令牌、启停、搜索、分页；统计一律用页面已有数据就地算。
+ * 结构：左=返回区+本页名称，右=搜索区（分组筛选 / 关键字）+ 新建 → 数据卡片（5 个）→ 分组快筛条 + 项目卡片网格
+ * 交互：新建/编辑/删除项目、**分组管理（Modal，可增删改）**、令牌、启停、搜索、分页；
+ *       统计一律用页面已有数据就地算。页面不提供刷新按钮（增删改后自动重新拉取）。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -11,7 +12,7 @@ import {
 } from 'antd';
 import {
   AppstoreOutlined, DeleteOutlined, EditOutlined, FolderOutlined, PlusOutlined,
-  ReloadOutlined, UnorderedListOutlined,
+  ReloadOutlined, SettingOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
@@ -27,6 +28,7 @@ import { fmtNum } from '@/utils';
 import ProjectCard from './projects/ProjectCard';
 import ProjectFormModal from './projects/ProjectFormModal';
 import GroupFormModal from './projects/GroupFormModal';
+import GroupManageModal from './projects/GroupManageModal';
 
 const { useBreakpoint } = Grid;
 
@@ -67,6 +69,8 @@ export default function ProjectsPage() {
   const [editingProject, setEditingProject] = useState<ProjectRow | null>(null);
   const [groupFormOpen, setGroupFormOpen] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ProjectGroupNode | null>(null);
+  /** 分组管理 Modal（V6.1 新增：分组编辑/删除的主入口） */
+  const [groupManageOpen, setGroupManageOpen] = useState(false);
   const [togglingId, setTogglingId] = useState<number | null>(null);
 
   const canWrite = can('project:write');
@@ -255,6 +259,9 @@ export default function ProjectsPage() {
 
   const actionsArea = canWrite ? (
     <>
+      <Button icon={<SettingOutlined />} onClick={() => setGroupManageOpen(true)}>
+        {isMobile ? '' : '分组管理'}
+      </Button>
       <Button icon={<FolderOutlined />} onClick={openCreateGroup}>
         {isMobile ? '' : '新建分组'}
       </Button>
@@ -262,20 +269,23 @@ export default function ProjectsPage() {
         新建项目
       </Button>
     </>
-  ) : null;
-
-  const extraArea = (
-    <Tooltip title="刷新">
-      <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading} aria-label="刷新" />
-    </Tooltip>
+  ) : (
+    <Button icon={<SettingOutlined />} onClick={() => setGroupManageOpen(true)}>
+      {isMobile ? '' : '分组管理'}
+    </Button>
   );
+
+  /*
+   * V6.1：页面不再提供刷新按钮（用户要求「所有的页面都不需要刷新按钮」）。
+   * 数据刷新由以下时机自动触发：搜索 / 分组筛选 / 包含子分组切换 / 分页 /
+   * 新建·编辑·删除·启停成功后的回调 —— 已覆盖全部刷新场景。
+   */
 
   return (
     <Page
       title="数据项目"
       search={searchArea}
       actions={actionsArea}
-      extra={extraArea}
       stats={statItems}
     >
       {/* 分组快筛条（保留 V4.0 的标签筛选交互，位于数据卡片下方） */}
@@ -313,6 +323,17 @@ export default function ProjectsPage() {
         <div style={{ flex: 1 }} />
 
         <Space size={8}>
+          {canWrite && (
+            <Tooltip title="分组管理（增删改）">
+              <Button
+                size="small"
+                icon={<SettingOutlined />}
+                onClick={() => setGroupManageOpen(true)}
+              >
+                管理
+              </Button>
+            </Tooltip>
+          )}
           {currentGroup && canWrite && (
             <>
               <Tooltip title="编辑当前分组">
@@ -432,6 +453,24 @@ export default function ProjectsPage() {
         flat={flatGroups}
         onClose={() => setGroupFormOpen(false)}
         onSaved={async () => { setGroupFormOpen(false); await load(); }}
+      />
+      {/*
+       * V6.1 新增：分组管理 Modal —— 分组编辑/删除的**主入口**。
+       * 之前的实现只在「选中某个分组标签后」才在筛选条右侧露出编辑/删除小图标，
+       * 用户反馈「分组无法管理和删除」。现在改为一个明确的、始终可见的管理面板：
+       * 树形列出全部分组（含层级与项目数），每行可编辑 / 删除 / 新建子分组。
+       */}
+      <GroupManageModal
+        open={groupManageOpen}
+        groups={groups}
+        loading={loading}
+        canWrite={canWrite}
+        onClose={() => setGroupManageOpen(false)}
+        onChanged={async () => { await load(); }}
+        onDeleted={(id) => {
+          // 删掉的正是当前筛选的分组 → 回到「全部」，避免停在已不存在的分组上
+          if (String(groupKey) === String(id)) setGroupKey(ALL_KEY);
+        }}
       />
     </Page>
   );

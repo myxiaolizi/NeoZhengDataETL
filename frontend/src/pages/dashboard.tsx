@@ -159,14 +159,9 @@ export default function DashboardPage() {
       title="数据概览"
       stats={kpis}
       extra={
-        <Space size={8}>
-          <Button icon={<DashboardOutlined />} onClick={() => navigate('/dashboard/crm')}>
-            客户签约看板
-          </Button>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
-            刷新
-          </Button>
-        </Space>
+        <Button icon={<DashboardOutlined />} onClick={() => navigate('/dashboard/crm')}>
+          客户签约看板
+        </Button>
       }
     >
       <Row gutter={[12, 12]}>
@@ -349,7 +344,7 @@ export default function DashboardPage() {
       </Row>
 
       <div style={{ marginTop: 10, fontSize: 11.5, color: NEUTRAL.textTertiary }}>
-        <CloudDownloadOutlined /> 概览数据为实时查询，下拉或点击「刷新」可获取最新状态
+        <CloudDownloadOutlined /> 概览数据为实时查询，进入本页或切换标签时自动同步最新状态
       </div>
     </Page>
   );

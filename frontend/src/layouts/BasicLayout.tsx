@@ -1,30 +1,31 @@
 /**
- * 主布局（V4.1）
+ * 主布局（V6.1）
  *
  * 本轮改动对应要求：
- *  1. 顶部「标签栏」与「用户名」合并为一行 —— Header 左=标签页（可横向滚动/更多菜单），
- *     右=头像+用户名下拉；**移除面包屑**，不再显示当前菜单名称与路径。
+ *  1. 顶部「浏览器式标签栏」与「用户名」合并为一行 —— Header 左=标签带（横向滚动 +
+ *     左右滚动按钮），右=头像+用户名下拉；**移除面包屑**，不显示当前菜单名称与路径。
  *  2. 菜单收起按钮从 Header 移到侧栏**底部**：品牌区（固定）→ 菜单区（可滚动）→ 底部工具区（固定）。
  *     移动端仍是左侧抽屉导航（抽屉内同样蓝底白字）。
- *  3. 侧栏品牌区显示「系统设置 → 平台名称」与版本号 V4.1；收起态只留 logo 方块。
+ *  3. 侧栏品牌区显示「系统设置 → 平台名称」+ **站点副标题**（site_subtitle，
+ *     为空时回退版本号 APP_VERSION），标题/副标题均 ellipsis；
+ *     名称与副标题都来自 stores/app 的站点信息（fetchSite 后即时生效，无需重登）。
  *  4. 侧栏蓝底白字：Sider 深蓝竖直渐变（SIDER.bgFrom → SIDER.bgTo），Menu 用 dark 主题，
  *     菜单文字/选中/hover/分组标题全部由 @/theme 的 SIDER.* 决定（令牌在 main.tsx 配好），
  *     选中项左侧 3px 白色竖条由 global.css 的 .v41-sider 规则补。
  *  5. 页面底色 NEUTRAL.pageBg，Content 内边距桌面 16 / 移动 10。
+ *  6. **无刷新按钮**（要求 6）：Header 与侧栏都不提供任何刷新/重载入口。
+ *  7. fetchSite 成功后同步 document.title = 站点名称（index.html 里的 title 只是占位）。
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Layout, Menu, Avatar, Dropdown, Grid, Drawer, Button } from 'antd';
 import {
-  DashboardOutlined, ProjectOutlined, FormOutlined, SwapOutlined, MailOutlined,
-  NodeIndexOutlined, DatabaseOutlined, TableOutlined, BarChartOutlined, ShareAltOutlined,
-  RobotOutlined, SafetyOutlined, FileSearchOutlined, TeamOutlined, KeyOutlined,
-  SettingOutlined, InfoCircleOutlined, QuestionCircleOutlined, UserOutlined,
-  LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, FundOutlined, MenuOutlined,
+  LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MenuOutlined, UserOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { APP_VERSION, useAppStore } from '@/stores/app';
 import { useTabsStore } from '@/stores/tabs';
 import TabsBar from './TabsBar';
+import { MENU_ICONS } from './icons';
 import { ROUTES, MENU_GROUPS } from '@/routes';
 import { NEUTRAL, PALETTE, SHADOW, SIDER } from '@/theme';
 
@@ -41,39 +42,20 @@ const SIDER_COLLAPSED_WIDTH = 64;
 /** 侧栏竖直渐变：蓝底白字的底色 */
 const SIDER_GRADIENT = `linear-gradient(180deg, ${SIDER.bgFrom} 0%, ${SIDER.bgTo} 100%)`;
 
-const ICONS: Record<string, React.ReactNode> = {
-  DashboardOutlined: <DashboardOutlined />,
-  FundOutlined: <FundOutlined />,
-  ProjectOutlined: <ProjectOutlined />,
-  FormOutlined: <FormOutlined />,
-  SwapOutlined: <SwapOutlined />,
-  MailOutlined: <MailOutlined />,
-  NodeIndexOutlined: <NodeIndexOutlined />,
-  DatabaseOutlined: <DatabaseOutlined />,
-  TableOutlined: <TableOutlined />,
-  BarChartOutlined: <BarChartOutlined />,
-  ShareAltOutlined: <ShareAltOutlined />,
-  RobotOutlined: <RobotOutlined />,
-  SafetyOutlined: <SafetyOutlined />,
-  FileSearchOutlined: <FileSearchOutlined />,
-  TeamOutlined: <TeamOutlined />,
-  KeyOutlined: <KeyOutlined />,
-  SettingOutlined: <SettingOutlined />,
-  InfoCircleOutlined: <InfoCircleOutlined />,
-  QuestionCircleOutlined: <QuestionCircleOutlined />,
-  UserOutlined: <UserOutlined />,
-};
-
 export default function BasicLayout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, can, logout, siteName, siteLogoText, fetchSite } = useAppStore();
+  const {
+    user, can, logout,
+    siteName, siteSubtitle, siteLogoText,
+    fetchSite,
+  } = useAppStore();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const { openTab, reset: resetTabs } = useTabsStore();
+  const { openTab, bindUser, reset: resetTabs } = useTabsStore();
 
   /** 侧栏品牌区是否显示文字（移动端抽屉里始终显示） */
   const showBrandText = !(collapsed && !isMobile);
@@ -81,8 +63,10 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
   /** 站点名称兜底：store 里已兜底，这里再做一层防御，避免接口异常时品牌区空白 */
   const brandName = (siteName || '').trim() || 'Neo Zheng DataETL';
   const brandLogoText = (siteLogoText || '').trim().slice(0, 1) || 'N';
+  /** 品牌区副标题：优先站点副标题（设置项 site_subtitle），为空才回退版本号 */
+  const brandSubtitle = (siteSubtitle || '').trim() || APP_VERSION;
 
-  /** 站点名称：挂载时取一次（公开接口，无需登录） */
+  /** 站点信息：挂载时取一次（公开接口，无需登录），成功后同步浏览器标题 */
   useEffect(() => {
     fetchSite();
   }, [fetchSite]);
@@ -99,7 +83,7 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
         (r) => r.group === groupKey && !r.hideInMenu && (!r.permission || can(r.permission))
       ).map((r) => ({
         key: r.path,
-        icon: r.icon ? ICONS[r.icon] : undefined,
+        icon: r.icon ? MENU_ICONS[r.icon] : undefined,
         label: r.name,
       }));
 
@@ -134,12 +118,23 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
     return hit ? [hit.path] : [];
   }, [location.pathname, user, can]);
 
+  /**
+   * 标签持久化按用户绑定：登录态就绪后载入该用户自己的 tabs/activeKey。
+   *
+   * 为什么不在 store 初始化时直接读 localStorage：被 401 踢出 / 换账号登录时，
+   * 那份数据属于上一个账号，直接读会让新账号继承别人的标签列表。
+   * user 变化（含登出置空）时重新绑定：登出 → 解绑并回到初始态。
+   */
+  useEffect(() => {
+    bindUser(user?.username || null);
+  }, [user?.username, bindUser]);
+
   /** 路由变化时同步标签页 */
   useEffect(() => {
     openTab(location.pathname);
   }, [location.pathname, openTab]);
 
-  /** 退出登录时清空标签 */
+  /** 退出登录时清空标签（并清掉 localStorage 持久化） */
   const handleLogout = async () => {
     resetTabs();
     await logout();
@@ -181,7 +176,7 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
     },
   };
 
-  /** 品牌区：蓝底上的 logo 方块 + 站点名称 + 版本号（收起态只剩方块） */
+  /** 品牌区：蓝底上的 logo 方块 + 站点名称 + 副标题（收起态只剩方块） */
   const brand = (
     <div
       style={{
@@ -215,7 +210,8 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
         {brandLogoText}
       </div>
       {showBrandText && (
-        <div style={{ minWidth: 0 }}>
+        // minWidth:0 是 ellipsis 生效的前提（flex 子项默认 min-width:auto 不会收缩）
+        <div style={{ minWidth: 0, flex: 1 }}>
           <div
             title={brandName}
             style={{
@@ -230,8 +226,18 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
           >
             {brandName}
           </div>
-          <div style={{ fontSize: 10.5, color: SIDER.groupTitleColor, lineHeight: 1.2 }}>
-            {APP_VERSION}
+          <div
+            title={brandSubtitle}
+            style={{
+              fontSize: 10.5,
+              color: SIDER.groupTitleColor,
+              lineHeight: 1.2,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {brandSubtitle}
           </div>
         </div>
       )}
@@ -330,7 +336,7 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
       )}
 
       <Layout style={{ background: NEUTRAL.pageBg }}>
-        {/* 顶部单栏：左=标签页，右=用户名。无面包屑。 */}
+        {/* 顶部单栏：左=浏览器式标签带，右=用户名。无面包屑、无刷新按钮。 */}
         <Header
           className="v41-header"
           style={{
@@ -345,6 +351,9 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
             position: 'sticky',
             top: 0,
             zIndex: 20,
+            // 注意：这里**不能**加 overflow:hidden —— 激活标签用 margin-bottom:-1px
+            // 压住这条 1px 下边框来形成「标签与内容区连体」，被裁剪就看不到效果了。
+            // 横向溢出由 TabsBar 自身的 scroll 容器负责，不会撑破 Header。
           }}
         >
           {isMobile && (
@@ -357,8 +366,26 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
             />
           )}
 
-          {/* 标签页占据左侧全部可用宽度，溢出时由 antd Tabs 的「更多」下拉接管 */}
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
+          {/*
+            标签带占据左侧全部可用宽度；溢出时自身横向滚动，不会撑破 Header。
+
+            `height: calc(100% + 1px)` + `align-self: flex-start` 是「浏览器式标签
+            与内容区连体」的关键：Header 是 border-box（height 52 含 1px 下边框），
+            其 content box 只有 51px 高；若包裹层只用 height:100%，激活标签
+            `margin-bottom:-1px` 想压住的那 1px 边框行会被顶到容器外而被裁掉，
+            连体效果失效。多出 1px 让包裹层覆盖到边框行，激活标签的白底即可
+            盖住灰边框、与下方内容区连成一片（已用等价 DOM 实测验证）。
+          */}
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              alignItems: 'flex-end',
+              height: 'calc(100% + 1px)',
+              alignSelf: 'flex-start',
+            }}
+          >
             <TabsBar />
           </div>
 

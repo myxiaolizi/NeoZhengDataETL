@@ -774,9 +774,6 @@ export default function MailPushPage() {
             <Card
               size="small"
               title="运行状态"
-              extra={
-                <Button size="small" icon={<ReloadOutlined />} onClick={loadTop}>刷新</Button>
-              }
             >
               <Descriptions
                 size="small"
@@ -947,9 +944,6 @@ export default function MailPushPage() {
         </Space>
       }
       toolBarRender={() => [
-        <Button key="reload" icon={<ReloadOutlined />} onClick={() => { loadTop(); accountActionRef.current?.reload(); }}>
-          刷新
-        </Button>,
         canRun ? (
           <Button key="run" icon={<SyncOutlined />} loading={running} onClick={() => handleRun()}>
             全部拉取
@@ -982,9 +976,6 @@ export default function MailPushPage() {
           <Text type="secondary" style={{ fontSize: 12.5 }}>仅看有附件</Text>
           <Switch size="small" checked={onlyAtt} onChange={(v) => { setOnlyAtt(v); setMsgPage(1); }} />
         </Space>
-        <Button icon={<ReloadOutlined />} onClick={() => browseAccountId && loadMessages(browseAccountId, msgPage, onlyAtt)}>
-          刷新
-        </Button>
         {canRun && (
           <Button icon={<SyncOutlined />} loading={running} onClick={() => handleRun(browseAccountId ?? undefined)}>
             拉取该账户
@@ -1170,7 +1161,6 @@ export default function MailPushPage() {
         <>
           {tab === 'projects' && canProjectWrite ? <Button type="primary" icon={<PlusOutlined />} onClick={() => message.info('数据项目由邮件附件自动创建')}>新建项目</Button> : null}
           {tab === 'accounts' && canSettings ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAccount}>添加账户</Button> : null}
-          <Button icon={<ReloadOutlined />} onClick={loadTop}>刷新</Button>
           {canRun && <Button type="primary" icon={<PlayCircleOutlined />} loading={running} onClick={() => handleRun()}>立即拉取</Button>}
         </>
       }

@@ -173,6 +173,11 @@ export interface DetailFullRow extends DetailRow {
   reachRate: number;         // 到店率 0~1
   couponRate: number;        // 优惠券核销率 0~1
   ownerRole: string;         // 当前负责人岗位
+  /* ── V7 新增列 ── */
+  currentOwner: string;      // 当前处理人
+  currentNodeHours: number;  // 当前节点处理时长（小时）
+  currentNodeDuration: string; // 当前节点处理时长（<24h 显示 X.X时，否则 X.X天）
+  lastNodeAt: string;        // 上节点时间（= 进入当前节点时间）
 }
 
 /* ══════════════ 第 1 排：签约卡片 ══════════════ */
@@ -182,10 +187,22 @@ export interface RegionSplit {
   north: number;
 }
 
+/** V7：带未知桶的三段拆分（保证 south + north + unknown === total） */
+export interface SplitValue {
+  south: number;
+  north: number;
+  unknown?: number;
+  total: number;
+}
+
 export interface ProgressBlock {
   achieved: number;
   target: number;
   rate: number;              // 0~100
+  /** V7：任务口径连锁数（= achieved） */
+  chains?: number;
+  /** V7：不计入任务的连锁数（50- 等） */
+  excluded?: number;
   south: { achieved: number; target: number; rate: number };
   north: { achieved: number; target: number; rate: number };
 }
@@ -207,22 +224,39 @@ export interface InProgressGroup {
   rows: DetailRow[];
 }
 
-export interface InProgressBlock {
+/** V7：进行中岗位桶（五类互斥，合计 = total） */
+export interface InProgressBucket {
   total: number;
-  strategy: { total: number; groups: InProgressGroup[] };   // 策略处理中（节点=策略开通/策略审核）
-  implement: { total: number; groups: InProgressGroup[] };  // 实施处理中（实施岗位）
-  service: { total: number; groups: InProgressGroup[] };    // 客服处理中
-  solution: { total: number; groups: InProgressGroup[] };   // 解决方案处理中
-  sales: { total: number; groups: InProgressGroup[] };      // 销售处理中
-}
-
-export interface FlowStatusBlock {
-  completedClients: number;   // 流程完成客户数
-  completedStores: number;    // 流程完成门店数
   south: number;
   north: number;
-  strategyOpened: number;     // 已开通策略家数
-  strategyNotOpened: number;  // 未开通策略家数
+  groups: InProgressGroup[];
+}
+
+export interface InProgressBlock {
+  total: number;
+  /** V7：五类合计（应恒等于 total，用于自检） */
+  sumOfBuckets?: number;
+  strategy: InProgressBucket;
+  implement: InProgressBucket;
+  service: InProgressBucket;
+  solution: InProgressBucket;
+  sales: InProgressBucket;
+}
+
+/** V7：流程结束（4 组指标 × 汇总/南/北） */
+export interface FlowStatusBlock {
+  completedClients: number;   // 客户数
+  completedStores: number;    // 门店数
+  south: number;
+  north: number;
+  storesSouth?: number;
+  storesNorth?: number;
+  strategyOpened: number;     // 开通策略（客户数）
+  strategyNotOpened: number;  // 未开策略（客户数）
+  openedSouth?: number;
+  openedNorth?: number;
+  notOpenedSouth?: number;
+  notOpenedNorth?: number;
 }
 
 export interface Row1Data {
@@ -245,6 +279,14 @@ export interface FlowNodeItem {
   ratio: number;             // 0~1（分母已排除 销售签约/流程结束）
   stores: number;
   avgDays: number;           // 平均处理时长（天）
+  /** V7：平均耗时（小时），前端按 <1天 显示 X.X时 */
+  avgHours?: number;
+  /** V7：该节点是否有「耗时」概念（销售签约 / 流程结束 为 false） */
+  hasTime?: boolean;
+  /** V7：正常家数（当前节点时长 ≤ 7 天） */
+  normal?: number;
+  /** V7：超期家数（当前节点时长 > 7 天） */
+  overdue?: number;
   byRole: { role: string; count: number }[];
   rows: DetailRow[];
 }
@@ -273,6 +315,9 @@ export interface RankItem {
   name: string;              // 销售名 / 省份名
   clients: number;
   stores: number;
+  /** V7：省份榜的代表销售名 */
+  salesName?: string;
+  salesCount?: number;
   tags: RankTag[];           // 名称下方的类型标签
 }
 
@@ -315,9 +360,16 @@ export interface SignTrendData {
 
 export interface FlowProgressData {
   days: string[];            // 最近 5 个工作日 'MM-DD'
+  /** V7: 'MM月DD日' */
+  daysCn?: string[];
   nodes: string[];           // 节点名
   /** matrix[nodeIndex][dayIndex] = 完成数 */
   matrix: number[][];
+  /** V7：按区域拆分（区域筛选按钮用） */
+  byRegion?: Record<string, { matrix: number[][] }>;
+  /** V7：区域扁平字段 */
+  matrixSouth?: number[][];
+  matrixNorth?: number[][];
 }
 
 export interface Row6Data {
@@ -362,6 +414,23 @@ export interface PeopleMetric {
   couponIssued: MetricPair;  // 优惠券发放人数
 }
 
+/** V7：带未知桶的三段拆分（保证 south + north + unknown === total） */
+export interface SplitValue {
+  south: number;
+  north: number;
+  unknown?: number;
+  total: number;
+}
+
+/** V7：成本指标组 */
+export interface CostMetrics {
+  channelCost: SplitValue;   // 渠道成本
+  couponCost: SplitValue;    // 用券成本
+  totalCost: SplitValue;     // 成本合计 = 渠道 + 用券
+  couponGmv: SplitValue;     // 用券销售额
+  roi: SplitValue;           // 营销ROI = 成本合计 ÷ 转化销售额
+}
+
 export interface Row7Data {
   openedStrategy: ChainStrategyMetric;
   runningStrategy: ChainStrategyMetric;
@@ -369,6 +438,8 @@ export interface Row7Data {
   couponRate: RateMetric;         // 优惠券核销率
   conversion: AmountMetric;       // 转化销售额 + 人均转化销售
   people: PeopleMetric;           // 触达人数 + 优惠券发放人数
+  /** V7：成本与 ROI（第 8 排新增指标） */
+  cost?: CostMetrics;
 }
 
 /* ══════════════ 第 8 排：按策略模型×类型 ══════════════ */
@@ -381,20 +452,40 @@ export interface ModelTypeItem {
   total: Row7Data;
 }
 
+/** V7：按模块聚合的树（模块 → 类型） */
+export interface ModelGroup {
+  model: string;
+  types: ModelTypeItem[];
+  south: Row7Data;
+  north: Row7Data;
+  total: Row7Data;
+}
+
 export interface Row8Data {
   items: ModelTypeItem[];
+  /** V7：树形结构（前端画「模块 → 类型」链接图用） */
+  modules?: ModelGroup[];
+  /** V7：实际生效的日期区间 */
+  range?: { from: string; to: string } | null;
+  rowCount?: number;
 }
 
 /* ══════════════ 第 9 排：近 30 日趋势 ══════════════ */
 
 export interface RunTrendData {
   days: string[];            // 'MM-DD'
+  daysCn?: string[];         // V7: 'MM月DD日'
   reached: number[];         // 触达人数
   runningChains: number[];   // 运行连锁数
   openedStrategies: number[];// 开通策略数
   runningStrategies: number[];// 运行策略数
   reachRate: number[];       // 到店率 0~1
   couponRate: number[];      // 优惠券核销率 0~1
+  /** V7 新增：成本与 ROI 趋势 */
+  channelCost?: number[];
+  couponCost?: number[];
+  totalCost?: number[];
+  roi?: number[];
 }
 
 /* ══════════════ 第 10 排：明细表 ══════════════ */
@@ -485,40 +576,65 @@ export function fetchBoardDetail(
   );
 }
 
-/* ══════════════ 图表配色（契约规定的 13 色） ══════════════ */
+/* ══════════════ 图表配色（V7 语义色，契约 §2.1） ══════════════ */
 
 export const PALETTE = {
-  primary: '#3687FF',
-  primaryDeep: '#2D6FE4',
-  primaryLight: '#45B4FF',
-  primarySoft: '#73DBFF',
-  ink: '#003378',
-  orange: '#EC673C',
-  red: '#E86161',
-  yellow: '#FFC000',
-  green: '#A2D73C',
-  gray: '#B5B5B6',
-  grayLight: '#DCDDDD',
+  brand: '#2563eb',
+  brand2: '#3b82f6',
+  brand3: '#60a5fa',
+  green: '#10b981',
+  warn: '#f59e0b',
+  danger: '#ef4444',
+  cyan: '#06b6d4',
+  purple: '#8b5cf6',
+  yellow: '#eab308',
+  gray: '#94a3b8',
+  /* 兼容 V5/V6 命名 */
+  primary: '#2563eb',
+  primaryDeep: '#1d4ed8',
+  primaryLight: '#3b82f6',
+  primarySoft: '#93c5fd',
+  ink: '#16253d',
+  orange: '#f59e0b',
+  red: '#ef4444',
+  grayLight: '#dde8f6',
   white: '#FFFFFF',
   black: '#000000',
 } as const;
 
 /** 图表序列色（按序取） */
 export const CHART_SERIES = [
-  '#45B4FF', '#FFC000', '#3687FF', '#A2D73C',
-  '#EC673C', '#73DBFF', '#003378', '#B5B5B6',
+  '#2563eb', '#10b981', '#f59e0b', '#8b5cf6',
+  '#06b6d4', '#ef4444', '#3b82f6', '#94a3b8',
 ] as const;
 
-/** 南北区固定配色 */
+/**
+ * 区域固定配色（契约 §2.1）
+ *   南区 = 蓝 #2563eb，北区 = 绿 #10b981
+ */
 export const REGION_COLORS: Record<string, string> = {
-  南区: '#45B4FF',
-  北区: '#FFC000',
+  南区: '#2563eb',
+  北区: '#10b981',
 };
 
-/** 连锁类型固定配色 */
+/**
+ * 连锁类型固定配色（契约 §2.1）
+ *   全国百强 = 红，区县百强 = 橙，50+ = 黄，50- = 灰
+ */
 export const CHAIN_TYPE_COLORS: Record<string, string> = {
-  全国百强: '#3687FF',
-  区县百强: '#45B4FF',
-  '50+': '#A2D73C',
-  '50-': '#B5B5B6',
+  全国百强: '#ef4444',
+  区县百强: '#f59e0b',
+  '50+': '#eab308',
+  '50-': '#94a3b8',
 };
+
+/** 连锁类型简写（排行榜等窄空间使用） */
+export const CHAIN_TYPE_SHORT: Record<string, string> = {
+  全国百强: '全国',
+  区县百强: '区县',
+  '50+': '50+',
+  '50-': '50-',
+};
+
+/** 区域顺序（图表/图例统一顺序：先南后北） */
+export const REGION_ORDER = ['南区', '北区'] as const;

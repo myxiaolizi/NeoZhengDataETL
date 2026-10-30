@@ -1,7 +1,7 @@
-/** 数据集成（V4.1 页面规范）：API 采集(pull) / API 推送(push) 任务管理 + 手动执行 + 运行统计
+/** 数据集成（V6.1 页面规范）：API 采集(pull) / API 推送(push) 任务管理 + 手动执行 + 运行统计
  *
  * 结构：本页名称 + 搜索区 + 新建 → 数据卡片 → 任务列表
- * V4.1：新建/编辑由 DrawerForm 改为 ModalForm；执行结果由右侧 Drawer 改为 Modal。
+ * V6.1：新建/编辑用 ModalForm；执行结果用 Modal。
  */
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
@@ -9,7 +9,7 @@ import {
   Badge, Result, Modal, Input, Select,
 } from 'antd';
 import {
-  PlusOutlined, ReloadOutlined, PlayCircleOutlined, DeleteOutlined, EditOutlined,
+  PlusOutlined, PlayCircleOutlined, DeleteOutlined, EditOutlined,
   ImportOutlined, ExportOutlined, ExclamationCircleOutlined,
   CheckCircleFilled, CloseCircleFilled, EyeOutlined,
 } from '@ant-design/icons';
@@ -452,11 +452,6 @@ export default function IntegrationsPage() {
           </Button>
         ) : null
       }
-      extra={
-        <Button icon={<ReloadOutlined />} onClick={() => { loadProjects(); actionRef.current?.reload(); }}>
-          刷新
-        </Button>
-      }
       stats={statItems}
     >
       <ProTable<Integration, Record<string, unknown>>
@@ -477,7 +472,7 @@ export default function IntegrationsPage() {
         }}
       />
 
-      {/* ---------- 新建 / 编辑：ModalForm（V4.1 禁止 Drawer） ---------- */}
+      {/* ---------- 新建 / 编辑：ModalForm（V6.1 禁止 Drawer） ---------- */}
       <ModalForm<IntegrationFormValues>
         title={editing ? `编辑集成任务 · ${editing.name}` : '新建集成任务'}
         open={formOpen}
@@ -639,7 +634,7 @@ export default function IntegrationsPage() {
         <ProFormSwitch name="status" label="启用该任务" />
       </ModalForm>
 
-      {/* ---------- 单次执行结果：Modal（V4.1 禁止 Drawer） ---------- */}
+      {/* ---------- 单次执行结果：Modal（V6.1 禁止 Drawer） ---------- */}
       <Modal
         title={`执行结果 · ${runResult?.row.name || ''}`}
         open={!!runResult}

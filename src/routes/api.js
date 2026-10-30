@@ -21,6 +21,7 @@ const departments = require('../departments');
 const projectGroups = require('../project-groups');
 const forms = require('../forms');
 const flows = require('../flows');
+const dataFilter = require('../data-filter');
 const { quoteIdent } = require('../ident');
 
 const router = express.Router();
@@ -32,6 +33,15 @@ const router = express.Router();
  *
  * 供宣传页、注册页、页脚读取站点名称/描述等展示型配置。
  * 只暴露白名单字段，绝不返回 smtp_pass / ai_api_key / webhook_token 等敏感项。
+ *
+ * 白名单核对（V6.1 要求 1）：设置页「站点信息」分组的 6 个字段必须全部在内，
+ * 少一个就会「库里存了、前端永远拿不到」——
+ *   site_name / site_short / site_subtitle / site_logo_text / site_description / site_footer
+ * 另加 theme_color（主色）与 2 个注册相关开关。
+ *
+ * 缓存头：**不能**给 max-age（旧实现 `public, max-age=60` 会让浏览器/代理
+ * 把旧站名缓存 60 秒，用户保存后刷新依然是旧值，是「设置后不生效」的第二处原因）。
+ * 站点信息只有 9 个短字段，直接禁缓存，保证「保存 → 刷新 → 立即生效」。
  */
 const PUBLIC_SETTING_KEYS = [
   'site_name', 'site_short', 'site_subtitle', 'site_logo_text',
@@ -46,7 +56,8 @@ router.get('/settings/public', async (req, res, next) => {
     for (const k of PUBLIC_SETTING_KEYS) {
       data[k] = all[k] !== undefined ? all[k] : (settings.DEFAULTS[k] || '');
     }
-    res.set('Cache-Control', 'public, max-age=60');
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
     res.json({ ok: true, data });
   } catch (err) { next(err); }
 });
@@ -1000,12 +1011,18 @@ router.get('/projects/:id/records', auth.requirePerm('data:read'), async (req, r
         }
       }
     }
+
+    // 多条件筛选（与 keyword / op 之间 AND）—— 与 /parsed 共用同一实现
+    const liveCols = new Set((await schema.columnInfo(project.data_table)).map((c) => c.name));
+    const filterMeta = dataFilter.appendFilters(
+      { where, params }, req.query.filters, liveCols, quoteIdent
+    );
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // 排序：只接受真实存在的列名，避免拼接注入
     let orderSql = 'id DESC';
     if (sortKey && /^[A-Za-z0-9_]+$/.test(sortKey)) {
-      const liveCols = new Set((await schema.columnInfo(project.data_table)).map((c) => c.name));
       if (liveCols.has(sortKey)) orderSql = `${quoteIdent(sortKey)} ${sortDir}`;
     }
 
@@ -1021,13 +1038,13 @@ router.get('/projects/:id/records', auth.requirePerm('data:read'), async (req, r
 
     res.json({
       ok: true,
-      data: {
+      data: Object.assign({
         list,
         total: Number((totalRow && totalRow.c) || 0),
         page,
         pageSize,
         idField: { fieldKey: idField.fieldKey, column: idCol, label: idField.label },
-      },
+      }, dataFilter.filterMeta(filterMeta)),
     });
   } catch (err) { next(err); }
 });
@@ -1078,12 +1095,22 @@ router.get('/projects/:id/parsed', auth.requirePerm('data:read'), async (req, re
         params.push(kw, kw, kw);
       }
     }
+
+    // 真实列清单：一次 information_schema 查询，同时供「筛选白名单」「排序白名单」
+    // 和响应里的 columns 使用（避免同一张表查三次）
+    const columns = await schema.columnInfo(parsedTable);
+    const liveCols = new Set(columns.map((c) => c.name));
+
+    // 多条件筛选（与 keyword 之间 AND）—— 与 /records、邮箱推送 rows 共用同一实现
+    const filterMeta = dataFilter.appendFilters(
+      { where, params }, req.query.filters, liveCols, quoteIdent
+    );
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // 排序：只接受真实存在的列名，避免拼接注入
     let orderSql = 'id DESC';
     if (sortKey && /^[A-Za-z0-9_]+$/.test(sortKey)) {
-      const liveCols = new Set((await schema.columnInfo(parsedTable)).map((c) => c.name));
       if (liveCols.has(sortKey)) orderSql = `${quoteIdent(sortKey)} ${sortDir}`;
     }
 
@@ -1092,14 +1119,13 @@ router.get('/projects/:id/parsed', auth.requirePerm('data:read'), async (req, re
       `SELECT * FROM ${table} ${whereSql} ORDER BY ${orderSql} LIMIT ${pageSize} OFFSET ${offset}`,
       params
     );
-    const columns = await schema.columnInfo(parsedTable);
     const list = rows.map((r) => Object.assign({}, r, {
       display_id: idCol ? (r[idCol] === null || r[idCol] === undefined || r[idCol] === '' ? null : String(r[idCol])) : null,
     }));
 
     res.json({
       ok: true,
-      data: {
+      data: Object.assign({
         list,
         total: Number((totalRow && totalRow.c) || 0),
         page,
@@ -1107,7 +1133,7 @@ router.get('/projects/:id/parsed', auth.requirePerm('data:read'), async (req, re
         columns,
         table: parsedTable,
         idField: { fieldKey: idField.fieldKey, column: idCol, label: idField.label },
-      },
+      }, dataFilter.filterMeta(filterMeta)),
     });
   } catch (err) { next(err); }
 });
@@ -2796,6 +2822,8 @@ router.get('/mail-push/projects/:id/rows', auth.requirePerm('data:read'), async 
       keyword: req.query.keyword,
       sort: req.query.sort,
       order: req.query.order,
+      // 多条件筛选（JSON 数组字符串）—— 与 /api/projects/:id/parsed 共用 data-filter 实现
+      filters: req.query.filters,
     });
     res.json({ ok: true, data });
   } catch (err) { next(err); }
@@ -3196,3 +3224,9 @@ router.get('/mail-push/parse-name', auth.requirePerm('project:read'), async (req
 });
 
 module.exports = router;
+
+/**
+ * 供测试脚本核对「站点公开字段白名单」是否完整（scripts/v61-parsed-filters-db.js）。
+ * 挂在 router 上，不影响 express 路由行为。
+ */
+module.exports.PUBLIC_SETTING_KEYS = PUBLIC_SETTING_KEYS;

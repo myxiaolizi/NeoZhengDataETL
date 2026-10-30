@@ -1,11 +1,11 @@
-/** 数据源管理：15 大类 / 80+ 类型目录 + V4.1 标准结构 + 动态连接参数 + 连接测试 + 表结构浏览 */
+/** 数据源管理：15 大类 / 80+ 类型目录 + V6.1 标准结构 + 动态连接参数 + 连接测试 + 表结构浏览 */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button, Space, Tag, Modal, Collapse, Empty, Alert, Typography, Divider, Badge,
   Table, Tooltip, App, Input, Select, Spin, Grid,
 } from 'antd';
 import {
-  PlusOutlined, ReloadOutlined, ApiOutlined, DatabaseOutlined, ThunderboltOutlined,
+  PlusOutlined, ApiOutlined, DatabaseOutlined, ThunderboltOutlined,
   TableOutlined, CheckCircleFilled, CloseCircleFilled, ExclamationCircleOutlined,
   AppstoreOutlined, SearchOutlined,
 } from '@ant-design/icons';
@@ -350,7 +350,7 @@ export default function DatasourcesPage() {
     });
   };
 
-  /** V4.1 数据卡片（5 个：数据源总数 / MySQL 数 / 非 MySQL 数 / 连接失败数 / 最近更新） */
+  /** V6.1 数据卡片（5 个：数据源总数 / MySQL 数 / 非 MySQL 数 / 连接失败数 / 最近更新） */
   const statItems = useMemo<StatCardItem[]>(() => {
     const total = allList.length;
     const mysqlCount = allList.filter((d) => String(d.type || '').toLowerCase().includes('mysql')).length;
@@ -556,14 +556,9 @@ export default function DatasourcesPage() {
         ) : undefined
       }
       extra={
-        <>
-          <Button icon={<AppstoreOutlined />} onClick={() => setTypeModalOpen(true)}>
-            类型目录{stats ? `（${stats.types}）` : ''}
-          </Button>
-          <Button icon={<ReloadOutlined />} onClick={() => { loadCatalog(); actionRef.current?.reload(); }}>
-            刷新
-          </Button>
-        </>
+        <Button icon={<AppstoreOutlined />} onClick={() => setTypeModalOpen(true)}>
+          类型目录{stats ? `（${stats.types}）` : ''}
+        </Button>
       }
       stats={statItems}
     >

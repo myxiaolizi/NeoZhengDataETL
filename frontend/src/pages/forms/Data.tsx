@@ -1,7 +1,7 @@
-/** 表单数据（V4.1 页面规范）：提交记录列表（动态列）/ 详情 / 导出（含移动端适配）
+/** 表单数据（V6.1 页面规范）：提交记录列表（动态列）/ 详情 / 导出（含移动端适配）
  *
- * 结构：本页名称 + 操作 → 数据卡片 → 搜索区 → 提交记录列表
- * V4.1：提交详情由右侧 Drawer 改为 Modal（禁止抽屉承载业务内容）。
+ * 结构：[返回] 本页名称 + 搜索区 + 操作 → 数据卡片 → 提交记录列表
+ * V6.1：提交详情用 Modal（禁止抽屉承载业务内容）。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -9,10 +9,10 @@ import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
   Alert, Button, Card, Descriptions, Empty, Grid, Input, Modal, Pagination, Space,
-  Tag, Tooltip, message,
+  Tag, message,
 } from 'antd';
 import {
-  ArrowLeftOutlined, DownloadOutlined, EditOutlined, ReloadOutlined, SearchOutlined,
+  DownloadOutlined, EditOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
 import type { StatCardItem } from '@/components/StatCards';
@@ -220,12 +220,31 @@ export default function FormDataPage() {
 
   return (
     <Page
+      back="/forms"
+      backText="返回表单中心"
       title={detail ? detail.name : '表单数据'}
+      search={
+        <Input.Search
+          allowClear
+          placeholder="搜索提交内容 / 提交人 / IP"
+          value={searchText}
+          onChange={(e) => {
+            const v = e.target.value;
+            setSearchText(v);
+            if (!v) {
+              setPage(1);
+              setKeyword('');
+            }
+          }}
+          onSearch={(v) => {
+            setPage(1);
+            setKeyword(v.trim());
+          }}
+          style={{ width: isMobile ? '100%' : 260 }}
+        />
+      }
       actions={
         <>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/forms')}>
-            {isMobile ? '' : '返回表单中心'}
-          </Button>
           <Button icon={<EditOutlined />} onClick={() => navigate(`/forms/${id}/design`)}>
             {isMobile ? '' : '表单设计'}
           </Button>
@@ -236,47 +255,6 @@ export default function FormDataPage() {
       }
       stats={statItems}
     >
-      {/* 搜索区 */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-        <Input
-          allowClear
-          prefix={<SearchOutlined style={{ color: NEUTRAL.textQuaternary }} />}
-          placeholder="搜索提交内容 / 提交人 / IP"
-          value={searchText}
-          onChange={(e) => setSearchText(e.target.value)}
-          onPressEnter={() => {
-            setPage(1);
-            setKeyword(searchText.trim());
-          }}
-          style={{ width: isMobile ? '100%' : 320 }}
-        />
-        <Space>
-          <Button
-            type="primary"
-            onClick={() => {
-              setPage(1);
-              setKeyword(searchText.trim());
-            }}
-          >
-            搜索
-          </Button>
-          <Tooltip title="重新加载当前页">
-            <Button icon={<ReloadOutlined />} onClick={load} loading={loading} />
-          </Tooltip>
-          {keyword && (
-            <Button
-              onClick={() => {
-                setSearchText('');
-                setKeyword('');
-                setPage(1);
-              }}
-            >
-              清除筛选
-            </Button>
-          )}
-        </Space>
-      </div>
-
       {error ? (
         <Alert
           type="error"
@@ -319,7 +297,7 @@ export default function FormDataPage() {
         </>
       )}
 
-      {/* 提交详情：内容少 → Modal（V4.1 禁止右侧抽屉） */}
+      {/* 提交详情：内容少 → Modal（V6.1 禁止右侧抽屉） */}
       <Modal
         title="提交详情"
         open={!!active}

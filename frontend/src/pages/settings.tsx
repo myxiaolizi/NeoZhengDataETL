@@ -6,7 +6,7 @@ import {
 } from 'antd';
 import {
   BellOutlined, CloudServerOutlined, DatabaseOutlined, ExperimentOutlined, MailOutlined,
-  ReloadOutlined, RobotOutlined, SafetyCertificateOutlined, SaveOutlined, SendOutlined,
+  RobotOutlined, SafetyCertificateOutlined, SaveOutlined, SendOutlined,
   SettingOutlined, ShopOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -237,7 +237,11 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       await saveSettings(patch);
-      message.success(`「${activeGroup.title}」已保存`);
+      message.success(
+        activeGroup.key === 'site'
+          ? `「${activeGroup.title}」已保存，站点信息已同步`
+          : `「${activeGroup.title}」已保存`
+      );
       const data = await getSettings();
       setPayload(data);
       setGroups(data.groups);
@@ -246,6 +250,7 @@ export default function SettingsPage() {
       const nextGroup = data.groups.find((g) => g.key === activeKey);
       if (nextGroup) form.setFieldsValue(toFormValues(nextGroup, data.values));
       if (patch.theme_color) setThemeColor(patch.theme_color);
+      await (useAppStore.getState() as { fetchSite?: () => Promise<void> }).fetchSite?.();
     } catch {
       /* client 已提示 */
     } finally {
@@ -564,9 +569,6 @@ export default function SettingsPage() {
               管理数据源
             </Button>
           ) : null}
-          <Button onClick={() => void load()} icon={<ReloadOutlined />} size="small">
-            重新读取
-          </Button>
           {canWrite ? (
             <Button type="primary" size="small" icon={<SaveOutlined />} loading={saving} onClick={save}>
               保存本组

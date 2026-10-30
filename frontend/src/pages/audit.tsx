@@ -210,11 +210,6 @@ export default function AuditPage() {
           />
         </Space>
       }
-      actions={
-        <Button icon={<ReloadOutlined />} onClick={() => actionRef.current?.reload()}>
-          刷新
-        </Button>
-      }
       extra={
         canClean ? (
           <Popconfirm

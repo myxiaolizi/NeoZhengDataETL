@@ -155,7 +155,7 @@ function removePidFile() {
 
 async function start() {
   console.log('---------------------------------------------');
-  console.log(' 数据中台 v4.1');
+  console.log(' 数据中台 v6.1');
   console.log(' React 18 + Ant Design 6 · 数据集成 · 数据治理 · 报表 BI · AI 问数');
   console.log('---------------------------------------------');
   console.log(` 环境      : ${config.env}`);

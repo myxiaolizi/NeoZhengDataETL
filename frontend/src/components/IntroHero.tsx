@@ -3,10 +3,13 @@
  *
  * 视觉要点：
  *  - 品牌渐变背景：PALETTE.primaryDeep → PALETTE.primary → PALETTE.primaryLight
- *    （V4.1 起颜色全部取自 @/theme，不再写死 V4.0 的深蓝/亮蓝色值）
+ *    （颜色全部取自 @/theme 设计令牌，不写死任何深蓝/亮蓝色值）
  *  - 光晕球 + 网格纹理（只用调色板颜色的不同透明度，不引入新色相）
  *  - 大标题 + 渐变高亮副标题 + 双 CTA + 关键指标
  *  - <768px 单列、按钮撑满、指标两列
+ *
+ * 品牌文字（标题 / 副标题 / 描述 / 页脚）由调用方从站点信息传入，
+ * 本组件自身不持有任何站点文案，避免「设置改了、宣传页还是旧值」。
  */
 import React, { useState } from 'react';
 import { Button, Grid } from 'antd';

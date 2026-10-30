@@ -1,29 +1,41 @@
-/** 第 6 排左：签约趋势（最近 30 天）— V6.0 视觉升级
+/** 第 4 排左：签约趋势（最近 30 天）— V7.0
  *
- * 呈现（行为与口径不变）：
- *  - 堆叠柱形图：签约客户数，南区 var(--brand) / 北区 var(--green)
- *  - 折线：签约门店数（右轴，var(--cyan)）
- *  - 图例下方快捷多选「连锁类型」：只累加选中类型的 south/north
+ * 需求 E1/E2/E8：
+ *  - E2 区域筛选（全部/南区/北区）放在「连锁类型」**前面**
+ *       选南区 → 只画南区柱；选北区 → 只画北区柱；全部 → 两根都画
+ *  - E1 图例显示在「连锁类型」**后方（右侧）**，改为 HTML 图例（可点击切换显隐）
+ *  - E8 日期统一 `MM月DD日`（后端给 daysCn 优先，否则由 `10/26`、`10-26` 自行转换）
  *
- * 视觉对齐 pc4.html：卡片 16px 圆角 + 方点标题；echarts 用契约新配色
- * ['#3b82f6','#10b981','#06b6d4','#f59e0b','#8b5cf6','#ef4444']，
- * tooltip 背景 var(--panel) / 边框 var(--line) / 圆角 11px，坐标轴 var(--line)/var(--text3)。
- * 注意：echarts 画在 canvas 上，不认 CSS 变量，因此运行时从 .board-root 解析实际色值。
+ * 配色（契约 §2.1）：南区 #2563eb、北区 #10b981；
+ * 连锁类型 全国百强 #ef4444 / 区县百强 #f59e0b / 50+ #eab308 / 50- #94a3b8。
+ * echarts 画在 canvas 上不认 CSS 变量，坐标轴/tooltip 颜色运行时从 .board-root 解析。
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Empty } from 'antd';
 import type { EChartsOption } from 'echarts';
+import { CHAIN_TYPE_COLORS, REGION_COLORS } from '@/api/crm-board';
 import type { BoardData, SignTrendData } from '@/api/crm-board';
 import EChart from '../EChart';
 import { useThemeMode } from './theme';
 
-/** 契约 §2.1 新配色序列 */
-const SERIES = ['#3b82f6', '#10b981', '#06b6d4', '#f59e0b', '#8b5cf6', '#ef4444'];
-const C_SOUTH = SERIES[0]; // 南区
-const C_NORTH = SERIES[1]; // 北区
-const C_STORE = SERIES[2]; // 门店数折线
+/* ── 契约 §2.1 语义色（权威值）──
+ * api/crm-board.ts 里的 REGION_COLORS / CHAIN_TYPE_COLORS 目前可能仍是 V6 旧值，
+ * 这里用契约值覆盖已知键；api 未来新增的键仍会被保留。 */
+const V7_REGION: Record<string, string> = { 南区: '#2563eb', 北区: '#10b981' };
+const V7_TYPE: Record<string, string> = {
+  全国百强: '#ef4444', 区县百强: '#f59e0b', '50+': '#eab308', '50-': '#94a3b8',
+};
+const REGION_C: Record<string, string> = { ...REGION_COLORS, ...V7_REGION };
+const TYPE_C: Record<string, string> = { ...CHAIN_TYPE_COLORS, ...V7_TYPE };
+
+/** 门店数折线色 */
+const C_STORE = '#06b6d4';
 
 type Bucket = { south: number[]; north: number[] };
+type RegionKey = 'all' | 'south' | 'north';
+
+/** 本地扩展（不代表 api 已有该字段，缺失即走兜底） */
+type TrendLoose = SignTrendData & { daysCn?: string[] };
 
 export interface SignTrendProps {
   data: BoardData;
@@ -43,6 +55,17 @@ function fitArr(v: unknown, n: number): number[] {
   if (!Array.isArray(v)) return out;
   for (let i = 0; i < n; i += 1) out[i] = num(v[i]);
   return out;
+}
+
+/** E8：`10/26` / `10-26` / `2026-10-26` → `10月26日`；已是中文格式则原样返回 */
+export function dayCn(raw: unknown, idx?: number, daysCn?: unknown): string {
+  if (Array.isArray(daysCn) && typeof idx === 'number' && typeof daysCn[idx] === 'string' && daysCn[idx]) {
+    return String(daysCn[idx]);
+  }
+  const s = String(raw ?? '');
+  const m = s.match(/(\d{1,2})\s*[/\-月]\s*(\d{1,2})/);
+  if (m) return `${Number(m[1])}月${Number(m[2])}日`;
+  return s;
 }
 
 /** 把选中的连锁类型的 south/north 按日求和（导出以便单测多选聚合） */
@@ -84,11 +107,8 @@ function useTokens() {
       split: readVar('--line', '#dde8f6'),
       line: readVar('--line', '#dde8f6'),
       panel: readVar('--panel', '#ffffff'),
-      panel2: readVar('--panel2', '#f7faff'),
       text: readVar('--text', '#16253d'),
-      text3: readVar('--text3', '#93a7c2'),
       brand: readVar('--brand', '#2563eb'),
-      brandSoft: readVar('--brandSoft', '#e9f2ff'),
     };
   }, [mode]);
 }
@@ -101,40 +121,74 @@ const CSS = `
 .vb6-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
 .vb6-dot{width:6px;height:6px;border-radius:2px;background:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 16%,transparent);flex-shrink:0}
 .vb6-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap}
-.vb6-b{padding:14px 16px;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
+.vb6-b{padding:12px 16px 14px;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
 
-/* 类型多选 chip（参照 pc4 .chip） */
-.vb6-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:9px}
-.vb6-chips .lb{font-size:11.5px;color:var(--text3);font-weight:600;margin-right:2px;white-space:nowrap}
-.vb6-chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:8px;cursor:pointer;user-select:none;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:11.5px;font-weight:550;transition:all .15s;white-space:nowrap}
+/* 控制条：区域 → 连锁类型 → 图例（图例靠右，E1） */
+.vb6-ctl{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:9px;min-width:0}
+.vb6-ctl .grp{display:flex;align-items:center;gap:5px;min-width:0}
+.vb6-ctl .lb{font-size:11px;color:var(--text3);font-weight:650;white-space:nowrap;margin-right:1px}
+.vb6-vsep{width:1px;height:13px;background:var(--line);flex-shrink:0;margin:0 1px}
+
+/* E2 区域筛选（在连锁类型前面） */
+.vb6-seg{display:inline-flex;align-items:center;height:23px;padding:0 9px;border-radius:7px;cursor:pointer;user-select:none;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:11px;font-weight:600;transition:all .15s;white-space:nowrap;font-family:inherit;line-height:1}
+.vb6-seg:hover{border-color:var(--brand3);color:var(--brand)}
+.vb6-seg.on{color:#fff;border-color:transparent;box-shadow:0 3px 9px color-mix(in srgb,var(--brand) 26%,transparent)}
+.vb6-seg.on.all{background:linear-gradient(135deg,var(--brand),var(--brand2))}
+.vb6-seg .sw{width:6px;height:6px;border-radius:2px;margin-right:4px;flex-shrink:0}
+.vb6-seg.on .sw{background:#fff!important}
+
+/* 连锁类型 chip */
+.vb6-chip{display:inline-flex;align-items:center;gap:5px;height:23px;padding:0 8px;border-radius:7px;cursor:pointer;user-select:none;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:11px;font-weight:550;transition:all .15s;white-space:nowrap;font-family:inherit;line-height:1}
 .vb6-chip:hover{border-color:var(--brand3);color:var(--brand)}
-.vb6-chip .sw{width:7px;height:7px;border-radius:2px;flex-shrink:0;transition:all .15s}
-.vb6-chip.on{background:linear-gradient(135deg,var(--brand),var(--brand2));border-color:transparent;color:#fff;box-shadow:0 3px 9px color-mix(in srgb,var(--brand) 28%,transparent)}
-.vb6-chip.on .sw{background:#fff!important}
-.vb6-all{height:24px;padding:0 9px;border-radius:8px;border:1px dashed var(--line);background:transparent;color:var(--brand);font-size:11.5px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap}
+.vb6-chip .sw{width:7px;height:7px;border-radius:2px;flex-shrink:0}
+.vb6-chip.on{background:color-mix(in srgb,var(--brand) 10%,var(--panel));border-color:var(--brand3);color:var(--text);font-weight:650}
+.vb6-chip:not(.on){opacity:.62}
+.vb6-all{height:23px;padding:0 8px;border-radius:7px;border:1px dashed var(--line);background:transparent;color:var(--brand);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap;font-family:inherit;line-height:1}
 .vb6-all:hover{background:var(--brandSoft);border-color:var(--brand3)}
+
+/* E1 HTML 图例（在连锁类型后方/右侧，可点击切换） */
+.vb6-legend{display:flex;align-items:center;gap:10px;margin-left:auto;padding-left:4px;flex-shrink:0;flex-wrap:wrap}
+.vb6-lg{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;font-size:11px;font-weight:600;color:var(--text2);white-space:nowrap;transition:opacity .15s;line-height:1}
+.vb6-lg:hover{color:var(--text)}
+.vb6-lg .sw{width:9px;height:9px;border-radius:3px;flex-shrink:0;transition:all .15s}
+.vb6-lg .sw.line{width:12px;height:3px;border-radius:2px}
+.vb6-lg.off{opacity:.38;text-decoration:line-through}
+
 .vb6-empty{padding:40px 0;display:flex;align-items:center;justify-content:center}
+.vb6-note{font-size:11px;color:var(--text3);margin-top:6px;display:flex;align-items:center;gap:4px}
 `;
 
 export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
   const tok = useTokens();
 
-  const trend = data?.row6?.signTrend as SignTrendData | undefined;
-  const days = Array.isArray(trend?.days) ? (trend?.days ?? []) : [];
-  const n = days.length;
+  const trend = data?.row6?.signTrend as TrendLoose | undefined;
+  const rawDays = Array.isArray(trend?.days) ? (trend?.days ?? []) : [];
+  const n = rawDays.length;
+  /** E8：统一 MM月DD日 */
+  const dayLabels = useMemo(
+    () => rawDays.map((d, i) => dayCn(d, i, trend?.daysCn)),
+    [rawDays, trend?.daysCn],
+  );
+
   const byChainType = (trend?.byChainType || {}) as Record<string, Bucket>;
   const typeNames = useMemo(() => Object.keys(byChainType), [byChainType]);
   const typeKey = typeNames.join('|');
 
-  /** 默认全选；数据刷新（连锁类型集合变化）时重置 */
+  /** 连锁类型多选：默认全选；类型集合变化时重置 */
   const [picked, setPicked] = useState<string[]>(typeNames);
   useEffect(() => {
     setPicked(typeKey ? typeKey.split('|') : []);
   }, [typeKey]);
 
+  /** E2：区域筛选（默认全部） */
+  const [region, setRegion] = useState<RegionKey>('all');
+  /** E1：图例点击可临时隐藏某条序列 */
+  const [hidden, setHidden] = useState<string[]>([]);
+  useEffect(() => { setHidden([]); }, [region]);
+
   const allSelected = typeNames.length > 0 && picked.length === typeNames.length;
 
-  /** 堆叠柱数据：全量 or 选中类型求和 */
+  /** 柱数据：全量 or 选中类型求和 */
   const bars = useMemo(() => {
     if (!n) return { south: [] as number[], north: [] as number[], mode: 'none' as 'none' | 'all' | 'picked' | 'empty' };
     if (!typeNames.length) {
@@ -146,102 +200,101 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
 
   const stores = useMemo(() => fitArr(trend?.stores, n), [trend, n]);
 
-  const option = useMemo<EChartsOption>(() => ({
-    color: [C_SOUTH, C_NORTH, C_STORE],
-    grid: { left: 4, right: 4, top: isMobile ? 60 : 56, bottom: 2, containLabel: true },
-    tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow', shadowStyle: { color: `color-mix(in srgb, ${tok.brand} 9%, transparent)` } },
-      backgroundColor: tok.panel,
-      borderColor: tok.line,
-      borderWidth: 1,
-      textStyle: { color: tok.text, fontSize: 12 },
-      extraCssText: 'box-shadow:0 6px 18px rgba(20,52,102,.16);border-radius:11px;padding:8px 10px;',
-    },
-    legend: {
-      top: 0,
-      left: 0,
-      itemWidth: 10,
-      itemHeight: 8,
-      itemGap: 14,
-      icon: 'roundRect',
-      textStyle: { color: tok.axis2, fontSize: 11 },
-      data: ['南区', '北区', '门店数'],
-    },
-    xAxis: {
-      type: 'category',
-      data: days,
-      axisTick: { show: false },
-      axisLine: { lineStyle: { color: tok.line } },
-      axisLabel: { color: tok.axis, fontSize: 10, interval: isMobile ? 5 : 2 },
-    },
-    yAxis: [
-      {
-        type: 'value',
-        name: isMobile ? '' : '客户数',
-        minInterval: 1,
-        nameTextStyle: { color: tok.axis, fontSize: 10, padding: [0, 0, 0, 4] },
-        axisLabel: { color: tok.axis, fontSize: 10 },
-        axisLine: { show: false },
-        axisTick: { show: false },
-        splitLine: { lineStyle: { color: tok.split, type: 'dashed' } },
-      },
-      {
-        type: 'value',
-        name: isMobile ? '' : '门店数',
-        minInterval: 1,
-        nameTextStyle: { color: tok.axis, fontSize: 10, padding: [0, 4, 0, 0] },
-        axisLabel: { color: tok.axis, fontSize: 10 },
-        axisLine: { show: false },
-        axisTick: { show: false },
-        splitLine: { show: false },
-      },
-    ],
-    series: [
-      {
-        name: '南区',
-        type: 'bar',
-        stack: 'clients',
-        barMaxWidth: 12,
-        emphasis: { focus: 'series' },
-        itemStyle: { color: C_SOUTH, borderRadius: [0, 0, 0, 0] },
-        data: bars.south,
-      },
-      {
-        name: '北区',
-        type: 'bar',
-        stack: 'clients',
-        barMaxWidth: 12,
-        emphasis: { focus: 'series' },
-        itemStyle: { color: C_NORTH, borderRadius: [3, 3, 0, 0] },
-        data: bars.north,
-      },
-      {
-        name: '门店数',
-        type: 'line',
-        yAxisIndex: 1,
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 5,
-        showSymbol: !isMobile,
-        itemStyle: { color: C_STORE },
-        lineStyle: { width: 2, color: C_STORE },
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(6,182,212,.18)' },
-              { offset: 1, color: 'rgba(6,182,212,0)' },
-            ],
-          },
-        },
-        data: stores,
-      },
-    ],
-  }), [tok, days, bars, stores, isMobile]);
+  /** 当前区域下参与渲染的序列定义 */
+  const seriesDefs = useMemo(() => {
+    const defs: { name: string; color: string; kind: 'bar' | 'line'; data: number[] }[] = [];
+    if (region !== 'north') defs.push({ name: '南区', color: REGION_C['南区'], kind: 'bar', data: bars.south });
+    if (region !== 'south') defs.push({ name: '北区', color: REGION_C['北区'], kind: 'bar', data: bars.north });
+    defs.push({ name: '门店数', color: C_STORE, kind: 'line', data: stores });
+    return defs;
+  }, [region, bars, stores]);
 
-  const height = isMobile ? 220 : 300;
+  const visibleDefs = seriesDefs.filter((d) => !hidden.includes(d.name));
+  const axisInterval = isMobile ? 9 : 5;
+
+  const option = useMemo<EChartsOption>(() => {
+    const barsVisible = visibleDefs.filter((d) => d.kind === 'bar');
+    return {
+      color: visibleDefs.map((d) => d.color),
+      grid: { left: 4, right: 6, top: 12, bottom: 2, containLabel: true },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow', shadowStyle: { color: `color-mix(in srgb, ${tok.brand} 9%, transparent)` } },
+        backgroundColor: tok.panel,
+        borderColor: tok.line,
+        borderWidth: 1,
+        textStyle: { color: tok.text, fontSize: 12 },
+        extraCssText: 'box-shadow:0 6px 18px rgba(20,52,102,.16);border-radius:11px;padding:8px 10px;',
+      },
+      legend: { show: false },
+      xAxis: {
+        type: 'category',
+        data: dayLabels,
+        axisTick: { show: false },
+        axisLine: { lineStyle: { color: tok.line } },
+        axisLabel: { color: tok.axis, fontSize: 10, interval: axisInterval, hideOverlap: true },
+      },
+      yAxis: [
+        {
+          type: 'value',
+          name: isMobile ? '' : '客户数',
+          minInterval: 1,
+          nameTextStyle: { color: tok.axis, fontSize: 10, padding: [0, 0, 0, 4] },
+          axisLabel: { color: tok.axis, fontSize: 10 },
+          axisLine: { show: false },
+          axisTick: { show: false },
+          splitLine: { lineStyle: { color: tok.split, type: 'dashed' } },
+        },
+        {
+          type: 'value',
+          name: isMobile ? '' : '门店数',
+          minInterval: 1,
+          nameTextStyle: { color: tok.axis, fontSize: 10, padding: [0, 4, 0, 0] },
+          axisLabel: { color: tok.axis, fontSize: 10 },
+          axisLine: { show: false },
+          axisTick: { show: false },
+          splitLine: { show: false },
+        },
+      ],
+      series: visibleDefs.map((d) => (
+        d.kind === 'bar'
+          ? {
+            name: d.name,
+            type: 'bar' as const,
+            // 仅一根柱时不堆叠，否则按区域堆叠
+            stack: barsVisible.length > 1 ? 'clients' : undefined,
+            barMaxWidth: barsVisible.length > 1 ? 13 : 20,
+            emphasis: { focus: 'series' as const },
+            itemStyle: { color: d.color, borderRadius: [3, 3, 0, 0] },
+            data: d.data,
+          }
+          : {
+            name: d.name,
+            type: 'line' as const,
+            yAxisIndex: 1,
+            smooth: true,
+            symbol: 'circle' as const,
+            symbolSize: 5,
+            showSymbol: !isMobile,
+            itemStyle: { color: d.color },
+            lineStyle: { width: 2, color: d.color },
+            areaStyle: {
+              color: {
+                type: 'linear' as const,
+                x: 0, y: 0, x2: 0, y2: 1,
+                colorStops: [
+                  { offset: 0, color: 'rgba(6,182,212,.18)' },
+                  { offset: 1, color: 'rgba(6,182,212,0)' },
+                ],
+              },
+            },
+            data: d.data,
+          }
+      )),
+    };
+  }, [tok, dayLabels, visibleDefs, axisInterval, isMobile]);
+
+  const height = isMobile ? 230 : 300;
 
   let body: React.ReactNode;
   if (!n) {
@@ -263,6 +316,21 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
     body = <EChart option={option} height={height} />;
   }
 
+  /** 图例点击 → 切换显隐（至少保留一条） */
+  const toggleLegend = (name: string) => {
+    setHidden((cur) => {
+      if (cur.includes(name)) return cur.filter((x) => x !== name);
+      if (seriesDefs.length - cur.length <= 1) return cur; // 不允许全部隐藏
+      return [...cur, name];
+    });
+  };
+
+  const regionOpts: { key: RegionKey; label: string }[] = [
+    { key: 'all', label: '全部' },
+    { key: 'south', label: '南区' },
+    { key: 'north', label: '北区' },
+  ];
+
   return (
     <>
       <style>{CSS}</style>
@@ -275,32 +343,88 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
           <span className="vb6-hint">最近 30 天</span>
         </div>
         <div className="vb6-b">
-          {typeNames.length > 0 && (
-            <div className="vb6-chips">
-              <span className="lb">连锁类型</span>
-              {typeNames.map((t) => {
-                const on = picked.includes(t);
+          {/* 控制条：区域(E2) → 连锁类型 → 图例(E1, 靠右) */}
+          <div className="vb6-ctl">
+            <div className="grp">
+              <span className="lb">区域</span>
+              {regionOpts.map((o) => {
+                const on = region === o.key;
+                const activeBg = o.key === 'south'
+                  ? `linear-gradient(135deg,${REGION_C['南区']},#3b82f6)`
+                  : o.key === 'north'
+                    ? `linear-gradient(135deg,${REGION_C['北区']},#34d399)`
+                    : 'linear-gradient(135deg,var(--brand),var(--brand2))';
+                return (
+                  <button
+                    key={o.key}
+                    type="button"
+                    className={`vb6-seg${on ? (o.key === 'all' ? ' on all' : ' on') : ''}`}
+                    style={on ? { background: activeBg } : undefined}
+                    aria-pressed={on}
+                    onClick={() => setRegion(o.key)}
+                  >
+                    {o.key !== 'all' && (
+                      <span className="sw" style={{ background: on ? '#fff' : REGION_C[o.label] }} />
+                    )}
+                    {o.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {typeNames.length > 0 && (
+              <>
+                <span className="vb6-vsep" />
+                <div className="grp">
+                  <span className="lb">连锁类型</span>
+                  {typeNames.map((t) => {
+                    const on = picked.includes(t);
+                    const c = TYPE_C[t] || 'var(--text3)';
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        className={`vb6-chip${on ? ' on' : ''}`}
+                        aria-pressed={on}
+                        onClick={() => setPicked((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]))}
+                      >
+                        <span className="sw" style={{ background: c }} />
+                        {t}
+                      </button>
+                    );
+                  })}
+                  {!allSelected && (
+                    <button type="button" className="vb6-all" onClick={() => setPicked(typeNames)}>全选</button>
+                  )}
+                </div>
+              </>
+            )}
+
+            {/* E1：图例在连锁类型后方（右侧） */}
+            <div className="vb6-legend">
+              {seriesDefs.map((d) => {
+                const off = hidden.includes(d.name);
                 return (
                   <span
-                    key={t}
-                    className={`vb6-chip${on ? ' on' : ''}`}
+                    key={d.name}
+                    className={`vb6-lg${off ? ' off' : ''}`}
                     role="button"
                     tabIndex={0}
-                    onClick={() => setPicked((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]))}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') setPicked((prev) => (on ? prev.filter((x) => x !== t) : [...prev, t]));
-                    }}
+                    title={`点击${off ? '显示' : '隐藏'}「${d.name}」`}
+                    onClick={() => toggleLegend(d.name)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') toggleLegend(d.name); }}
                   >
-                    <span className="sw" style={{ background: on ? '#fff' : 'var(--brand)' }} />
-                    {t}
+                    <span
+                      className={`sw${d.kind === 'line' ? ' line' : ''}`}
+                      style={{ background: d.color }}
+                    />
+                    {d.name}
                   </span>
                 );
               })}
-              {!allSelected && typeNames.length > 0 && (
-                <button type="button" className="vb6-all" onClick={() => setPicked(typeNames)}>全选</button>
-              )}
             </div>
-          )}
+          </div>
+
           {body}
         </div>
       </div>

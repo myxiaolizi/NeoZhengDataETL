@@ -1,5 +1,5 @@
 /**
- * 分享管理（V4.1 统一规范）
+ * 分享管理（V6.1 统一规范）
  * - Page 标准结构：title="分享管理" + search + actions(创建分享) + stats(4个数据卡片) + 列表
  * - 列表（ProTable / 移动端卡片）：链接、对象、有效期、访问次数、密码保护、启停
  * - 创建分享：选择报表 + 有效期 + 访问密码 + 是否允许导出 → 生成链接并一键复制
@@ -33,7 +33,6 @@ import {
   LinkOutlined,
   LockOutlined,
   PlusOutlined,
-  ReloadOutlined,
   ShareAltOutlined,
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
@@ -125,7 +124,7 @@ export default function SharesPage() {
     });
   }, [list, keyword, statusFilter]);
 
-  /** V4.1 数据卡片（4 个：分享数 / 有效 / 已过期 / 总访问） */
+  /** V6.1 数据卡片（4 个：分享数 / 有效 / 已过期 / 总访问） */
   const statItems = useMemo<StatCardItem[]>(() => {
     const total = list.length;
     const valid = list.filter((s) => Number(s.status) === 1 && !isExpired(s)).length;
@@ -453,11 +452,6 @@ export default function SharesPage() {
             创建分享
           </Button>
         ) : undefined
-      }
-      extra={
-        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-          刷新
-        </Button>
       }
       stats={statItems}
     >

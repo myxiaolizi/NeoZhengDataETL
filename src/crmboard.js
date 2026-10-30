@@ -136,6 +136,8 @@ const M = {
   couponUsed: 'c_c6568a9b1e',         // 用券张数
   couponUseRate: 'c_a5815395ba',      // 用券率（按人）
   couponGmv: 'c_0964f9ffab',          // 用券销售额
+  couponCost: 'c_81f128a3b7',         // V7 用券成本
+  channelCost: 'c_783814dcb3',        // V7 渠道成本（短信+外呼）
   statDate: 'c_793d0ececa',           // 统计时间（仅 mail_30）
 };
 
@@ -409,6 +411,7 @@ async function tableExists(name) {
 async function loadClients() {
   if (!(await tableExists('jdywh_parsed_16'))) return [];
   const all = Array.from(new Set([
+    'jdy_data_id',
     ...Object.values(C),
     'flow_current_node',
     'flow_current_owner',
@@ -573,6 +576,8 @@ function normalizeClient(raw, staff, runMap, now) {
   const signAt = toDate(raw[C.signTime]) || submitAt;
 
   return {
+    /** V7：关联流程事件用（parsed_102.event_instance_id === parsed_16.jdy_data_id） */
+    dataId: s(raw.jdy_data_id),
     chainId,
     chainName: s(raw[C.chainName]) || s(raw[C.signSubject]) || `连锁 ${chainId}`,
     chainType: s(raw[C.chainType]) || '未分类',
@@ -656,6 +661,18 @@ function toFullRow(c, seq) {
     reachRate: round(div(arrived, reached), 4),
     couponRate: round(div(couponUsed, couponIssued), 4),
     ownerRole: c.ownerRoles[0] || '',
+
+    /* ── V7 新增列 ── */
+    /** 当前处理人（CurrentOwner，流程推送的当前负责人） */
+    currentOwner: c.owner || '',
+    /** 当前节点处理时长 = 当前时间 − 进入当前节点时间（小时） */
+    currentNodeHours: round(c.nodeDays * 24, 1),
+    /** 上节点时间（进入当前节点的时间即为「上个节点完成时间」） */
+    lastNodeAt: c.enterAt ? c.enterAt.toISOString() : '',
+    /** 格式化后的当前节点处理时长：<24h 用 X.X时，否则 X.X天 */
+    currentNodeDuration: c.nodeDays < 1
+      ? `${round(c.nodeDays * 24, 1)}时`
+      : `${round(c.nodeDays, 1)}天`,
   };
 }
 
@@ -779,23 +796,33 @@ function buildRow1(clients, staff, target) {
   const totalClientsByRegion = regionSplit(clients, () => 1);
   const storesByRegion = regionSplit(clients, (c) => c.stores);
 
-  // 任务完成进度：客户数 / target，南北区各 target/2
-  const halfTarget = Math.max(1, Math.round(target / 2));
-  const southClients = clients.filter((c) => c.region === '南区').length;
-  const northClients = clients.filter((c) => c.region === '北区').length;
+  /* ── 任务完成进度（V7 口径）──
+   * 只有 全国百强 / 区县百强 / 50+ 计入任务，50- 不计入。
+   * 目标：南区 220、北区 280（合计 500）。
+   */
+  const SOUTH_TARGET = 220;
+  const NORTH_TARGET = 280;
+  const taskClients = clients.filter((c) => VALID_CHAIN_TYPES.includes(c.chainType));
+  const taskByRegion = regionSplit(taskClients, () => 1);
+  const totalTarget = SOUTH_TARGET + NORTH_TARGET;
+
   const progress = {
-    achieved: totalClients,
-    target,
-    rate: round(div(totalClients, target) * 100, 1),
+    achieved: taskClients.length,
+    target: totalTarget,
+    rate: round(div(taskClients.length, totalTarget) * 100, 1),
+    /** 任务口径的连锁数（同 achieved，语义更明确） */
+    chains: taskClients.length,
+    /** 不计入任务的连锁数（50- 及未分类） */
+    excluded: totalClients - taskClients.length,
     south: {
-      achieved: southClients,
-      target: halfTarget,
-      rate: round(div(southClients, halfTarget) * 100, 1),
+      achieved: taskByRegion.south,
+      target: SOUTH_TARGET,
+      rate: round(div(taskByRegion.south, SOUTH_TARGET) * 100, 1),
     },
     north: {
-      achieved: northClients,
-      target: halfTarget,
-      rate: round(div(northClients, halfTarget) * 100, 1),
+      achieved: taskByRegion.north,
+      target: NORTH_TARGET,
+      rate: round(div(taskByRegion.north, NORTH_TARGET) * 100, 1),
     },
   };
 
@@ -820,43 +847,77 @@ function buildRow1(clients, staff, target) {
     };
   }).sort((a, b) => b.clients - a.clients);
 
-  // 进行中：只统计未完成
+  /* ── 进行中（V7：五类互斥，合计 == 进行中总数）──
+   *
+   * 根因（实测）：V6 的策略维度按「当前节点」统计、岗位维度按「负责人所属岗位」统计，
+   * 两者维度重叠 —— 策略审核节点的 1 家（连锁 15820，负责人郑磊）同时被计入「解决方案」，
+   * 导致 1+15+21+9+44 = 90 ≠ 89。
+   *
+   * 修复规则（优先级从高到低，一家只归一类）：
+   *   1. 当前节点 ∈ {策略开通, 策略审核} → 策略
+   *   2. 否则按负责人岗位：实施 > 客服 > 解决方案 > 销售（一人多岗取最高优先级）
+   *   3. 岗位都不命中 → 销售（兜底）
+   */
   const active = clients.filter((c) => !c.isCompleted);
 
-  // 策略处理中：当前节点 ∈ {策略开通, 策略审核}，按节点名汇总
-  const strategyList = active.filter((c) => c.node === '策略开通' || c.node === '策略审核');
-  const strategyGroups = groupBy(strategyList, (c) => c.node, toDetailRow);
-
-  // 岗位处理中：按负责人岗位
-  const roleGroup = (roleName) => {
-    const list = active.filter((c) => c.ownerRoles.includes(roleName));
-    return { total: list.length, groups: groupBy(list, (c) => c.owner || '未分配', toDetailRow) };
+  const ROLE_PRIORITY = ['实施', '客服', '解决方案', '销售'];
+  const bucketOf = (c) => {
+    if (c.node === '策略开通' || c.node === '策略审核') return '策略';
+    for (const role of ROLE_PRIORITY) {
+      if (c.ownerRoles.includes(role)) return role;
+    }
+    return '销售';
   };
+
+  const bucketMap = { 策略: [], 实施: [], 客服: [], 解决方案: [], 销售: [] };
+  active.forEach((c) => {
+    const b = bucketOf(c);
+    if (bucketMap[b]) bucketMap[b].push(c);
+    else bucketMap['销售'].push(c);
+  });
+
+  const makeBucket = (list, groupKeyFn) => ({
+    total: list.length,
+    south: list.filter((c) => c.region === '南区').length,
+    north: list.filter((c) => c.region === '北区').length,
+    groups: groupBy(list, groupKeyFn, toDetailRow),
+  });
 
   const inProgress = {
     total: active.length,
-    strategy: { total: strategyList.length, groups: strategyGroups },
-    implement: roleGroup('实施'),
-    service: roleGroup('客服'),
-    solution: roleGroup('解决方案'),
-    sales: roleGroup('销售'),
+    /** 五类合计（应恒等于 total，前端可据此自检） */
+    sumOfBuckets:
+      bucketMap['策略'].length + bucketMap['实施'].length + bucketMap['客服'].length +
+      bucketMap['解决方案'].length + bucketMap['销售'].length,
+    strategy: makeBucket(bucketMap['策略'], (c) => c.node),
+    implement: makeBucket(bucketMap['实施'], (c) => c.owner || '未分配'),
+    service: makeBucket(bucketMap['客服'], (c) => c.owner || '未分配'),
+    solution: makeBucket(bucketMap['解决方案'], (c) => c.owner || '未分配'),
+    sales: makeBucket(bucketMap['销售'], (c) => c.owner || '未分配'),
   };
 
-  // 流程状态：flow_current_node 为空 = 流程完成
+  /* ── 流程结束（V7：客户数/门店数/开通策略/未开策略，各含汇总+南北）──
+   * 完成判定：flow_current_node 为空。
+   * 开通策略按客户数计：strategyOpenStatus='已开通' 或「已开通策略」列表非空且非「均未开通」。
+   */
   const completed = clients.filter((c) => c.isCompleted);
-  const completedStores = completed.reduce((sum, c) => sum + c.stores, 0);
-  const completedRegion = regionSplit(completed, () => 1);
-  // 策略开通情况：已开通 / 未开通
-  const strategyOpened = completed.filter((c) => isStrategyOpened(c)).length;
-  const strategyNotOpened = completed.length - strategyOpened;
+  const openedList = completed.filter((c) => isStrategyOpened(c));
+  const notOpenedList = completed.filter((c) => !isStrategyOpened(c));
 
   const flowStatus = {
     completedClients: completed.length,
-    completedStores,
-    south: completedRegion.south,
-    north: completedRegion.north,
-    strategyOpened,
-    strategyNotOpened,
+    completedStores: completed.reduce((sum, c) => sum + c.stores, 0),
+    south: completed.filter((c) => c.region === '南区').length,
+    north: completed.filter((c) => c.region === '北区').length,
+    storesSouth: completed.filter((c) => c.region === '南区').reduce((s, c) => s + c.stores, 0),
+    storesNorth: completed.filter((c) => c.region === '北区').reduce((s, c) => s + c.stores, 0),
+
+    strategyOpened: openedList.length,
+    strategyNotOpened: notOpenedList.length,
+    openedSouth: openedList.filter((c) => c.region === '南区').length,
+    openedNorth: openedList.filter((c) => c.region === '北区').length,
+    notOpenedSouth: notOpenedList.filter((c) => c.region === '南区').length,
+    notOpenedNorth: notOpenedList.filter((c) => c.region === '北区').length,
   };
 
   return {
@@ -901,10 +962,20 @@ function groupBy(list, keyFn, rowFn) {
  * 九、第 2 排：流程状态分布（9 节点）
  * ══════════════════════════════════════════════════════════════════ */
 
+/**
+ * 第 2 排：流程状态分布（9 节点）
+ *
+ * V7 新增：
+ *   - normal / overdue：该节点下 正常 / 超期 家数（超期 = 当前节点时长 > 7 天）
+ *   - avgHours：平均耗时（小时，浮点），前端据此按 <1天 显示 X.X时 / X.X天
+ *   - hasTime：该节点是否有「耗时」概念（销售签约、流程结束 为 false）
+ */
 function buildRow2(clients) {
   const total = clients.length;
   const excluded = clients.filter((c) => RATIO_EXCLUDED.includes(c.node)).length;
   const denominator = Math.max(0, total - excluded);
+  /** 没有耗时概念的节点：起点与终点 */
+  const NO_TIME_NODES = ['销售签约', '流程结束'];
 
   const nodes = FLOW_NODES.map((name) => {
     const list = clients.filter((c) => c.node === name);
@@ -912,6 +983,13 @@ function buildRow2(clients) {
     const avgDays = list.length
       ? round(list.reduce((sum, c) => sum + c.nodeDays, 0) / list.length, 1)
       : 0;
+    const avgHours = list.length
+      ? round((list.reduce((sum, c) => sum + c.nodeDays, 0) / list.length) * 24, 1)
+      : 0;
+
+    // 正常 / 超期（超期 = 当前节点时长 > OVERDUE_DAYS）
+    const overdue = list.filter((c) => c.nodeDays > OVERDUE_DAYS).length;
+    const normal = list.length - overdue;
 
     // 按岗位汇总
     const roleMap = new Map();
@@ -930,6 +1008,10 @@ function buildRow2(clients) {
       ratio: RATIO_EXCLUDED.includes(name) ? 0 : round(div(list.length, denominator), 4),
       stores,
       avgDays,
+      avgHours,
+      hasTime: !NO_TIME_NODES.includes(name),
+      normal,
+      overdue,
       byRole,
       rows: list.map(toDetailRow),
     };
@@ -961,6 +1043,7 @@ function buildRow3(clients) {
 
   const salesClientRank = rankBy(validForRank, (c) => c.sales, () => 1, 'clients');
   const salesStoreRank = rankBy(clients, (c) => c.sales, (c) => c.stores, 'stores');
+  // V7：省份榜带出该省客户数最多的销售名
   const provinceRank = rankBy(clients, (c) => c.province || '未填写', () => 1, 'clients');
 
   return { typeDistribution, salesClientRank, salesStoreRank, provinceRank };
@@ -977,7 +1060,7 @@ function rankBy(list, keyFn, valueFn, sortField) {
   const map = new Map();
   list.forEach((c) => {
     const k = keyFn(c) || '未分配';
-    if (!map.has(k)) map.set(k, { name: k, clients: 0, stores: 0, typeMap: new Map() });
+    if (!map.has(k)) map.set(k, { name: k, clients: 0, stores: 0, typeMap: new Map(), salesMap: new Map() });
     const item = map.get(k);
     item.clients += 1;
     item.stores += c.stores;
@@ -985,16 +1068,29 @@ function rankBy(list, keyFn, valueFn, sortField) {
     const tag = item.typeMap.get(t) || { name: t, count: 0 };
     tag.count += valueFn(c) ? 1 : 1; // 标签统计「连锁家数」
     item.typeMap.set(t, tag);
+    // 记录该分组下各销售的客户数（用于省份榜显示销售名）
+    if (c.sales) item.salesMap.set(c.sales, (item.salesMap.get(c.sales) || 0) + 1);
   });
 
   return Array.from(map.values())
-    .map((item) => ({
-      rank: 0,
-      name: item.name,
-      clients: item.clients,
-      stores: round(item.stores, 2),
-      tags: sortChainTypes(Array.from(item.typeMap.keys())).map((t) => item.typeMap.get(t)),
-    }))
+    .map((item) => {
+      // 取客户数最多的销售作为该组的「代表销售」
+      let topSales = '';
+      let topCount = -1;
+      item.salesMap.forEach((cnt, sales) => {
+        if (cnt > topCount) { topCount = cnt; topSales = sales; }
+      });
+      return {
+        rank: 0,
+        name: item.name,
+        clients: item.clients,
+        stores: round(item.stores, 2),
+        /** V7：该组代表销售（省份榜用；销售榜自身则为空串） */
+        salesName: topSales,
+        salesCount: topCount > 0 ? topCount : 0,
+        tags: sortChainTypes(Array.from(item.typeMap.keys())).map((t) => item.typeMap.get(t)),
+      };
+    })
     .sort((a, b) => {
       const av = sortField === 'stores' ? a.stores : a.clients;
       const bv = sortField === 'stores' ? b.stores : b.clients;
@@ -1155,13 +1251,14 @@ function buildRow6(clients, flowEvents, now) {
 
   const signTrend = {
     days: days.map((d) => md(d)),
+    daysCn: days.map((d) => mdCn(d)),
     south,
     north,
     stores,
     byChainType,
   };
 
-  // ── 流程推进：最近 5 个工作日 ──
+  // ── 流程处理：最近 5 个工作日 ──
   const workdays = [];
   let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   let guard = 0;
@@ -1173,8 +1270,17 @@ function buildRow6(clients, flowEvents, now) {
 
   const nodeList = FLOW_NODES.slice();
   const matrix = nodeList.map(() => new Array(workdays.length).fill(0));
+  /** V7：按区域分别累计，供「流程处理」的区域筛选使用 */
+  const matrixSouth = nodeList.map(() => new Array(workdays.length).fill(0));
+  const matrixNorth = nodeList.map(() => new Array(workdays.length).fill(0));
   const wdIdx = new Map(workdays.map((d, i) => [d, i]));
   const nodeIdx = new Map(nodeList.map((nm, i) => [nm, i]));
+
+  // 事件实例 → 连锁区域：parsed_102.event_instance_id === parsed_16.jdy_data_id
+  const instanceRegion = new Map();
+  clients.forEach((c) => {
+    if (c.dataId) instanceRegion.set(c.dataId, c.region);
+  });
 
   flowEvents.forEach((e) => {
     // 只统计「完成」事件：event_completed_count > 0
@@ -1188,12 +1294,27 @@ function buildRow6(clients, flowEvents, now) {
     const j = nodeIdx.get(nodeName);
     if (j === undefined) return;
     matrix[j][i] += done;
+    // 区域维度
+    const instId = s(e.event_instance_id);
+    const reg = instId ? instanceRegion.get(instId) : '';
+    if (reg === '南区') matrixSouth[j][i] += done;
+    else if (reg === '北区') matrixNorth[j][i] += done;
   });
 
   const flowProgress = {
     days: workdays.map((d) => md(d)),
+    daysCn: workdays.map((d) => mdCn(d)),
     nodes: nodeList,
     matrix,
+    /** V7：区域拆分（frontend 的区域筛选用） */
+    byRegion: {
+      全部: { matrix },
+      南区: { matrix: matrixSouth },
+      北区: { matrix: matrixNorth },
+    },
+    /** V7：兼容扁平字段 */
+    matrixSouth,
+    matrixNorth,
   };
 
   // ── 有开通策略的客户数（按南北区）──
@@ -1233,28 +1354,75 @@ function emptyRow7() {
 }
 
 /**
+ * 解析第 8 排（策略模型/类型）的日期区间。
+ *
+ * 优先级：
+ *   1. query.row8DatePreset / row8DateFrom / row8DateTo（第 8 排自己的日期按钮）
+ *   2. 顶部全局日期筛选（datePreset/dateFrom/dateTo）——契约要求「顶部设置后同步到此」
+ *   3. 都没有 → 默认「近 30 日」
+ *
+ * @returns {{from:string,to:string}} YYYY-MM-DD
+ */
+function resolveRow8Range(query, globalRange, now) {
+  const q = query || {};
+  const preset = String(q.row8DatePreset || '');
+  if (preset) {
+    if (preset === 'last30' || preset === 'all') {
+      // 近 30 日
+      const p = (x) => String(x).padStart(2, '0');
+      const to = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+      const fromD = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+      const from = `${fromD.getFullYear()}-${p(fromD.getMonth() + 1)}-${p(fromD.getDate())}`;
+      return preset === 'all' ? { from: '', to: '' } : { from, to };
+    }
+    const r = resolveDateRange(preset, q.row8DateFrom, q.row8DateTo, now);
+    return { from: r.from, to: r.to };
+  }
+
+  // 顶部全局日期筛选已生效 → 同步
+  if (globalRange && (globalRange.from || globalRange.to)) {
+    return { from: globalRange.from || '', to: globalRange.to || '' };
+  }
+
+  // 默认近 30 日
+  const p = (x) => String(x).padStart(2, '0');
+  const to = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())}`;
+  const fromD = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 29);
+  const from = `${fromD.getFullYear()}-${p(fromD.getMonth() + 1)}-${p(fromD.getDate())}`;
+  return { from, to };
+}
+
+/**
  * 把一组 mail_30/31 行聚合成 Row7Data。
+ *
+ * V7 修复「南 + 北 ≠ 合计」：
+ *   V6 里 `total` 累计了全部连锁，而 `south`/`north` 只累计能归属到区域的连锁，
+ *   未签约（chainRegion 里没有）的连锁被算进 total 却没进任何区域，导致加不起来。
+ *   V7 增加 `unknown` 桶，保证 **south + north + unknown === total**。
+ *
  * @param {Array} rows 运行数据行（mail_30 或 mail_31 的子集）
  * @param {Map} chainRegion 连锁ID → 区域
  */
 function aggregateRow7(rows, chainRegion) {
   const out = emptyRow7();
-  const acc = {
-    s: { openedChains: 0, openedStrats: 0, runChains: 0, runStrats: 0, sent: 0, arrived: 0, gmv: 0, couponIssuedPpl: 0, couponUsedPpl: 0, couponIssued: 0 },
-    n: { openedChains: 0, openedStrats: 0, runChains: 0, runStrats: 0, sent: 0, arrived: 0, gmv: 0, couponIssuedPpl: 0, couponUsedPpl: 0, couponIssued: 0 },
-    t: { openedChains: 0, openedStrats: 0, runChains: 0, runStrats: 0, sent: 0, arrived: 0, gmv: 0, couponIssuedPpl: 0, couponUsedPpl: 0, couponIssued: 0 },
-  };
+  const mkAcc = () => ({
+    openedChains: 0, openedStrats: 0, runChains: 0, runStrats: 0,
+    sent: 0, arrived: 0, gmv: 0, couponIssuedPpl: 0, couponUsedPpl: 0, couponIssued: 0,
+    channelCost: 0, couponCost: 0, couponGmv: 0,
+  });
+  const acc = { s: mkAcc(), n: mkAcc(), u: mkAcc(), t: mkAcc() };
 
   // 按连锁去重统计「连锁数」
-  const seen = { s: new Set(), n: new Set(), t: new Set() };
-  const seenRun = { s: new Set(), n: new Set(), t: new Set() };
+  const seen = { s: new Set(), n: new Set(), u: new Set(), t: new Set() };
+  const seenRun = { s: new Set(), n: new Set(), u: new Set(), t: new Set() };
 
   rows.forEach((r) => {
     const chainId = s(r[M.chainId]);
     const region = chainRegion.get(chainId) || '';
     const keys = ['t'];
     if (region === '南区') keys.push('s');
-    if (region === '北区') keys.push('n');
+    else if (region === '北区') keys.push('n');
+    else keys.push('u'); // 未知区域（未签约连锁）
 
     const opened = n(r[M.openedStrategies]);
     const running = n(r[M.runningStrategies]);
@@ -1264,6 +1432,9 @@ function aggregateRow7(rows, chainRegion) {
     const couponIssuedPpl = n(r[M.couponIssuedPeople]);
     const couponUsedPpl = n(r[M.couponUsedPeople]);
     const couponIssued = n(r[M.couponIssued]);
+    const channelCost = n(r[M.channelCost]);
+    const couponCost = n(r[M.couponCost]);
+    const couponGmv = n(r[M.couponGmv]);
 
     keys.forEach((k) => {
       const a = acc[k];
@@ -1275,6 +1446,9 @@ function aggregateRow7(rows, chainRegion) {
       a.couponIssuedPpl += couponIssuedPpl;
       a.couponUsedPpl += couponUsedPpl;
       a.couponIssued += couponIssued;
+      a.channelCost += channelCost;
+      a.couponCost += couponCost;
+      a.couponGmv += couponGmv;
       if (opened > 0 && chainId) seen[k].add(chainId);
       if (running > 0 && chainId) seenRun[k].add(chainId);
     });
@@ -1283,56 +1457,67 @@ function aggregateRow7(rows, chainRegion) {
   const pack = (k) => {
     const a = acc[k];
     return {
-      openedStrategy: {
-        chains: { south: 0, north: 0, total: seen[k].size },
-        strategies: { south: 0, north: 0, total: round(a.openedStrats, 2) },
-      },
-      runningStrategy: {
-        chains: { south: 0, north: 0, total: seenRun[k].size },
-        strategies: { south: 0, north: 0, total: round(a.runStrats, 2) },
-      },
+      openedChains: seen[k].size,
+      runChains: seenRun[k].size,
+      openedStrats: round(a.openedStrats, 2),
+      runStrats: round(a.runStrats, 2),
       reachRate: round(div(a.arrived, a.sent), 4),
       couponRate: round(div(a.couponUsedPpl, a.couponIssuedPpl), 4),
-      conversion: {
-        total: round(a.gmv, 2),
-        perCapita: round(div(a.gmv, a.arrived), 2),
-      },
-      people: {
-        reached: { total: round(a.sent, 2) },
-        couponIssued: { total: round(a.couponIssuedPpl, 2) },
-      },
-      _raw: a,
+      gmv: round(a.gmv, 2),
+      perCapita: round(div(a.gmv, a.arrived), 2),
+      sent: round(a.sent, 2),
+      couponIssuedPpl: round(a.couponIssuedPpl, 2),
+      channelCost: round(a.channelCost, 2),
+      couponCost: round(a.couponCost, 2),
+      totalCost: round(a.channelCost + a.couponCost, 2),
+      couponGmv: round(a.couponGmv, 2),
     };
   };
 
   const t = pack('t');
   const so = pack('s');
   const no = pack('n');
+  const un = pack('u');
 
-  // 组装成契约结构（每个指标都带 south/north/total）
+  /** 组装成契约结构：south / north / unknown / total */
   const withSplit = (pick) => ({
     south: pick(so),
     north: pick(no),
+    unknown: pick(un),
     total: pick(t),
   });
 
   out.openedStrategy = {
-    chains: withSplit((x) => x.openedStrategy.chains.total),
-    strategies: withSplit((x) => x.openedStrategy.strategies.total),
+    chains: withSplit((x) => x.openedChains),
+    strategies: withSplit((x) => x.openedStrats),
   };
   out.runningStrategy = {
-    chains: withSplit((x) => x.runningStrategy.chains.total),
-    strategies: withSplit((x) => x.runningStrategy.strategies.total),
+    chains: withSplit((x) => x.runChains),
+    strategies: withSplit((x) => x.runStrats),
   };
   out.reachRate = withSplit((x) => x.reachRate);
   out.couponRate = withSplit((x) => x.couponRate);
   out.conversion = {
-    ...withSplit((x) => x.conversion.total),
-    perCapita: withSplit((x) => x.conversion.perCapita),
+    ...withSplit((x) => x.gmv),
+    perCapita: withSplit((x) => x.perCapita),
   };
   out.people = {
-    reached: withSplit((x) => x.people.reached.total),
-    couponIssued: withSplit((x) => x.people.couponIssued.total),
+    reached: withSplit((x) => x.sent),
+    couponIssued: withSplit((x) => x.couponIssuedPpl),
+  };
+  /* V7 新增成本类指标 */
+  out.cost = {
+    channelCost: withSplit((x) => x.channelCost),
+    couponCost: withSplit((x) => x.couponCost),
+    totalCost: withSplit((x) => x.totalCost),
+    couponGmv: withSplit((x) => x.couponGmv),
+    /** 营销ROI = 成本合计 ÷ 转化销售额 */
+    roi: {
+      south: round(div(so.totalCost, so.gmv), 2),
+      north: round(div(no.totalCost, no.gmv), 2),
+      unknown: round(div(un.totalCost, un.gmv), 2),
+      total: round(div(t.totalCost, t.gmv), 2),
+    },
   };
   return out;
 }
@@ -1342,9 +1527,34 @@ function buildRow7(run30, chainRegion) {
   return aggregateRow7(run30.rows || [], chainRegion);
 }
 
-/** 第 8 排：按策略模块 × 策略类型，分南北区 */
-function buildRow8(run31, chainRegion) {
-  const rows = run31.rows || [];
+/**
+ * 第 8 排：按策略模块 × 策略类型，分南北区 + 汇总。
+ *
+ * V7 新增：
+ *   - `cost` 指标组（渠道成本 / 用券成本 / 成本合计 / 营销ROI）
+ *   - `modules`：按模块聚合的树形结构（前端画「模块 → 类型」链接图用）
+ *   - 日期筛选：`range` 参数按「策略开通&触达时间」过滤（默认近 30 日）
+ *
+ * @param {Object} run31 { rows, importDate }
+ * @param {Map} chainRegion 连锁ID → 区域
+ * @param {Object} [range] { from, to } 过滤条件（按 touchAt，格式 YYYYMMDD 比较）
+ */
+function buildRow8(run31, chainRegion, range) {
+  let rows = run31.rows || [];
+
+  /* ── V7 日期筛选：按「策略开通&触达时间」过滤 ── */
+  if (range && (range.from || range.to)) {
+    const fromKey = range.from ? range.from.replace(/-/g, '') : '';
+    const toKey = range.to ? range.to.replace(/-/g, '') : '';
+    rows = rows.filter((r) => {
+      const k = s(r[M.touchAt]).replace(/[^\d]/g, '');
+      if (k.length !== 8) return false;
+      if (fromKey && k < fromKey) return false;
+      if (toKey && k > toKey) return false;
+      return true;
+    });
+  }
+
   const groups = new Map();
   rows.forEach((r) => {
     const model = s(r[M.model]) || '未分类';
@@ -1354,58 +1564,86 @@ function buildRow8(run31, chainRegion) {
     groups.get(key).rows.push(r);
   });
 
-  const items = Array.from(groups.values()).map((g) => {
-    // 南区：只保留南区的连锁；北区同理
-    const southRows = g.rows.filter((r) => (chainRegion.get(s(r[M.chainId])) || '') === '南区');
-    const northRows = g.rows.filter((r) => (chainRegion.get(s(r[M.chainId])) || '') === '北区');
-    const mkRegion = (list) => {
-      const agg = aggregateRow7(list, chainRegion);
-      // 只保留该区域自己的数值（把 total 换成该区域值）
-      const pick = (obj) => ({ south: obj.south, north: obj.north, total: obj.south || obj.north || obj.total });
+  /** 把一组行打包成 { south, north, total } 三份（每份都含全部指标） */
+  const buildTriple = (list) => {
+    const mk = (sub) => {
+      const agg = aggregateRow7(sub, chainRegion);
+      const g = (obj) => ({ south: obj.south, north: obj.north, unknown: obj.unknown, total: obj.total });
       return {
         openedStrategy: {
-          chains: { south: agg.openedStrategy.chains.south, north: agg.openedStrategy.chains.north, total: agg.openedStrategy.chains.total },
-          strategies: { south: agg.openedStrategy.strategies.south, north: agg.openedStrategy.strategies.north, total: agg.openedStrategy.strategies.total },
+          chains: g(agg.openedStrategy.chains),
+          strategies: g(agg.openedStrategy.strategies),
         },
         runningStrategy: {
-          chains: { south: agg.runningStrategy.chains.south, north: agg.runningStrategy.chains.north, total: agg.runningStrategy.chains.total },
-          strategies: { south: agg.runningStrategy.strategies.south, north: agg.runningStrategy.strategies.north, total: agg.runningStrategy.strategies.total },
+          chains: g(agg.runningStrategy.chains),
+          strategies: g(agg.runningStrategy.strategies),
         },
-        reachRate: { south: agg.reachRate.south, north: agg.reachRate.north, total: agg.reachRate.total },
-        couponRate: { south: agg.couponRate.south, north: agg.couponRate.north, total: agg.couponRate.total },
-        conversion: {
-          south: agg.conversion.south, north: agg.conversion.north, total: agg.conversion.total,
-          perCapita: agg.conversion.perCapita,
-        },
-        people: {
-          reached: agg.people.reached,
-          couponIssued: agg.people.couponIssued,
-        },
+        reachRate: g(agg.reachRate),
+        couponRate: g(agg.couponRate),
+        conversion: { ...g(agg.conversion), perCapita: agg.conversion.perCapita },
+        people: { reached: agg.people.reached, couponIssued: agg.people.couponIssued },
+        /** V7 成本指标组 */
+        cost: agg.cost,
       };
     };
+    const southRows = list.filter((r) => (chainRegion.get(s(r[M.chainId])) || '') === '南区');
+    const northRows = list.filter((r) => (chainRegion.get(s(r[M.chainId])) || '') === '北区');
     return {
-      model: g.model,
-      type: g.type,
-      south: mkRegion(southRows),
-      north: mkRegion(northRows),
-      total: mkRegion(g.rows),
+      south: mk(southRows),
+      north: mk(northRows),
+      total: mk(list),
     };
-  });
+  };
+
+  const items = Array.from(groups.values()).map((g) => ({
+    model: g.model,
+    type: g.type,
+    ...buildTriple(g.rows),
+  }));
 
   items.sort((a, b) => {
     if (a.model !== b.model) return a.model.localeCompare(b.model, 'zh-CN');
     return a.type.localeCompare(b.type, 'zh-CN');
   });
 
-  return { items };
+  /* ── V7：按模块聚合的树形结构（模块 → 类型）── */
+  const modelMap = new Map();
+  items.forEach((it) => {
+    if (!modelMap.has(it.model)) modelMap.set(it.model, { model: it.model, types: [] });
+    modelMap.get(it.model).types.push(it);
+  });
+  const modules = Array.from(modelMap.values()).map((m) => ({
+    model: m.model,
+    types: m.types,
+    /** 该模块下所有类型的合计（便于前端做模块级折叠） */
+    ...buildTriple(rows.filter((r) => (s(r[M.model]) || '未分类') === m.model)),
+  }));
+  modules.sort((a, b) => a.model.localeCompare(b.model, 'zh-CN'));
+
+  return {
+    items,
+    modules,
+    /** 实际参与聚合的日期区间（前端显示用） */
+    range: range && (range.from || range.to)
+      ? { from: range.from || '', to: range.to || '' }
+      : null,
+    rowCount: rows.length,
+  };
 }
 
 /**
- * 第 9 排：近 30 日运行趋势。
+ * 第 9 排：近 30 日运行趋势（策略开通&触达时间维度）。
  *
- * 说明：mail_30/31 只保留最新一天快照（按 wjmc 整体替换），没有历史日粒度。
- * 因此趋势取「历史导入快照」：每个 import_date 视为一个数据点，按日聚合。
- * 若历史快照不足 30 天，用已有快照铺满并补 0（前端会显示为稀疏趋势）。
+ * V7 修复：V6 用 `jdywh_mail_30` 按 `DATE(import_date)` 分组，但 mail_30 是「整体汇总快照」，
+ * 只有 2 个导入日（10-29 / 10-30），导致 30 天趋势里 28 天为 0，图表几乎空白。
+ *
+ * 正确做法：用 `jdywh_mail_31`（按日明细），以「策略开通&触达时间」（`c_41f1cc4881`，格式 `20261027`）
+ * 作为日期轴分组，才能得到真实的每日趋势。
+ *
+ * 口径注意（契约 §F1）：
+ *   - `运行策略数` 不可简单求和（同一策略可能每天都在运行）→ 取每日 `MAX` 代表当日运行策略条数
+ *   - `开通策略数` 当日此连锁开通的策略条数 → 求和
+ *   - 到店率 / 核销率 = 到店÷发送、用券÷发券
  */
 async function buildRow9(now) {
   const days = [];
@@ -1414,6 +1652,7 @@ async function buildRow9(now) {
     days.push(ymd(d));
   }
   const idx = new Map(days.map((d, i) => [d, i]));
+  const keyOf = (d) => ymd(d).replace(/-/g, ''); // '20261027'
 
   const reached = new Array(days.length).fill(0);
   const runningChains = new Array(days.length).fill(0);
@@ -1421,43 +1660,70 @@ async function buildRow9(now) {
   const runningStrategies = new Array(days.length).fill(0);
   const reachRate = new Array(days.length).fill(0);
   const couponRate = new Array(days.length).fill(0);
+  const channelCost = new Array(days.length).fill(0);
+  const couponCost = new Array(days.length).fill(0);
+  const totalCost = new Array(days.length).fill(0);
+  const roi = new Array(days.length).fill(0);
+  const gmvArr = new Array(days.length).fill(0);
 
-  if (await tableExists('jdywh_mail_30')) {
-    // 每个 import_date 取一份快照聚合
-    const snaps = await db.query(
-      `SELECT DATE(import_date) AS d,
-              SUM(CAST(${M.openedStrategies} AS DECIMAL(18,2))) AS opened,
-              SUM(CAST(${M.runningStrategies} AS DECIMAL(18,2))) AS running,
-              SUM(CAST(${M.sent} AS DECIMAL(18,2))) AS sent,
-              SUM(CAST(${M.arrived} AS DECIMAL(18,2))) AS arrived,
-              SUM(CAST(${M.couponIssuedPeople} AS DECIMAL(18,2))) AS cIssued,
-              SUM(CAST(${M.couponUsedPeople} AS DECIMAL(18,2))) AS cUsed,
-              COUNT(DISTINCT CASE WHEN CAST(${M.runningStrategies} AS DECIMAL(18,2)) > 0 THEN ${M.chainId} END) AS runChains
-       FROM jdywh_mail_30
-       GROUP BY DATE(import_date)
-       ORDER BY d ASC`,
-    );
-    snaps.forEach((row) => {
-      const key = ymd(row.d);
-      const i = idx.get(key);
-      if (i === undefined) return;
-      reached[i] = round(n(row.sent), 2);
-      runningChains[i] = n(row.runChains);
-      openedStrategies[i] = round(n(row.opened), 2);
-      runningStrategies[i] = round(n(row.running), 2);
-      reachRate[i] = round(div(row.arrived, row.sent), 4);
-      couponRate[i] = round(div(row.cUsed, row.cIssued), 4);
-    });
+  if (await tableExists('jdywh_mail_31')) {
+    const maxd = await db.queryOne('SELECT MAX(import_date) AS d FROM jdywh_mail_31');
+    if (maxd && maxd.d) {
+      const rows = await db.query(
+        `SELECT ${M.touchAt} AS touch_at,
+                SUM(CAST(${M.openedStrategies} AS DECIMAL(18,2))) AS opened,
+                MAX(CAST(${M.runningStrategies} AS DECIMAL(18,2))) AS running,
+                SUM(CAST(${M.sent} AS DECIMAL(18,2))) AS sent,
+                SUM(CAST(${M.arrived} AS DECIMAL(18,2))) AS arrived,
+                SUM(CAST(${M.couponIssuedPeople} AS DECIMAL(18,2))) AS cIssued,
+                SUM(CAST(${M.couponUsedPeople} AS DECIMAL(18,2))) AS cUsed,
+                SUM(CAST(${M.gmv} AS DECIMAL(18,2))) AS gmv,
+                SUM(CAST(${M.channelCost} AS DECIMAL(18,2))) AS channel_cost,
+                SUM(CAST(${M.couponCost} AS DECIMAL(18,2))) AS coupon_cost,
+                COUNT(DISTINCT CASE WHEN CAST(${M.runningStrategies} AS DECIMAL(18,2)) > 0 THEN ${M.chainId} END) AS run_chains
+         FROM jdywh_mail_31
+         WHERE import_date = ?
+         GROUP BY ${M.touchAt}
+         ORDER BY touch_at ASC`,
+        [maxd.d],
+      );
+      rows.forEach((row) => {
+        const raw = s(row.touch_at).replace(/[^\d]/g, '');
+        if (raw.length !== 8) return;
+        const key = `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`;
+        const i = idx.get(key);
+        if (i === undefined) return;
+        const cost = n(row.channel_cost) + n(row.coupon_cost);
+        const gmv = n(row.gmv);
+        reached[i] = round(n(row.sent), 2);
+        runningChains[i] = n(row.run_chains);
+        openedStrategies[i] = round(n(row.opened), 2);
+        runningStrategies[i] = round(n(row.running), 2);
+        reachRate[i] = round(div(row.arrived, row.sent), 4);
+        couponRate[i] = round(div(row.cUsed, row.cIssued), 4);
+        channelCost[i] = round(n(row.channel_cost), 2);
+        couponCost[i] = round(n(row.coupon_cost), 2);
+        totalCost[i] = round(cost, 2);
+        gmvArr[i] = round(gmv, 2);
+        roi[i] = round(div(cost, gmv), 4);
+      });
+    }
   }
 
   return {
     days: days.map((d) => md(d)),
+    daysCn: days.map((d) => mdCn(d)),
     reached,
     runningChains,
     openedStrategies,
     runningStrategies,
     reachRate,
     couponRate,
+    channelCost,
+    couponCost,
+    totalCost,
+    gmv: gmvArr,
+    roi,
   };
 }
 
@@ -1478,6 +1744,8 @@ const DETAIL_COLUMNS = [
   { key: 'solution', title: '解决方案', width: 100, default: true },
   { key: 'trainer', title: '培训人', width: 90, default: true },
   { key: 'node', title: '当前节点', width: 110, default: true, align: 'center' },
+  { key: 'currentOwner', title: '当前处理人', width: 110, default: true, align: 'center' },
+  { key: 'currentNodeDuration', title: '当前节点处理时长', width: 140, default: true, align: 'right' },
   { key: 'submitLabel', title: '提交时间', width: 110, default: true, align: 'center' },
   { key: 'submitDays', title: '提交时长（天）', width: 120, default: true, align: 'right', format: 'num' },
   { key: 'openedStrategies', title: '开通策略数', width: 110, default: true, align: 'right', format: 'num' },
@@ -1578,7 +1846,13 @@ async function buildBoard(query) {
 
   const row6 = buildRow6(clients, flowEvents, now);
   const row7 = buildRow7(run30, chainRegion);
-  const row8 = buildRow8(run31, chainRegion);
+  /**
+   * V7：第 8 排支持独立日期区间（按「策略开通&触达时间」）。
+   * 优先用 query 里的 row8DatePreset/From/To；未指定时默认「近 30 日」。
+   * 顶部全局日期筛选同步到此处（契约 §F4）。
+   */
+  const row8Range = resolveRow8Range(query, range, now);
+  const row8 = buildRow8(run31, chainRegion, row8Range);
   const row9 = await buildRow9(now);
 
   // 明细表

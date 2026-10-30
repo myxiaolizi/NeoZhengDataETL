@@ -340,6 +340,8 @@ export async function listMailProjectRows(
     keyword?: string;
     sort?: string;
     order?: 'asc' | 'desc';
+    /** DataTable 筛选条件 JSON，由 filtersToQuery(filters) 生成。 */
+    filters?: string;
   }
 ): Promise<MailProjectRowsResult> {
   return api.get<MailProjectRowsResult>(
@@ -350,6 +352,7 @@ export async function listMailProjectRows(
         keyword: opts?.keyword,
         sort: opts?.sort,
         order: opts?.order,
+        filters: opts?.filters,
       })
   );
 }

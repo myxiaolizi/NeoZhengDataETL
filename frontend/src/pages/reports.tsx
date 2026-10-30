@@ -1,5 +1,5 @@
 /**
- * 报表中心（V4.1 统一规范）
+ * 报表中心（V6.1 统一规范）
  * - Page 标准结构：title="报表中心" + search + actions(新建报表) + subTabs(类型子标签) + stats(5个数据卡片) + 列表/卡片
  * - 系统内置看板（客户签约看板等预置报表，直接查看、不参与增删改）
  * - 卡片视图 / 表格视图（ProTable）切换
@@ -34,7 +34,6 @@ import {
   EyeOutlined,
   FundOutlined,
   PlusOutlined,
-  ReloadOutlined,
   ShareAltOutlined,
   TableOutlined,
   AppstoreOutlined,
@@ -175,7 +174,7 @@ export default function ReportsPage() {
     );
   }, [keyword, typeFilter, categoryFilter]);
 
-  /** V4.1 数据卡片（5 个：报表数 / 已发布 / 本月访问 / 分享数 / 看板数） */
+  /** V6.1 数据卡片（5 个：报表数 / 已发布 / 本月访问 / 分享数 / 看板数） */
   const statItems = useMemo<StatCardItem[]>(() => {
     const total = reports.length;
     const published = reports.filter((r) => Number(r.status) === 1).length;
@@ -606,19 +605,14 @@ export default function ReportsPage() {
         ) : undefined
       }
       extra={
-        <Space wrap size={8}>
-          <Segmented
-            value={viewMode}
-            onChange={(v) => setViewMode(v as 'card' | 'table')}
-            options={[
-              { value: 'card', icon: <AppstoreOutlined />, label: isMobile ? '' : '卡片' },
-              { value: 'table', icon: <UnorderedListOutlined />, label: isMobile ? '' : '表格' },
-            ]}
-          />
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-            刷新
-          </Button>
-        </Space>
+        <Segmented
+          value={viewMode}
+          onChange={(v) => setViewMode(v as 'card' | 'table')}
+          options={[
+            { value: 'card', icon: <AppstoreOutlined />, label: isMobile ? '' : '卡片' },
+            { value: 'table', icon: <UnorderedListOutlined />, label: isMobile ? '' : '表格' },
+          ]}
+        />
       }
       subTabs={
         <Tabs

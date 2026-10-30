@@ -255,15 +255,79 @@ const GROUPS = [
 
 const SECRET_KEYS = ['smtp_pass', 'ai_api_key', 'mail_imap_pass'];
 
-let cache = null;
+/* ══════════════════════════════════════════════════════════════════════
+ * 内存缓存（带 TTL、带并发去重）
+ *
+ * 【为什么改】「站点信息设置后不生效」的最可疑根因就在这段缓存。
+ *
+ * 旧实现：
+ *   let cache = null;
+ *   async function load(force) { if (cache && !force) return cache; ...; cache = map; }
+ *   set()      → 写库后 cache[key] = v（仅当 cache 已存在）
+ *   setMany()  → 逐个 set() 后 load(true) 强制回库
+ *
+ * 结论：**在「执行写入的那个进程」里缓存是正确的**（set 原地更新、setMany 强制回库），
+ * 所以 set/setMany 本身不是 bug。真正的坑是「缓存永不主动过期」：
+ *   1. 只有写入进程会刷新缓存，其它进程（多实例 / 宝塔拉起的第二个 node /
+ *      watchdog 重启失败的残留进程）永远读旧值；
+ *   2. 不经过 HTTP 接口的修改（直接改库、运维脚本、本地与生产连同一个库）
+ *      任何进程都感知不到；
+ *   3. 因此只要「写入发生的进程」≠「渲染页面的进程」，用户就会看到
+ *      「保存成功但页面没变」，且只能靠重启恢复。
+ *
+ * 实测证据（本机，库 tx.zhengl.vip/jdy-push）：
+ *   库中 site_name 于 2026-10-30 22:34:22 被改为「DataETL」，
+ *   而 8781 进程（18:01:02 启动）的 GET /api/settings/public
+ *   仍返回旧值「简道云推送接收平台」—— 该进程缓存里是 18:01 的旧快照。
+ *
+ * 现在的策略：
+ *   1. **TTL 自动过期**：默认 5s（可用环境变量 SETTINGS_CACHE_TTL_MS 覆盖，
+ *      设为 0 表示每次都回库）。跨进程 / 直接改库的变更最多 5 秒生效，无需重启；
+ *   2. **写入立即生效**：本进程 set()/setMany() 立刻更新缓存并重置计时；
+ *   3. **并发去重**：同一时刻只允许一次回库，避免 TTL 到期瞬间被并发打穿。
+ * ══════════════════════════════════════════════════════════════════════ */
 
+/** 默认缓存存活时间（毫秒） */
+const DEFAULT_CACHE_TTL_MS = 5000;
+
+let cache = null;
+/** 缓存写入时刻（ms），用于 TTL 判断 */
+let cacheAt = 0;
+/** 正在回库的 Promise（并发去重） */
+let inflight = null;
+
+/** 读取缓存 TTL（毫秒）；0 = 每次调用都回库 */
+function cacheTtlMs() {
+  const raw = process.env.SETTINGS_CACHE_TTL_MS;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return DEFAULT_CACHE_TTL_MS;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_CACHE_TTL_MS;
+}
+
+/**
+ * 读取设置（有缓存）
+ * @param {boolean} [force] true = 忽略缓存立即回库
+ */
 async function load(force) {
-  if (cache && !force) return cache;
-  const rows = await db.query('SELECT skey, svalue FROM jdywh_settings');
-  const map = Object.assign({}, DEFAULTS);
-  rows.forEach((r) => { map[r.skey] = r.svalue; });
-  cache = map;
-  return cache;
+  const ttl = cacheTtlMs();
+  const fresh = cache && ttl > 0 && (Date.now() - cacheAt) < ttl;
+  if (fresh && !force) return cache;
+  if (inflight) return inflight;
+
+  inflight = (async () => {
+    const rows = await db.query('SELECT skey, svalue FROM jdywh_settings');
+    const map = Object.assign({}, DEFAULTS);
+    rows.forEach((r) => { map[r.skey] = r.svalue; });
+    cache = map;
+    cacheAt = Date.now();
+    return cache;
+  })();
+
+  try {
+    return await inflight;
+  } finally {
+    inflight = null;
+  }
 }
 
 async function all() {
@@ -297,13 +361,18 @@ async function set(key, value) {
      ON DUPLICATE KEY UPDATE svalue = VALUES(svalue), updated_at = CURRENT_TIMESTAMP`,
     [key, v]
   );
-  if (cache) cache[key] = v;
+  // 本进程立即生效：就地更新缓存并重置 TTL 计时（其它进程靠 TTL 过期后回库）
+  if (cache) {
+    cache[key] = v;
+    cacheAt = Date.now();
+  }
 }
 
 async function setMany(obj) {
   for (const k of Object.keys(obj)) {
     await set(k, obj[k]);
   }
+  // 兜底强制回库：保证返回给前端的一定是「库里最终的样子」（如触发器/默认值修正）
   await load(true);
 }
 
@@ -324,6 +393,7 @@ module.exports = {
   DEFAULTS,
   GROUPS,
   SECRET_KEYS,
+  DEFAULT_CACHE_TTL_MS,
   load,
   all,
   get,
@@ -333,5 +403,6 @@ module.exports = {
   setMany,
   isConfigured,
   mailReady,
-  clearCache() { cache = null; },
+  cacheTtlMs,
+  clearCache() { cache = null; cacheAt = 0; },
 };

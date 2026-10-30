@@ -236,11 +236,31 @@ export interface DeleteGroupResult {
   movedProjects: number;
   movedTo: number;
   movedChildren: number;
+  /** 项目实际迁往的分组名；moveTo=0 时为「未分组」 */
+  movedToName?: string;
 }
 
-export function deleteProjectGroup(id: number, moveTo?: number): Promise<DeleteGroupResult> {
+/**
+ * 删除分组。
+ * 后端语义（src/project-groups.js deleteGroup）：
+ *  - 有子分组 → 400 拒绝，message=「该分组下还有子分组，请先删除或移动子分组」；
+ *  - 分组下的项目**不删除**，默认上移到父分组（无父则变为未分组）；
+ *  - 传 moveTo 可显式指定迁往哪个分组（0=未分组）。
+ *
+ * @param id 分组 id
+ * @param moveToOrOpts 兼容两种写法：
+ *        · 数字 = moveTo（旧签名）
+ *        · 对象 = `{ moveTo?, silent? }`；`silent: true` 时不走全局错误 toast，
+ *          由调用方自己展示后端的中文拒绝原因（分组管理弹窗用）。
+ */
+export function deleteProjectGroup(
+  id: number,
+  moveToOrOpts?: number | { moveTo?: number; silent?: boolean },
+): Promise<DeleteGroupResult> {
+  const opts = typeof moveToOrOpts === 'number' ? { moveTo: moveToOrOpts } : (moveToOrOpts || {});
   return api.delete<DeleteGroupResult>(`/project-groups/${id}`, {
-    body: moveTo === undefined ? {} : { moveTo },
+    body: opts.moveTo === undefined ? {} : { moveTo: opts.moveTo },
+    silent: opts.silent,
   });
 }
 
@@ -485,8 +505,16 @@ export interface ProjectRecordsQuery {
   keyword?: string;
   op?: string;
   field?: string;
+  /** 排序列名（后端做真实列白名单校验，非法列回落 id DESC） */
   sort?: string;
+  /** 排序方向 */
   dir?: 'asc' | 'desc';
+  /**
+   * DataTable 的多条件筛选，JSON 字符串，由 `filtersToQuery(filters)` 生成。
+   * 形如 `[{"column":"x","op":"contains","value":"abc"},{"column":"y","op":"empty"}]`，
+   * 条件之间 AND，且与 keyword 之间也是 AND。空串表示不筛选（qs 会自动跳过）。
+   */
+  filters?: string;
 }
 
 export interface ProjectRecordsData {
@@ -514,6 +542,12 @@ export interface ProjectParsedData {
   idField: DataIdField;
 }
 
+/**
+ * 解析后数据（数据明细）。
+ * query 里的 `keyword / page / pageSize / sort / dir / filters` 全部透传给
+ * `GET /api/projects/:id/parsed`（qs 会自动跳过空值）。
+ * `filters` 由 DataTable 的 `filtersToQuery(filters)` 生成，见契约 §6.1。
+ */
 export function fetchParsedRecords(
   id: number | string,
   query: ProjectRecordsQuery = {},
@@ -524,6 +558,14 @@ export function fetchParsedRecords(
 /** 导出 CSV（后端返回 text/csv，此处拿纯文本） */
 export function exportProjectCsv(id: number | string): Promise<string> {
   return api.get<string>(`/projects/${id}/export`);
+}
+
+/**
+ * 导出 CSV 的直链（后端返回 `Content-Disposition: attachment`，浏览器直接下载）。
+ * 数据明细表标题栏的「导出 CSV」用它，避免把 5 万行 CSV 读进内存。
+ */
+export function projectExportUrl(id: number | string): string {
+  return `/api/projects/${id}/export`;
 }
 
 /* ══════════════ 渲染辅助 ══════════════ */

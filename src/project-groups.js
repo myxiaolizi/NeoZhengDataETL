@@ -21,13 +21,35 @@ const db = require('./db');
 
 const MAX_DEPTH = 5;
 
+/**
+ * parent_id 归一：库里 **NULL 与 0 混用**（现存 4 个分组里 2 个是 NULL，
+ * 见 jdywh_project_groups：12/15 为 NULL，13/14 指向 12）。
+ *
+ * 对外一律输出 **数字 0**（表示根分组），原因：
+ *   - 前端判断写的是 `parentId === 0`（严格相等），若输出 null 会判失败，
+ *     子分组就被当成顶层分组渲染，树形层级与「上级分组」下拉全部错乱；
+ *   - JSON 里 null / 0 混用没有任何业务价值，只有坑。
+ *
+ * 注意：**只做输出归一，不改库里的值**（契约 §6.2 第 3/4 条：不做破坏性迁移）。
+ * 写入侧仍然把根分组写成 NULL（与既有数据保持一致，且 nameExists/同级排序
+ * 都用 IFNULL(parent_id,0) 比较，两种写法等价）。
+ *
+ * @param {*} v 数据库原始 parent_id（可能是 null / undefined / 0 / '0' / 数字）
+ * @returns {number} 0 表示根分组
+ */
+function normalizeParentId(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 /** 行 -> 对外结构 */
 function publicGroup(r) {
   if (!r) return null;
   return {
     id: Number(r.id),
     name: r.name,
-    parentId: Number(r.parent_id || 0),
+    // 显式归一：NULL → 0，绝不把 null 漏给前端
+    parentId: normalizeParentId(r.parent_id),
     code: r.code || '',
     icon: r.icon || '',
     color: r.color || '',
@@ -52,17 +74,28 @@ async function list() {
 
 /**
  * 构建分组树，并附带每个节点的「递归项目数」（含子分组）
+ *
+ * parentId 已由 list()（经 publicGroup）归一成 0/正整数，
+ * 这里再做一次防御性 Number()，避免调用方直接传库原始行（parent_id=null）时层级错乱。
+ *
  * @param {Array} flat 可选，传入已查好的扁平列表避免重复查询
  */
 function buildTree(flat) {
   const list_ = flat || [];
   const map = {};
-  list_.forEach((g) => { map[g.id] = Object.assign({}, g, { children: [], totalProjectCount: 0 }); });
+  list_.forEach((g) => {
+    map[g.id] = Object.assign({}, g, {
+      parentId: normalizeParentId(g.parentId !== undefined ? g.parentId : g.parent_id),
+      children: [],
+      totalProjectCount: 0,
+    });
+  });
 
   const roots = [];
   list_.forEach((g) => {
     const node = map[g.id];
-    if (g.parentId && map[g.parentId]) map[g.parentId].children.push(node);
+    const pid = node.parentId;
+    if (pid && map[pid]) map[pid].children.push(node);
     else roots.push(node);
   });
 
@@ -97,7 +130,7 @@ async function descendantIds(id, flat) {
   const all = flat || await list();
   const childrenOf = {};
   all.forEach((g) => {
-    const p = g.parentId || 0;
+    const p = normalizeParentId(g.parentId);
     if (!childrenOf[p]) childrenOf[p] = [];
     childrenOf[p].push(g.id);
   });
@@ -130,7 +163,7 @@ async function depthOf(id, flat) {
   while (cur && byId[cur] && !guard.has(cur)) {
     guard.add(cur);
     d += 1;
-    cur = byId[cur].parentId || 0;
+    cur = normalizeParentId(byId[cur].parentId);
   }
   return d;
 }
@@ -143,7 +176,7 @@ async function subtreeHeight(id, flat) {
   const all = flat || await list();
   const childrenOf = {};
   all.forEach((g) => {
-    const p = g.parentId || 0;
+    const p = normalizeParentId(g.parentId);
     if (!childrenOf[p]) childrenOf[p] = [];
     childrenOf[p].push(g.id);
   });
@@ -270,26 +303,55 @@ async function updateGroup(id, input) {
 /**
  * 删除分组
  *
+ * 语义（契约 §6.2，V6.1 要求 3 的后端加固；前端入口问题由 projects-detail 负责）
+ * ---------------------------------------------------------------------------
+ * 1) **有子分组时一律拒绝**（400 + 中文原因「该分组下还有子分组，请先删除或移动子分组」）。
+ *    没有 force 级联：子分组一并删除会让用户在一次点击里丢掉整棵子树，
+ *    且 `jdywh_projects.group_id` 会被 IFNULL 逻辑绕到未分组，不可恢复。
+ *    想删父分组 → 先把子分组移走或删掉（updateGroup/deleteGroup 都支持）。
+ *
+ * 2) **分组下的项目绝不删除**，只改归属：
+ *    - 不传 `moveTo`      → 项目「上移」到父分组（`cur.parentId`）；
+ *      父分组不存在（根分组）→ 变为未分组（group_id = NULL）；
+ *    - 传 `moveTo = N`    → 项目迁到分组 N（N 必须存在，否则报错）；
+ *    - 传 `moveTo = 0`    → 项目迁到未分组（显式表达「不要上移」）。
+ *    项目承载数据表与推送令牌，误删不可恢复，因此这里只迁不删。
+ *
+ * 3) `force` 参数：**当前实现刻意不支持**。保留此说明是为了让调用方知道
+ *    「传 force 不会生效」，而不是以为可以强删。批量改归属请用 assignProjects。
+ *
+ * 4) 返回值（前端 GroupManageModal 已按此渲染提示）：
+ *    - `deleted: true`
+ *    - `movedProjects` 本次迁走的项目数（0 表示该分组下没有项目）
+ *    - `movedTo`       项目实际迁往的分组 id（0 = 未分组）
+ *    - `movedToName`   项目实际迁往的分组名（0 时为「未分组」，用于 toast 文案）
+ *    - `movedChildren: 0`（恒为 0：有子分组时上面已拒绝，字段保留以兼容旧前端）
+ *
  * @param {number} id 分组 id
- * @param {{moveTo?:number}} options moveTo=目标分组 id（0/空=移到未分组）；
- *        不传时默认「上移到父分组」，父分组不存在则移到未分组。
- * @returns {{deleted:boolean, movedProjects:number, movedTo:number, movedChildren:number}}
+ * @param {{moveTo?:number, force?:boolean}} [options]
+ *        moveTo = 目标分组 id（0/空 = 未分组）；不传时默认「上移到父分组」。
+ *        force  = 未实现，传了也不级联（见上）。
+ * @returns {{deleted:boolean, movedProjects:number, movedTo:number, movedToName:string, movedChildren:number}}
  */
 async function deleteGroup(id, options) {
   const opts = options || {};
   const cur = await getGroup(id);
   if (!cur) throw new Error('分组不存在');
 
+  // 1) 子分组：拒绝（不级联，见函数注释第 1 条）
+  //    用 IFNULL 兜住 parent_id 为 NULL 的历史数据（NULL 不等于任何值）
   const hasChildren = await db.queryOne(
-    'SELECT COUNT(*) AS c FROM jdywh_project_groups WHERE parent_id = ?',
+    'SELECT COUNT(*) AS c FROM jdywh_project_groups WHERE IFNULL(parent_id,0) = ?',
     [id]
   );
   if (Number((hasChildren && hasChildren.c) || 0) > 0) {
     throw new Error('该分组下还有子分组，请先删除或移动子分组');
   }
 
-  // 项目去向：显式 moveTo 优先，否则上移到父分组
-  const moveTo = opts.moveTo !== undefined ? (Number(opts.moveTo) || 0) : (cur.parentId || 0);
+  // 2) 项目去向：显式 moveTo 优先，否则上移到父分组（父分组可能为 0=根）
+  const moveTo = opts.moveTo !== undefined
+    ? (Number(opts.moveTo) || 0)
+    : normalizeParentId(cur.parentId);
   if (moveTo) {
     const t = await getGroup(moveTo);
     if (!t) throw new Error('项目迁移的目标分组不存在');
@@ -308,6 +370,7 @@ async function deleteGroup(id, options) {
     movedProjects: Number(moved.affectedRows || 0),
     movedTo: moveTo || 0,
     movedToName: moveTo ? (await getGroup(moveTo) || {}).name || '' : '未分组',
+    movedChildren: 0,
   };
 }
 
@@ -370,6 +433,7 @@ async function stats() {
 
 module.exports = {
   MAX_DEPTH,
+  normalizeParentId,
   list,
   tree,
   buildTree,

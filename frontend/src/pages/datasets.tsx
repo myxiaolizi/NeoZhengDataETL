@@ -1,11 +1,11 @@
-/** 数据集管理：SQL / 数据表 / 项目 三种来源 + V4.1 标准结构 + 动态列预览（Modal）+ 结构化 SQL 报错与自动加引号提示 */
+/** 数据集管理：SQL / 数据表 / 项目 三种来源 + V6.1 标准结构 + 动态列预览（Modal）+ 结构化 SQL 报错与自动加引号提示 */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button, Space, Tag, Modal, Empty, Alert, Typography, App, Table, Tooltip,
   Segmented, Spin, Statistic, Card, Input, Select, Grid,
 } from 'antd';
 import {
-  PlusOutlined, ReloadOutlined, PlayCircleOutlined, DeleteOutlined, EditOutlined,
+  PlusOutlined, PlayCircleOutlined, DeleteOutlined, EditOutlined,
   TableOutlined, CodeOutlined, ProjectOutlined, DatabaseOutlined, ColumnWidthOutlined,
   ExclamationCircleOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
@@ -357,7 +357,7 @@ export default function DatasetsPage() {
     });
   };
 
-  /** V4.1 数据卡片（5 个：数据集总数 / 表型 / 项目型 / SQL 型 / 停用数） */
+  /** V6.1 数据卡片（5 个：数据集总数 / 表型 / 项目型 / SQL 型 / 停用数） */
   const statItems = useMemo<StatCardItem[]>(() => {
     const total = allDatasets.length;
     const tableCount = allDatasets.filter((d) => d.sourceType === 'table').length;
@@ -571,11 +571,6 @@ export default function DatasetsPage() {
             新建数据集
           </Button>
         ) : undefined
-      }
-      extra={
-        <Button icon={<ReloadOutlined />} onClick={() => { loadRefs(); actionRef.current?.reload(); }}>
-          刷新
-        </Button>
       }
       stats={statItems}
     >
@@ -865,9 +860,6 @@ export default function DatasetsPage() {
                   { label: '全部', value: Math.max(preview.columns.length, 1) },
                 ]}
               />
-              <Button size="small" icon={<ReloadOutlined />} onClick={() => reloadPreview(previewLimit)}>
-                刷新
-              </Button>
             </Space>
 
             <Alert

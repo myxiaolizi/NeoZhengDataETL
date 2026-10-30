@@ -1,9 +1,9 @@
 /**
- * 全局样式（V4.1）
+ * 全局样式（V6.1）
  *
  * 原则：组件样式交给 Ant Design，这里只做三件事
  *  1) 必要的 reset / 字体 / 移动端适配；
- *  2) 布局外壳（顶部单栏、标签栏、蓝底白字侧栏、底部收起按钮）的样式补充
+ *  2) 布局外壳（顶部单栏、浏览器式标签栏、蓝底白字侧栏、底部收起按钮）的样式补充
  *     —— 这些是 antd 没有现成类名、只能靠 CSS 覆盖的地方；
  *  3) 中康看板专用规则（.board-root / html[data-theme='dark']），**保持原样不动**。
  *
@@ -109,67 +109,186 @@ pre, code {
 }
 .v41-header-user:hover { background: var(--v41-surface-alt); }
 
-/* ---------------- 标签栏（内嵌 Header） ---------------- */
-.v41-tabs {
+/* ══════════════════════════════════════════════════════════
+ * 顶部「浏览器式」多标签栏（V6.1，命名空间 .v61-browser-tabs）
+ *
+ * 用户要求：「不要用标签的方式体现已打开的页面，要用类似浏览器的显示方式」。
+ * 这里不用 antd Tabs（卡片式标签），全部自绘：
+ *  - 圆角矩形 8px 8px 0 0，相邻标签 margin-left:-1px 贴合共用一条边框线；
+ *  - 激活标签：白底 + 底部边框抹平（margin-bottom:-1px 压住 Header 下边框，
+ *    与内容区连成一体）+ 顶部 2px 主色指示条（Chrome 式 active indicator）；
+ *  - 非激活标签 surfaceAlt，hover 提亮为白；
+ *  - 标题 ellipsis（min 72px / max 180px），关闭 × 仅 hover / 激活时明显；
+ *  - 溢出：容器 overflow-x:auto 且隐藏原生滚动条，左右滚动按钮接管；
+ *  - 移动端标签高度 36px，仍可横向滚动。
+ * 颜色一律走 --v41-* 变量（与 theme.ts 一一对应），不写死新色值。
+ * ══════════════════════════════════════════════════════════ */
+.v61-browser-tabs {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  align-items: flex-end;
   flex: 1;
   min-width: 0;
   height: 100%;
+  overflow: hidden;
 }
-.v41-tabs .ant-tabs { min-width: 0; }
-/* 去掉 antd Tabs 默认的下边框与额外留白，避免在 Header 里多出一条灰线。
-   antd 自己的规则是 `.ant-tabs-top > .ant-tabs-nav::before`，选择器权重与我们相同，
-   而 antd 的样式是运行时注入的、可能在 global.css 之后，所以这里必须 !important。 */
-.v41-tabs .ant-tabs-nav { margin: 0 !important; }
-.v41-tabs .ant-tabs-nav::before { display: none !important; }
 
-/* 标签做成圆角胶囊：默认 / hover / 选中三态分明 */
-.v41-tabs .ant-tabs-tab {
-  height: 28px;
-  margin: 0 !important;
-  padding: 0 10px !important;
-  background: var(--v41-surface-alt) !important;
-  border: 1px solid var(--v41-border) !important;
-  border-radius: 7px !important;
-  transition: background .16s ease, border-color .16s ease;
+/* 标签滚动区：隐藏原生滚动条（Firefox + WebKit），由左右按钮驱动 */
+.v61-tabs-scroll {
+  display: flex;
+  align-items: flex-end;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding-top: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
-.v41-tabs .ant-tabs-tab + .ant-tabs-tab { margin-left: 4px !important; }
-.v41-tabs .ant-tabs-tab:hover {
-  background: var(--v41-surface-sunken) !important;
-  border-color: var(--v41-border-strong) !important;
-}
-.v41-tabs .ant-tabs-tab.ant-tabs-tab-active {
-  background: rgba(22, 104, 227, .10) !important;
-  border-color: var(--v41-primary) !important;
-}
-.v41-tabs .ant-tabs-tab .ant-tabs-tab-btn {
-  color: var(--v41-text-secondary) !important;
-  font-size: 12.5px;
-  line-height: 24px;
-}
-.v41-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
-  color: var(--v41-primary-deep) !important;
-  font-weight: 600;
-}
-.v41-tabs .ant-tabs-nav-more { color: var(--v41-text-tertiary); }
-.v41-tabs-actions { flex-shrink: 0; padding-left: 2px; }
+.v61-tabs-scroll::-webkit-scrollbar { width: 0; height: 0; display: none; }
 
-/* 标签文本 + 关闭按钮 */
-.v41-tab-label {
+/* 单个浏览器标签 */
+.v61-tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding-right: 1px;
+  flex: 0 0 auto;
+  height: 34px;
+  min-width: 72px;
+  max-width: 180px;
+  padding: 0 8px 0 11px;
+  margin-left: -1px;               /* 相邻标签贴合：两条 1px 边框叠成一条 */
+  background: var(--v41-surface-alt);
+  border: 1px solid var(--v41-border);
+  border-radius: 8px 8px 0 0;
+  color: var(--v41-text-secondary);
+  font-size: 12.5px;
+  line-height: 1;
+  cursor: pointer;
   user-select: none;
+  outline: none;
+  transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 }
-.v41-tab-close {
+.v61-tab:first-child { margin-left: 0; }
+.v61-tab:focus-visible { box-shadow: inset 0 0 0 2px var(--v41-primary); }
+
+/* 非激活 hover：提亮，并盖住相邻标签的边框形成清晰的前后关系 */
+.v61-tab:hover {
+  background: var(--v41-surface);
+  color: var(--v41-text);
+  z-index: 2;
+}
+
+/*
+ * 激活标签：白底 + 与内容区连体 + 顶部 2px 主色指示条。
+ *
+ * 连体是这么实现的（Height 34→35 / 下边框透空）：
+ *   Header 是 border-box（height 52 含 1px 下边框），下边框那一行占据 y=51..52。
+ *   标签带容器底部对齐到 y=52，因此：
+ *    - 非激活标签 height 34 → 占 y=18..52，其 1px 下边框正好压在同一条线上，
+ *      颜色相同 → 看起来这条分隔线是连续的（浏览器里也是这样）；
+ *    - 激活标签 height 35 → 占 y=17..52（顶部高 1px，像 Chrome 的高亮页签），
+ *      下边框设为 transparent 且背景为白色 → 该行被白底覆盖，
+ *      标签与下方内容区连成一片，视觉上「标签就是内容」。
+ *   不用 margin-bottom:-1px：那会把标签顶出滚动容器（overflow 裁剪）或被裁掉。
+ */
+.v61-tab.is-active {
+  height: 35px;
+  background: var(--v41-surface);
+  border-bottom-color: transparent;
+  color: var(--v41-primary-deep);
+  font-weight: 600;
+  z-index: 3;
+  box-shadow: 0 -3px 8px -4px rgba(11, 31, 59, .18);
+}
+.v61-tab.is-active::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  right: -1px;
+  height: 2px;
+  border-radius: 8px 8px 0 0;
+  background: var(--v41-primary);
+}
+
+/* 图标 + 标题（ellipsis） */
+.v61-tab-icon {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12.5px;
+  opacity: .82;
+  flex: 0 0 auto;
+}
+.v61-tab.is-active .v61-tab-icon { opacity: 1; }
+.v61-tab-title {
+  min-width: 0;
+  max-width: 152px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 关闭 ×：默认几乎不可见，hover / 激活时明显 */
+.v61-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 9.5px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .15s ease, background .15s ease, color .15s ease;
+}
+.v61-tab:hover .v61-tab-close,
+.v61-tab.is-active .v61-tab-close { opacity: .48; }
+.v61-tab-close:hover {
+  opacity: 1;
+  background: var(--v41-surface-sunken);
+  color: var(--v41-red);
+}
+
+/* 左右滚动按钮：不可滚动时隐藏（占位一并消失，标签带占满宽度） */
+.v61-tabs-scroll-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 30px;
+  margin-bottom: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--v41-text-tertiary);
   font-size: 10px;
-  opacity: .50;
-  transition: opacity .15s ease, color .15s ease;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
 }
-.v41-tab-close:hover { opacity: 1; color: var(--v41-red); }
+.v61-tabs-scroll-btn:hover {
+  background: var(--v41-surface-alt);
+  color: var(--v41-primary);
+}
+.v61-tabs-scroll-btn[data-hidden='true'] { display: none; }
+
+/* 移动端：标签更高（36px）更好点按，宽度收紧保证一屏能看到更多标签 */
+@media (max-width: 768px) {
+  .v61-tab { height: 36px; max-width: 140px; padding: 0 6px 0 9px; }
+  .v61-tab.is-active { height: 37px; }
+  .v61-tab-title { max-width: 104px; }
+  .v61-tabs-scroll-btn { display: none !important; }
+  .v61-tabs-scroll { padding-top: 4px; }
+}
 
 /* ══════════════════════════════════════════════════════════
  * 侧栏（蓝底白字）

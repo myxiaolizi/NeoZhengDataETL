@@ -1,7 +1,7 @@
-/** 集成详情（V4.1 页面规范）：配置概览 + 运行日志（服务端分页） + 手动执行 + 请求/响应快照
+/** 集成详情（V6.1 页面规范）：配置概览 + 运行日志（服务端分页） + 手动执行 + 请求/响应快照
  *
- * 结构：本页名称 + 操作 → 子标签页（配置概览 / 运行日志）→ 数据卡片 → 本页内容
- * V4.1：执行快照由右侧 Drawer 改为 Modal（禁止抽屉承载业务内容）。
+ * 结构：[返回] 本页名称 + 操作 → 子标签页（配置概览 / 运行日志）→ 数据卡片 → 本页内容
+ * V6.1：执行快照用 Modal（禁止抽屉承载业务内容）。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -9,12 +9,12 @@ import {
   Modal, Empty, Spin, Divider, Badge,
 } from 'antd';
 import {
-  ArrowLeftOutlined, PlayCircleOutlined, ReloadOutlined, ImportOutlined, ExportOutlined,
+  PlayCircleOutlined, ImportOutlined, ExportOutlined,
   CheckCircleFilled, CloseCircleFilled, ThunderboltOutlined, LinkOutlined,
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import Page from '@/components/Page';
 import type { StatCardItem } from '@/components/StatCards';
 import { usePermission } from '@/stores/app';
@@ -41,7 +41,6 @@ const AUTH_LABEL: Record<string, string> = {
 
 export default function IntegrationDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const { message } = App.useApp();
   const can = usePermission();
   const canWrite = can('integration:write');
@@ -176,7 +175,7 @@ export default function IntegrationDetailPage() {
 
   if (loading) {
     return (
-      <Page title="集成详情">
+      <Page back="/integrations" backText="返回数据集成" title="集成详情">
         <div style={{ padding: 80, textAlign: 'center' }}><Spin size="large" /></div>
       </Page>
     );
@@ -185,8 +184,9 @@ export default function IntegrationDetailPage() {
   if (error || !task) {
     return (
       <Page
+        back="/integrations"
+        backText="返回数据集成"
         title="集成详情"
-        actions={<Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/integrations')}>返回列表</Button>}
       >
         <Alert type="error" showIcon title="读取失败" description={error || '任务不存在'} />
       </Page>
@@ -218,6 +218,8 @@ export default function IntegrationDetailPage() {
 
   return (
     <Page
+      back="/integrations"
+      backText="返回数据集成"
       title={
         <Space size={8} wrap>
           {task.direction === 'push'
@@ -243,16 +245,6 @@ export default function IntegrationDetailPage() {
             立即执行
           </Button>
         ) : null
-      }
-      extra={
-        <>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/integrations')}>
-            返回列表
-          </Button>
-          <Button icon={<ReloadOutlined />} onClick={() => { load(); logRef.current?.reload(); }}>
-            刷新
-          </Button>
-        </>
       }
       subTabs={
         <Tabs
@@ -417,7 +409,7 @@ export default function IntegrationDetailPage() {
           columns={logColumns}
           search={false}
           scroll={{ x: 1200 }}
-          options={{ density: false, fullScreen: true, reload: true, setting: false }}
+          options={{ density: false, fullScreen: true, reload: false, setting: false }}
           pagination={{
             defaultPageSize: 20,
             showSizeChanger: true,
@@ -434,7 +426,7 @@ export default function IntegrationDetailPage() {
         />
       )}
 
-      {/* ---------- 请求/响应快照：Modal（V4.1 禁止 Drawer） ---------- */}
+      {/* ---------- 请求/响应快照：Modal（V6.1 禁止 Drawer） ---------- */}
       <Modal
         title="执行快照"
         open={!!snapshot}

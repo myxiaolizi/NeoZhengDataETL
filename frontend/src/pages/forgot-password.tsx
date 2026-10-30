@@ -8,21 +8,19 @@
  *   失败 → `.alert-error`（邮箱格式错误 / 未配置邮件服务 / 发信失败）
  *
  * 视觉与 login.tsx 一致：白底居中 Card + 渐变方形品牌标识。
+ *
+ * V6.1：品牌区（名称 / 副标题 / Logo 方块）改为读站点信息（useSiteBrand），
+ * 不再硬编码；document.title 同步跟随站点名称。
  */
 import React, { useState } from 'react';
 import { Alert, Button, Card, Form, Grid, Input, Result, Space, Typography } from 'antd';
 import { MailOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useSiteBrand } from '@/stores/app';
 import { PALETTE, NEUTRAL } from '@/theme';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
-
-const BRAND = {
-  name: 'Neo Zheng DataETL',
-  subtitle: '企业数据集成平台 · V4.0',
-  logo: 'N',
-};
 
 /* ---------------- 认证表单提交（与服务端渲染表单等价） ---------------- */
 interface AuthResult {
@@ -95,6 +93,7 @@ export default function ForgotPasswordPage() {
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const navigate = useNavigate();
+  const { brandName, brandSubtitle, brandLogoText } = useSiteBrand();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
 
@@ -141,13 +140,13 @@ export default function ForgotPasswordPage() {
               fontWeight: 700,
             }}
           >
-            {BRAND.logo}
+            {brandLogoText}
           </div>
           <Title level={4} style={{ margin: 0, color: NEUTRAL.text }}>
-            {BRAND.name}
+            {brandName}
           </Title>
           <Text type="secondary" style={{ fontSize: 12.5 }}>
-            {BRAND.subtitle}
+            {brandSubtitle}
           </Text>
         </div>
 

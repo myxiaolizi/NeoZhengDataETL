@@ -5,7 +5,7 @@ import {
   Table, Tag, Typography,
 } from 'antd';
 import {
-  DatabaseOutlined, FileSearchOutlined, ProjectOutlined, ReloadOutlined,
+  DatabaseOutlined, FileSearchOutlined, ProjectOutlined,
   TableOutlined, TagsOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
@@ -228,11 +228,6 @@ export default function GovernancePage() {
     <Page
       title="治理总览"
       stats={stats}
-      extra={
-        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
-          刷新
-        </Button>
-      }
     >
       <Space orientation="vertical" size={12} style={{ width: '100%' }}>
         {error ? <Alert type="error" showIcon title="治理数据加载失败" description={error} /> : null}

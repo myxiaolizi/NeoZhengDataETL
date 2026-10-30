@@ -1,16 +1,16 @@
 /**
- * 流程设计器（V4.1 重构）
+ * 流程设计器（V6.1 重构）
  *
  * 布局：左侧节点面板 · 中间固定尺寸画布 · 右侧节点配置抽屉
  * 画布：固定 2000×1200，缩放 50%~150%，节点拖动不改变画布尺寸
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import {
   Alert, App, Button, Drawer, Empty, Grid, Input, Space, Spin, Tag, Tooltip,
 } from 'antd';
 import {
-  AimOutlined, ArrowLeftOutlined, DeleteOutlined, MinusOutlined, PlayCircleOutlined,
+  AimOutlined, DeleteOutlined, MinusOutlined, PlayCircleOutlined,
   PlusOutlined, SaveOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
@@ -45,7 +45,6 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 export default function FlowDesignPage() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const { message, modal } = App.useApp();
@@ -409,9 +408,6 @@ export default function FlowDesignPage() {
 
   const toolbar = (
     <Space wrap size={8}>
-      <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/flows')}>
-        {isMobile ? '' : '返回'}
-      </Button>
       {isMobile && (
         <Button onClick={() => setPaletteOpen(true)}>节点</Button>
       )}
@@ -472,7 +468,7 @@ export default function FlowDesignPage() {
 
   if (loading) {
     return (
-      <Page title="流程设计">
+      <Page back="/flows" backText="返回处理流程" title="流程设计">
         <div style={{ padding: 80, textAlign: 'center' }}>
           <Spin size="large" description="加载流程…" />
         </div>
@@ -482,7 +478,7 @@ export default function FlowDesignPage() {
 
   if (!detail) {
     return (
-      <Page title="流程设计" extra={toolbar}>
+      <Page back="/flows" backText="返回处理流程" title="流程设计" extra={toolbar}>
         <Empty description="流程不存在或无权限访问" />
       </Page>
     );
@@ -515,6 +511,8 @@ export default function FlowDesignPage() {
 
   return (
     <Page
+      back="/flows"
+      backText="返回处理流程"
       title={
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           流程设计

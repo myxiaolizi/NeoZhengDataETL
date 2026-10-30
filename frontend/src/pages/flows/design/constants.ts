@@ -3,11 +3,9 @@
 import { NEUTRAL, PALETTE } from '@/theme';
 
 /**
- * 设计器调色板（V4.1：直接派生自 @/theme 令牌）
+ * 设计器调色板（V6.1：直接派生自 @/theme 令牌）
  *
- * V4.1 之前这里是第三份 V4.0 色值副本，与页面主题、图表色板各自漂移，
- * 导致「流程设计器看起来像另一个产品」。现在全部指向设计令牌，
- * 改 @/theme 即同步生效。
+ * 全部指向设计令牌，改 @/theme 即同步生效。
  */
 export const C = {
   primary: PALETTE.primary,

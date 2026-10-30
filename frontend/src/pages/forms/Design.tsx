@@ -1,7 +1,7 @@
 /**
  * 表单设计器：三栏布局（左侧字段组件面板 / 中间画布 / 右侧属性面板）
  *
- * V4.1 布局修复要点：
+ * V6.1 布局要点：
  *  1. 不再使用 calc(100vh - 固定px) —— 顶部多了多标签页导航条（TabsBar）后固定值必然算错。
  *     改为运行时量取工作区真实顶部位置，把「工作区高度」精确算成视口剩余高度，
  *     因此页面本身不再产生纵向滚动条，滚动只发生在三栏内部。
@@ -17,7 +17,7 @@ import {
 } from 'antd';
 import {
   AppstoreOutlined, ArrowDownOutlined, ArrowUpOutlined, CopyOutlined, DeleteOutlined,
-  EyeOutlined, LeftOutlined, LinkOutlined, PlusOutlined, SaveOutlined, SettingOutlined,
+  EyeOutlined, LinkOutlined, PlusOutlined, SaveOutlined, SettingOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
 import { NEUTRAL, PALETTE } from '@/theme';
@@ -108,7 +108,7 @@ function useWorkspaceHeight(
   return height;
 }
 
-/** 调色板：全部取自 @/theme 令牌（V4.1 禁止写死旧色值） */
+/** 调色板：全部取自 @/theme 令牌（V6.1 禁止写死旧色值） */
 const C = {
   primary: PALETTE.primary,
   blue: PALETTE.primaryDeep,
@@ -1072,7 +1072,7 @@ export default function FormDesignPage() {
 
   if (loading) {
     return (
-      <Page title="表单设计">
+      <Page back="/forms" backText="返回表单中心" title="表单设计">
         <div style={{ padding: 80, textAlign: 'center' }}>
           <Spin size="large" description="加载表单…" />
         </div>
@@ -1082,7 +1082,7 @@ export default function FormDesignPage() {
 
   if (!detail) {
     return (
-      <Page title="表单设计" extra={<Button icon={<LeftOutlined />} onClick={() => navigate('/forms')}>返回</Button>}>
+      <Page back="/forms" backText="返回表单中心" title="表单设计">
         <Empty description="表单不存在或无权限访问" />
       </Page>
     );
@@ -1090,6 +1090,8 @@ export default function FormDesignPage() {
 
   return (
     <Page
+      back="/forms"
+      backText="返回表单中心"
       title={
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           表单设计
@@ -1127,11 +1129,6 @@ export default function FormDesignPage() {
             保存
           </Button>
         </>
-      }
-      extra={
-        <Button icon={<LeftOutlined />} onClick={() => navigate('/forms')}>
-          {isMobile ? '' : '返回表单中心'}
-        </Button>
       }
     >
       {/*
@@ -1231,7 +1228,7 @@ export default function FormDesignPage() {
         </Drawer>
       )}
 
-      {/* 预览：承载表单内容 → Modal（V4.1 禁止 Drawer 承载业务内容） */}
+      {/* 预览：承载表单内容 → Modal（V6.1 禁止 Drawer 承载业务内容） */}
       <Modal
         title="表单预览"
         open={previewOpen}

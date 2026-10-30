@@ -1,10 +1,15 @@
-/** 登录页：Ant Design 6 + 品牌视觉 */
+/**
+ * 登录页：Ant Design 6 + 品牌视觉
+ *
+ * V6.1：品牌区（Logo 方块 / 名称 / 副标题）改为读站点信息（useSiteBrand），
+ * 不再硬编码 —— 用户反馈「系统设置里改了平台名称，登录页还是老名字」的根因就在这里。
+ * 同时 document.title 也跟随站点名称（见 stores/app 的 useSiteBrand）。
+ */
 import React, { useState } from 'react';
 import { Card, Form, Input, Button, Checkbox, Typography, Alert, Space, Grid } from 'antd';
 import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { api } from '@/api/client';
-import { useAppStore } from '@/stores/app';
+import { useAppStore, useSiteBrand } from '@/stores/app';
 import { PALETTE, NEUTRAL } from '@/theme';
 
 const { Title, Text } = Typography;
@@ -17,6 +22,7 @@ export default function Login() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const { fetchUser } = useAppStore();
+  const { brandName, brandSubtitle, brandLogoText } = useSiteBrand();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
 
@@ -84,10 +90,10 @@ export default function Login() {
               fontSize: 24, fontWeight: 700,
             }}
           >
-            N
+            {brandLogoText}
           </div>
-          <Title level={4} style={{ margin: 0, color: NEUTRAL.text }}>Neo Zheng DataETL</Title>
-          <Text type="secondary" style={{ fontSize: 12.5 }}>企业数据集成平台 · V4.0</Text>
+          <Title level={4} style={{ margin: 0, color: NEUTRAL.text }}>{brandName}</Title>
+          <Text type="secondary" style={{ fontSize: 12.5 }}>{brandSubtitle}</Text>
         </div>
 
         {error && (

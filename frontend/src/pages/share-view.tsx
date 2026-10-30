@@ -192,9 +192,6 @@ export default function ShareView() {
                 {config.chartType}
               </Tag>
             )}
-            <Button size="small" icon={<ReloadOutlined />} onClick={load} loading={loading}>
-              刷新
-            </Button>
           </Space>
         </div>
       </Card>

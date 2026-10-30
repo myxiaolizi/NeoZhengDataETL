@@ -1,4 +1,4 @@
-/** 表单中心（V4.1 页面规范）：列表 / 新建 / 编辑 / 发布 / 复制公开链接（含移动端适配）
+/** 表单中心（V6.1 页面规范）：列表 / 新建 / 编辑 / 发布 / 复制公开链接（含移动端适配）
  *
  * 结构：本页名称 + 搜索区 + 新建 → 子标签页（表单类型）→ 数据卡片 → 表单列表
  */
@@ -509,11 +509,6 @@ export default function FormsPage() {
             新建表单
           </Button>
         ) : null
-      }
-      extra={
-        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-          {isMobile ? '' : '刷新'}
-        </Button>
       }
       subTabs={subTabs}
       stats={statItems}

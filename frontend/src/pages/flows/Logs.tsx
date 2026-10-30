@@ -1,16 +1,16 @@
-/** 流程日志（V4.1 页面规范）：运行记录列表 + 节点执行明细（可展开）
+/** 流程日志（V6.1 页面规范）：运行记录列表 + 节点执行明细（可展开）
  *
- * 结构：本页名称 + 操作 → 数据卡片 → 运行记录列表 → 流程配置
+ * 结构：[返回] 本页名称 + 操作 → 数据卡片 → 运行记录列表 → 流程配置
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
-  Alert, Button, Card, Descriptions, Empty, Grid, Pagination, Space, Tag, Tooltip,
+  Alert, Button, Card, Descriptions, Empty, Grid, Pagination, Tag, Tooltip,
 } from 'antd';
 import {
-  ArrowLeftOutlined, EditOutlined, PlayCircleOutlined, ReloadOutlined,
+  EditOutlined, PlayCircleOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
 import type { StatCardItem } from '@/components/StatCards';
@@ -210,6 +210,8 @@ export default function FlowLogsPage() {
 
   return (
     <Page
+      back="/flows"
+      backText="返回处理流程"
       title={flow ? `流程日志 · ${flow.name}` : '流程日志'}
       actions={
         <Button type="primary" icon={<PlayCircleOutlined />} loading={running} onClick={runNow}>
@@ -217,17 +219,9 @@ export default function FlowLogsPage() {
         </Button>
       }
       extra={
-        <>
-          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/flows')}>
-            {isMobile ? '' : '返回流程'}
-          </Button>
-          <Button icon={<EditOutlined />} onClick={() => navigate(`/flows/${id}/design`)}>
-            {isMobile ? '' : '流程设计'}
-          </Button>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={load}>
-            {isMobile ? '' : '刷新'}
-          </Button>
-        </>
+        <Button icon={<EditOutlined />} onClick={() => navigate(`/flows/${id}/design`)}>
+          {isMobile ? '' : '流程设计'}
+        </Button>
       }
       stats={statItems}
     >

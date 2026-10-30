@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const db = require('./db');
 const { sanitizeIdent, makeColumnName, quoteIdent } = require('./ident');
+const dataFilter = require('./data-filter');
 
 /**
  * 邮箱附件推送 —— 附件表格自动建项目、建表、入库
@@ -649,9 +650,17 @@ async function getLog(id) {
 }
 
 /**
- * 项目数据分页查询（支持关键词搜索与排序）
+ * 项目数据分页查询（支持关键词搜索、排序与多条件筛选）
+ *
+ * 筛选（V6.1 要求 9）与 `GET /api/projects/:id/parsed` 共用 `src/data-filter.js`，
+ * 保证两处数据明细的筛选语义、SQL 形态、边界行为完全一致：
+ *   - 列白名单 = 本表真实物理列（columns() 查 information_schema）；
+ *   - 值全部占位符绑定；
+ *   - 与 keyword 之间 AND。
+ *
  * @param {object} project 项目记录
- * @param {object} opts {page, size, keyword, sort, order}
+ * @param {object} opts {page, size, keyword, sort, order, filters}
+ *   filters: JSON 数组字符串，如 '[{"column":"c_1","op":"contains","value":"abc"}]'
  */
 async function queryRows(project, opts) {
   assertOwnTable(project.data_table);
@@ -681,6 +690,12 @@ async function queryRows(project, opts) {
     where.push('(' + use.map((c) => `${quoteIdent(c.name)} LIKE ?`).join(' OR ') + ')');
     use.forEach(() => params.push(`%${kw}%`));
   }
+
+  // 多条件筛选（AND）
+  const filterMeta = dataFilter.appendFilters(
+    { where, params }, o.filters, colNames, quoteIdent
+  );
+
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
   const totalRow = await db.queryOne(
@@ -692,13 +707,13 @@ async function queryRows(project, opts) {
     params
   );
 
-  return {
+  return Object.assign({
     rows,
     total: Number((totalRow && totalRow.c) || 0),
     page,
     size,
     columns: cols,
-  };
+  }, dataFilter.filterMeta(filterMeta));
 }
 
 /** 导出项目全部数据（用于 CSV） */

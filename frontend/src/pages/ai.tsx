@@ -502,11 +502,6 @@ export default function AiPage() {
           <span style={{ fontSize: 13.5 }}>最近问数</span>
         </Space>
       }
-      extra={
-        <Tooltip title="刷新">
-          <Button size="small" type="text" icon={<ReloadOutlined />} loading={historyLoading} onClick={loadHistory} />
-        </Tooltip>
-      }
       styles={{ body: { padding: history.length ? 8 : 16, maxHeight: isMobile ? '60vh' : 560, overflow: 'auto' } }}
       style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12 }}
     >

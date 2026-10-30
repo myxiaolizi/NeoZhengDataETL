@@ -598,7 +598,6 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
           <Space size={8} wrap>
             <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>解析字段表</Button>
             <Button icon={<CloudSyncOutlined />} loading={syncLoading} onClick={doSync}>同步结构</Button>
-            <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>刷新</Button>
           </Space>
         }
       >
