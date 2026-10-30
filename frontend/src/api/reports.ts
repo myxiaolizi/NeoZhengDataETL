@@ -22,6 +22,7 @@
 import { api, qs, ApiError } from '@/api/client';
 import type { EChartsOption } from 'echarts';
 import { CHART_COLORS, CHART_TEXT, CHART_SUB_TEXT, chartAxisStyle } from '@/components/Chart';
+import { NEUTRAL, SIDER } from '@/theme';
 import { fmtNum } from '@/utils';
 
 /* ══════════════ 类型 ══════════════ */
@@ -474,7 +475,7 @@ export function buildChartOption(
   const dark = !!opts.dark;
   const rawType = String(config.chartType || 'bar');
   const kind = RENDERABLE_CHART_TYPES.has(rawType) ? rawType : 'bar';
-  const labelColor = dark ? '#FFFFFF' : CHART_TEXT;
+  const labelColor = dark ? NEUTRAL.textInverse : CHART_TEXT;
   const subColor = dark ? 'rgba(255,255,255,.65)' : CHART_SUB_TEXT;
   const axis = chartAxisStyle(dark);
 
@@ -553,7 +554,7 @@ export function buildChartOption(
               sort: 'descending',
               gap: 2,
               label: { color: labelColor, fontSize: 11 },
-              itemStyle: { borderWidth: 1, borderColor: dark ? '#003378' : '#FFFFFF' },
+              itemStyle: { borderWidth: 1, borderColor: dark ? SIDER.bgTo : NEUTRAL.surface },
               data,
             },
           ],
@@ -576,8 +577,8 @@ export function buildChartOption(
             center: ['50%', '46%'],
             avoidLabelOverlap: true,
             label: { color: subColor, fontSize: 11 },
-            labelLine: { lineStyle: { color: dark ? 'rgba(255,255,255,.3)' : '#DCDDDD' } },
-            itemStyle: { borderColor: dark ? '#003378' : '#FFFFFF', borderWidth: 2 },
+            labelLine: { lineStyle: { color: dark ? 'rgba(255,255,255,.3)' : NEUTRAL.border } },
+            itemStyle: { borderColor: dark ? SIDER.bgTo : NEUTRAL.surface, borderWidth: 2 },
             data,
           },
         ],
@@ -607,7 +608,7 @@ export function buildChartOption(
             return `${xf}: ${arr[0]}<br/>${yf}: ${arr[1]}`;
           },
         },
-        xAxis: { type: 'value', name: xf, nameTextStyle: { color: subColor }, ...axis, splitLine: { show: true, lineStyle: { color: dark ? 'rgba(255,255,255,.12)' : '#DCDDDD', type: 'dashed' } } },
+        xAxis: { type: 'value', name: xf, nameTextStyle: { color: subColor }, ...axis, splitLine: { show: true, lineStyle: { color: dark ? 'rgba(255,255,255,.12)' : NEUTRAL.borderSubtle, type: 'dashed' } } },
         yAxis: { type: 'value', name: yf, nameTextStyle: { color: subColor }, ...axis },
         series: [{ type: 'scatter', symbolSize: 9, itemStyle: { opacity: 0.8 }, data }],
       },
@@ -632,9 +633,9 @@ export function buildChartOption(
           radius: '62%',
           indicator: agg.cats.map((c, i) => ({ name: c, max: niceMax(maxes[i] * 1.2) })),
           axisName: { color: subColor, fontSize: 10 },
-          splitLine: { lineStyle: { color: dark ? 'rgba(255,255,255,.16)' : '#DCDDDD' } },
+          splitLine: { lineStyle: { color: dark ? 'rgba(255,255,255,.16)' : NEUTRAL.border } },
           splitArea: { areaStyle: { color: ['transparent'] } },
-          axisLine: { lineStyle: { color: dark ? 'rgba(255,255,255,.16)' : '#DCDDDD' } },
+          axisLine: { lineStyle: { color: dark ? 'rgba(255,255,255,.16)' : NEUTRAL.border } },
         },
         series: [
           {
@@ -671,7 +672,7 @@ export function buildChartOption(
             startAngle: kind === 'semi' ? 200 : 220,
             endAngle: kind === 'semi' ? -20 : -40,
             progress: { show: true, width: 14, itemStyle: { color: CHART_COLORS[0] } },
-            axisLine: { lineStyle: { width: 14, color: [[1, dark ? 'rgba(255,255,255,.12)' : '#DCDDDD']] } },
+            axisLine: { lineStyle: { width: 14, color: [[1, dark ? 'rgba(255,255,255,.12)' : NEUTRAL.borderSubtle]] } },
             axisTick: { show: false },
             splitLine: { show: false },
             axisLabel: { show: false },

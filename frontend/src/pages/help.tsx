@@ -23,23 +23,25 @@ import {
   SettingOutlined,
 } from '@ant-design/icons';
 
+import { PALETTE, NEUTRAL } from '@/theme';
+
 const { useBreakpoint } = Grid;
 
-/* ---------------- 调色板（唯一允许的 13 色） ---------------- */
+/* ---------------- 调色板（唯一来源：@/theme 令牌） ---------------- */
 const C = {
-  primary: '#3687FF',
-  cyan: '#45B4FF',
-  deep: '#003378',
-  brand: '#2D6FE4',
-  orange: '#EC673C',
-  red: '#E86161',
-  yellow: '#FFC000',
-  green: '#A2D73C',
-  sky: '#73DBFF',
-  gray: '#B5B5B6',
-  light: '#DCDDDD',
-  white: '#FFFFFF',
-  black: '#000000',
+  primary: PALETTE.primary,
+  cyan: PALETTE.cyan,
+  deep: NEUTRAL.text,
+  brand: PALETTE.primary,
+  orange: PALETTE.orange,
+  red: PALETTE.red,
+  yellow: PALETTE.yellow,
+  green: PALETTE.green,
+  sky: PALETTE.cyan,
+  gray: NEUTRAL.textTertiary,
+  light: NEUTRAL.borderSubtle,
+  white: NEUTRAL.surface,
+  black: NEUTRAL.text,
 } as const;
 
 function tint(hex: string, alpha: number): string {

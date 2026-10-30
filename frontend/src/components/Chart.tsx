@@ -1,10 +1,10 @@
 /**
- * 通用 ECharts 封装（分析可视化组维护，供全站复用）
+ * 通用 ECharts 封装（供全站复用）
  *
  * 特性：
  *  - props: { option, height, loading }（另有 empty / dark / onReady / onEvents 等可选能力）
  *  - ResizeObserver 监听容器尺寸，自动 resize（含侧边栏折叠、窗口缩放、移动端旋转）
- *  - 统一 8 色板（契约 3.5 唯一允许的图表配色）
+ *  - 统一 8 色板（V4.1 起直接派生自 @/theme 的 PALETTE，不再单独维护一份色值）
  *  - 暗色大屏模式：仅调整文字/坐标轴颜色，不引入调色板外的颜色
  *
  * 用法：
@@ -14,24 +14,31 @@ import React, { useEffect, useRef } from 'react';
 import * as echarts from 'echarts';
 import type { EChartsOption, EChartsType } from 'echarts';
 import { Empty } from 'antd';
+import { NEUTRAL, PALETTE } from '@/theme';
 
-/** 契约规定的图表 8 色板（禁止修改顺序与色值） */
+/**
+ * 图表 8 色板 —— 直接引用 V4.1 设计令牌。
+ *
+ * V4.1 之前这里是一份独立的旧色值副本，与页面主题各自演进，
+ * 导致「图表比页面更旧」的视觉不一致。
+ * 现在统一从 PALETTE 派生：改 @/theme 即全站图表同步换色。
+ */
 export const CHART_COLORS = [
-  '#45B4FF',
-  '#FFC000',
-  '#3687FF',
-  '#A2D73C',
-  '#EC673C',
-  '#73DBFF',
-  '#003378',
-  '#B5B5B6',
+  PALETTE.primary,
+  PALETTE.yellow,
+  PALETTE.cyan,
+  PALETTE.green,
+  PALETTE.orange,
+  PALETTE.violet,
+  PALETTE.primaryDeep,
+  PALETTE.gray,
 ] as const;
 
-/** 浅色主题文字 / 网格色（调色板内） */
-export const CHART_TEXT = '#003378';
-export const CHART_SUB_TEXT = 'rgba(0,51,120,.55)';
-export const CHART_SPLIT = '#DCDDDD';
-export const CHART_AXIS = '#B5B5B6';
+/** 浅色主题文字 / 网格色（取自 V4.1 中性色令牌，保证与页面文字同色） */
+export const CHART_TEXT = NEUTRAL.text;
+export const CHART_SUB_TEXT = NEUTRAL.textTertiary;
+export const CHART_SPLIT = NEUTRAL.borderSubtle;
+export const CHART_AXIS = NEUTRAL.border;
 
 /** 暗色大屏主题文字色 */
 export const CHART_DARK_TEXT = '#FFFFFF';
@@ -75,7 +82,7 @@ export function withChartTheme(option: EChartsOption, dark = false): EChartsOpti
     tooltip: option.tooltip === undefined
       ? {
           trigger: 'axis',
-          backgroundColor: dark ? '#003378' : '#FFFFFF',
+          backgroundColor: dark ? PALETTE.ink : NEUTRAL.surface,
           borderColor: dark ? 'rgba(255,255,255,.2)' : CHART_SPLIT,
           textStyle: { color: dark ? '#FFFFFF' : CHART_TEXT, fontSize: 12 },
           axisPointer: { type: 'shadow', lineStyle: { color: CHART_AXIS } },
@@ -204,7 +211,7 @@ export default function Chart({
         >
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={<span style={{ color: dark ? CHART_DARK_SUB_TEXT : '#B5B5B6' }}>{emptyText}</span>}
+            description={<span style={{ color: dark ? CHART_DARK_SUB_TEXT : NEUTRAL.textQuaternary }}>{emptyText}</span>}
           />
         </div>
       )}

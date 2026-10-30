@@ -401,8 +401,14 @@ async function runSource(node, ctx) {
     const source = await datasources.getById(cfg.datasourceId || 0);
     if (!source) throw new Error('数据源不存在');
     const limit = Math.min(Number(cfg.limit) || 5000, 50000);
-    const paged = dsDriver.paginate(source, sql.replace(/;+\s*$/, ''), limit, 0);
-    return dsDriver.query(source, paged, []);
+    // 与数据集同一链路：表名自动补引号（含连字符/中文/保留字的表名）+ 分页
+    const normalized = dsDriver.normalizeSql(source, sql.replace(/;+\s*$/, ''));
+    const paged = dsDriver.paginate(source, normalized, limit, 0);
+    try {
+      return await dsDriver.query(source, paged, []);
+    } catch (err) {
+      throw dsDriver.describeDbError(source, err, paged, sql, normalized);
+    }
   }
 
   if (node.type === 'source_form') {

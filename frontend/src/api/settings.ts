@@ -106,3 +106,37 @@ export async function listDatasourceOptions(): Promise<DatasourceOption[]> {
 export function isOn(value: unknown): boolean {
   return ['1', 'true', 'yes', 'on'].includes(String(value ?? '').toLowerCase());
 }
+
+/* ══════════════════════════════════════════════════════════
+ * 站点公开信息（无需登录）
+ *
+ * 对应后端 `GET /api/settings/public`（src/routes/api.js:42），只返回
+ * PUBLIC_SETTING_KEYS 白名单字段，不含任何密码 / Token。
+ * 侧栏品牌区、登录页、宣传页共用它展示站点名称，因此单独抽在这里，
+ * 不在各页面里各写一份 fetch。
+ * ══════════════════════════════════════════════════════════ */
+
+/** GET /api/settings/public 的 data 结构（字段可能缺省，取用方需兜底） */
+export interface PublicSiteSettings {
+  site_name?: string;
+  site_short?: string;
+  site_subtitle?: string;
+  site_logo_text?: string;
+  site_description?: string;
+  site_footer?: string;
+  theme_color?: string;
+  allow_registration?: string;
+  require_email_verify?: string;
+}
+
+/**
+ * 读取站点公开信息。
+ *
+ * - `silent: true`：接口异常时不弹全局 message（侧栏品牌区静默回退默认名）；
+ * - `cache: 'no-store'`：后端给该接口设了 `Cache-Control: public, max-age=60`，
+ *   若走浏览器缓存，在「系统设置」里改完站点名称后刷新最多要等 60s 才生效。
+ *   这里强制绕过缓存，保证「保存 → 刷新 → 侧栏立即显示新名称」。
+ */
+export function getPublicSettings() {
+  return api.get<PublicSiteSettings>('/settings/public', { silent: true, cache: 'no-store' });
+}

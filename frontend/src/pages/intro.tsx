@@ -35,24 +35,25 @@ import {
 import { useNavigate } from 'react-router-dom';
 import IntroHero from '@/components/IntroHero';
 import { api } from '@/api/client';
+import { PALETTE, NEUTRAL } from '@/theme';
 
 const { useBreakpoint } = Grid;
 
-/* ---------------- 调色板（唯一允许的 13 色） ---------------- */
+/* ---------------- 调色板（唯一来源：@/theme 令牌） ---------------- */
 const C = {
-  primary: '#3687FF',
-  cyan: '#45B4FF',
-  deep: '#003378',
-  brand: '#2D6FE4',
-  orange: '#EC673C',
-  red: '#E86161',
-  yellow: '#FFC000',
-  green: '#A2D73C',
-  sky: '#73DBFF',
-  gray: '#B5B5B6',
-  light: '#DCDDDD',
-  white: '#FFFFFF',
-  black: '#000000',
+  primary: PALETTE.primaryLight,
+  cyan: PALETTE.cyan,
+  deep: NEUTRAL.text,
+  brand: PALETTE.primary,
+  orange: PALETTE.orange,
+  red: PALETTE.red,
+  yellow: PALETTE.yellow,
+  green: PALETTE.green,
+  sky: PALETTE.cyan,
+  gray: NEUTRAL.textTertiary,
+  light: NEUTRAL.borderSubtle,
+  white: NEUTRAL.surface,
+  black: NEUTRAL.text,
 } as const;
 
 /** 把调色板 hex 转成带透明度的 rgba（不引入新色相） */
@@ -751,7 +752,7 @@ export default function IntroPage() {
           padding: isMobile ? '32px 20px' : '52px 32px',
           borderRadius: isMobile ? 14 : 20,
           textAlign: 'center',
-          background: 'linear-gradient(135deg, #003378 0%, #2D6FE4 50%, #3687FF 100%)',
+          background: `linear-gradient(135deg, ${PALETTE.primaryDeep} 0%, ${PALETTE.primary} 50%, ${PALETTE.primaryLight} 100%)`,
           color: C.white,
           position: 'relative',
           overflow: 'hidden',
@@ -766,7 +767,7 @@ export default function IntroPage() {
             top: -160,
             right: -100,
             borderRadius: '50%',
-            background: 'radial-gradient(circle, rgba(115,219,255,.45) 0%, rgba(115,219,255,0) 70%)',
+            background: `radial-gradient(circle, ${tint(C.cyan, 0.45)} 0%, ${tint(C.cyan, 0)} 70%)`,
             pointerEvents: 'none',
           }}
         />

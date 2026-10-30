@@ -14,6 +14,7 @@ import { Alert, Button, Card, Form, Grid, Input, Result, Space, Typography } fro
 import { LockOutlined, MailOutlined, SmileOutlined, UserOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/api/client';
+import { PALETTE, NEUTRAL } from '@/theme';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
@@ -143,12 +144,12 @@ export default function RegisterPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#FFFFFF',
+        background: NEUTRAL.pageBg,
         padding: isMobile ? 16 : 24,
       }}
     >
       <Card
-        style={{ width: '100%', maxWidth: 430, border: '1px solid #DCDDDD', borderRadius: 14 }}
+        style={{ width: '100%', maxWidth: 430, border: `1px solid ${NEUTRAL.border}`, borderRadius: 14 }}
         styles={{ body: { padding: isMobile ? 22 : 32 } }}
       >
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
@@ -158,8 +159,8 @@ export default function RegisterPage() {
               height: 50,
               borderRadius: 13,
               margin: '0 auto 14px',
-              background: 'linear-gradient(135deg, #2D6FE4, #3687FF)',
-              color: '#fff',
+              background: `linear-gradient(135deg, ${PALETTE.primary}, ${PALETTE.primaryLight})`,
+              color: NEUTRAL.textInverse,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -169,7 +170,7 @@ export default function RegisterPage() {
           >
             {BRAND.logo}
           </div>
-          <Title level={4} style={{ margin: 0, color: '#003378' }}>
+          <Title level={4} style={{ margin: 0, color: NEUTRAL.text }}>
             {BRAND.name}
           </Title>
           <Text type="secondary" style={{ fontSize: 12.5 }}>
@@ -194,8 +195,8 @@ export default function RegisterPage() {
         ) : (
           <>
             <div style={{ textAlign: 'center', marginBottom: 18 }}>
-              <div style={{ fontSize: 15, fontWeight: 700, color: '#003378' }}>注册账号</div>
-              <div style={{ fontSize: 12.5, color: 'rgba(0,51,120,.55)', marginTop: 4 }}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: NEUTRAL.text }}>注册账号</div>
+              <div style={{ fontSize: 12.5, color: NEUTRAL.textSecondary, marginTop: 4 }}>
                 注册后默认为「只读用户」角色，需要更高权限请联系管理员
               </div>
             </div>
@@ -231,7 +232,7 @@ export default function RegisterPage() {
                 ]}
               >
                 <Input
-                  prefix={<UserOutlined style={{ color: '#B5B5B6' }} />}
+                  prefix={<UserOutlined style={{ color: NEUTRAL.textTertiary }} />}
                   placeholder="账号（3-32 位字母、数字、下划线）"
                   autoComplete="username"
                 />
@@ -245,7 +246,7 @@ export default function RegisterPage() {
                 ]}
               >
                 <Input
-                  prefix={<MailOutlined style={{ color: '#B5B5B6' }} />}
+                  prefix={<MailOutlined style={{ color: NEUTRAL.textTertiary }} />}
                   placeholder="邮箱（用于找回密码与接收通知）"
                   autoComplete="email"
                 />
@@ -253,7 +254,7 @@ export default function RegisterPage() {
 
               <Form.Item name="displayName">
                 <Input
-                  prefix={<SmileOutlined style={{ color: '#B5B5B6' }} />}
+                  prefix={<SmileOutlined style={{ color: NEUTRAL.textTertiary }} />}
                   placeholder="显示名称（留空则使用账号）"
                   autoComplete="nickname"
                 />
@@ -267,7 +268,7 @@ export default function RegisterPage() {
                 ]}
               >
                 <Input.Password
-                  prefix={<LockOutlined style={{ color: '#B5B5B6' }} />}
+                  prefix={<LockOutlined style={{ color: NEUTRAL.textTertiary }} />}
                   placeholder="密码（至少 6 位）"
                   autoComplete="new-password"
                 />
@@ -287,7 +288,7 @@ export default function RegisterPage() {
                 ]}
               >
                 <Input.Password
-                  prefix={<LockOutlined style={{ color: '#B5B5B6' }} />}
+                  prefix={<LockOutlined style={{ color: NEUTRAL.textTertiary }} />}
                   placeholder="确认密码"
                   autoComplete="new-password"
                 />
@@ -307,7 +308,7 @@ export default function RegisterPage() {
             </Form>
 
             <div style={{ textAlign: 'center', marginTop: 6, fontSize: 12.5 }}>
-              <Space split={<span style={{ color: '#DCDDDD' }}>|</span>} wrap>
+              <Space split={<span style={{ color: NEUTRAL.borderSubtle }}>|</span>} wrap>
                 <a onClick={() => navigate('/login')}>已有账号？返回登录</a>
                 <a onClick={() => navigate('/forgot-password')}>忘记密码</a>
                 <a onClick={() => navigate('/intro')}>项目介绍</a>

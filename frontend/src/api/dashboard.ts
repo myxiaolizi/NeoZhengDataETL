@@ -235,9 +235,8 @@ export function fetchCrmDashboard(projectId?: number | null): Promise<CrmDashboa
   return api.get<CrmDashboardData>('/crm/dashboard' + qs({ projectId: projectId || '' }));
 }
 
-/* ══════════════ 图表配色（契约规定的 8 色板） ══════════════ */
+/* ══════════════ 图表配色（V4.1：直接复用 @/components/Chart 的统一色板） ══════════════ */
 
-export const CHART_COLORS = [
-  '#45B4FF', '#FFC000', '#3687FF', '#A2D73C',
-  '#EC673C', '#73DBFF', '#003378', '#B5B5B6',
-] as const;
+import { CHART_COLORS as SHARED_CHART_COLORS } from '@/components/Chart';
+
+export const CHART_COLORS = SHARED_CHART_COLORS;

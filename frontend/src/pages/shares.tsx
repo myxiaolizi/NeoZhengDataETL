@@ -1,5 +1,6 @@
 /**
- * 分享管理
+ * 分享管理（V4.1 统一规范）
+ * - Page 标准结构：title="分享管理" + search + actions(创建分享) + stats(4个数据卡片) + 列表
  * - 列表（ProTable / 移动端卡片）：链接、对象、有效期、访问次数、密码保护、启停
  * - 创建分享：选择报表 + 有效期 + 访问密码 + 是否允许导出 → 生成链接并一键复制
  */
@@ -14,7 +15,6 @@ import {
   Form,
   Grid,
   Input,
-  InputNumber,
   Modal,
   Result,
   Row,
@@ -40,6 +40,8 @@ import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
+import { NEUTRAL, PALETTE } from '@/theme';
 import { useAppStore } from '@/stores/app';
 import { copyText, fmtAgo, fmtNum, fmtTime } from '@/utils';
 import {
@@ -79,6 +81,7 @@ export default function SharesPage() {
   const [list, setList] = useState<ShareItem[]>([]);
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'disabled' | 'expired'>('all');
 
@@ -89,6 +92,7 @@ export default function SharesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [shares, reps] = await Promise.all([
         listShares(),
@@ -96,8 +100,9 @@ export default function SharesPage() {
       ]);
       setList(shares || []);
       setReports(reps || []);
-    } catch {
+    } catch (e) {
       setList([]);
+      setLoadError(e instanceof Error ? e.message : '加载分享列表失败');
     } finally {
       setLoading(false);
     }
@@ -119,6 +124,48 @@ export default function SharesPage() {
         .some((v) => String(v).toLowerCase().includes(kw));
     });
   }, [list, keyword, statusFilter]);
+
+  /** V4.1 数据卡片（4 个：分享数 / 有效 / 已过期 / 总访问） */
+  const statItems = useMemo<StatCardItem[]>(() => {
+    const total = list.length;
+    const valid = list.filter((s) => Number(s.status) === 1 && !isExpired(s)).length;
+    const expired = list.filter((s) => isExpired(s)).length;
+    const totalViews = list.reduce((sum, s) => sum + (s.viewCount || 0), 0);
+
+    return [
+      {
+        key: 'total',
+        label: '分享数',
+        value: fmtNum(total),
+        suffix: '个',
+        color: PALETTE.primary,
+        onClick: () => setStatusFilter('all'),
+      },
+      {
+        key: 'valid',
+        label: '有效',
+        value: fmtNum(valid),
+        suffix: '个',
+        color: PALETTE.green,
+        onClick: () => setStatusFilter('active'),
+      },
+      {
+        key: 'expired',
+        label: '已过期',
+        value: fmtNum(expired),
+        suffix: '个',
+        color: expired > 0 ? PALETTE.red : PALETTE.yellow,
+        onClick: () => setStatusFilter('expired'),
+      },
+      {
+        key: 'views',
+        label: '总访问',
+        value: fmtNum(totalViews),
+        suffix: '次',
+        color: PALETTE.cyan,
+      },
+    ];
+  }, [list]);
 
   const openCreate = (reportId?: number) => {
     form.resetFields();
@@ -181,21 +228,22 @@ export default function SharesPage() {
   };
 
   const statusTag = (s: ShareItem) => {
-    if (Number(s.status) !== 1) return <Tag color="#B5B5B6">已停用</Tag>;
-    if (isExpired(s)) return <Tag color="#E86161">已过期</Tag>;
-    return <Tag color="#A2D73C">生效中</Tag>;
+    if (Number(s.status) !== 1) return <Tag color={PALETTE.gray}>已停用</Tag>;
+    if (isExpired(s)) return <Tag color={PALETTE.red}>已过期</Tag>;
+    return <Tag color={PALETTE.green}>生效中</Tag>;
   };
 
   const columns: ProColumns<ShareItem>[] = [
     {
       title: '分享对象',
       dataIndex: 'title',
+      sorter: (a, b) => String(a.title || a.reportName || '').localeCompare(String(b.title || b.reportName || '')),
       render: (_, s) => (
         <div style={{ minWidth: 0 }}>
           <a onClick={() => navigate(`/reports/${s.targetId}/view`)} style={{ fontWeight: 600, fontSize: 13.5 }}>
             {s.title || s.reportName || `报表 #${s.targetId}`}
           </a>
-          <div style={{ fontSize: 11.5, color: '#B5B5B6' }}>
+          <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary }}>
             {s.targetType === 'report' ? '报表' : s.targetType} #{s.targetId}
           </div>
         </div>
@@ -220,6 +268,7 @@ export default function SharesPage() {
       title: '状态',
       dataIndex: 'status',
       width: 90,
+      sorter: (a, b) => Number(a.status || 0) - Number(b.status || 0),
       render: (_, s) => statusTag(s),
     },
     {
@@ -230,18 +279,19 @@ export default function SharesPage() {
       render: (_, s) =>
         s.hasPassword ? (
           <Tooltip title="需要访问密码">
-            <LockOutlined style={{ color: '#FFC000' }} />
+            <LockOutlined style={{ color: PALETTE.yellow }} />
           </Tooltip>
         ) : (
-          <span style={{ color: '#DCDDDD' }}>—</span>
+          <span style={{ color: NEUTRAL.textQuaternary }}>—</span>
         ),
     },
     {
       title: '有效期至',
       dataIndex: 'expiresAt',
       width: 150,
+      sorter: (a, b) => new Date(a.expiresAt || 0).getTime() - new Date(b.expiresAt || 0).getTime(),
       render: (_, s) => (
-        <span style={{ fontSize: 12, color: isExpired(s) ? '#E86161' : 'rgba(0,51,120,.65)' }}>
+        <span style={{ fontSize: 12, color: isExpired(s) ? PALETTE.red : NEUTRAL.textSecondary }}>
           {s.expiresAt ? fmtTime(s.expiresAt, 'YYYY-MM-DD HH:mm') : '永久有效'}
         </span>
       ),
@@ -249,24 +299,26 @@ export default function SharesPage() {
     {
       title: '访问',
       dataIndex: 'viewCount',
-      width: 80,
+      width: 85,
       align: 'right',
+      sorter: (a, b) => Number(a.viewCount || 0) - Number(b.viewCount || 0),
       render: (_, s) => fmtNum(s.viewCount || 0),
     },
     {
       title: '创建时间',
       dataIndex: 'createdAt',
       width: 130,
+      sorter: (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime(),
       render: (_, s) => (
         <Tooltip title={fmtTime(s.createdAt)}>
-          <span style={{ fontSize: 12, color: 'rgba(0,51,120,.55)' }}>{fmtAgo(s.createdAt)}</span>
+          <span style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>{fmtAgo(s.createdAt)}</span>
         </Tooltip>
       ),
     },
     {
       title: '启用',
       dataIndex: 'enable',
-      width: 70,
+      width: 75,
       align: 'center',
       render: (_, s) => (
         <Switch size="small" checked={Number(s.status) === 1} disabled={!canWrite} onChange={(v) => handleToggle(s, v)} />
@@ -285,7 +337,7 @@ export default function SharesPage() {
           复制
         </a>,
         canWrite ? (
-          <a key="del" style={{ color: '#E86161' }} onClick={() => handleDelete(s)}>
+          <a key="del" style={{ color: PALETTE.red }} onClick={() => handleDelete(s)}>
             删除
           </a>
         ) : null,
@@ -296,15 +348,15 @@ export default function SharesPage() {
   const renderCard = (s: ShareItem) => (
     <Card
       key={s.id}
-      style={{ border: '1px solid #DCDDDD', borderRadius: 12 }}
+      style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12 }}
       styles={{ body: { padding: 14 } }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 14.5, color: '#003378', wordBreak: 'break-all' }}>
+          <div style={{ fontWeight: 700, fontSize: 14.5, color: NEUTRAL.text, wordBreak: 'break-all' }}>
             {s.title || s.reportName || `报表 #${s.targetId}`}
           </div>
-          <div style={{ fontSize: 11.5, color: '#B5B5B6', marginTop: 2 }}>{fmtTime(s.createdAt, 'YYYY-MM-DD HH:mm')} 创建</div>
+          <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, marginTop: 2 }}>{fmtTime(s.createdAt, 'YYYY-MM-DD HH:mm')} 创建</div>
         </div>
         {statusTag(s)}
       </div>
@@ -316,7 +368,7 @@ export default function SharesPage() {
           gap: 14,
           flexWrap: 'wrap',
           fontSize: 12,
-          color: 'rgba(0,51,120,.6)',
+          color: NEUTRAL.textSecondary,
         }}
       >
         <span>
@@ -324,7 +376,7 @@ export default function SharesPage() {
         </span>
         <span>{s.expiresAt ? `至 ${fmtTime(s.expiresAt, 'YYYY-MM-DD')}` : '永久有效'}</span>
         {s.hasPassword && (
-          <span style={{ color: '#FFC000' }}>
+          <span style={{ color: PALETTE.yellow }}>
             <LockOutlined /> 有密码
           </span>
         )}
@@ -334,10 +386,10 @@ export default function SharesPage() {
         style={{
           marginTop: 10,
           padding: '6px 8px',
-          background: 'rgba(54,135,255,.06)',
+          background: NEUTRAL.surfaceSunken,
           borderRadius: 6,
           fontSize: 11.5,
-          color: 'rgba(0,51,120,.7)',
+          color: NEUTRAL.textSecondary,
           wordBreak: 'break-all',
         }}
       >
@@ -372,42 +424,12 @@ export default function SharesPage() {
   return (
     <Page
       title="分享管理"
-      subTitle="将报表以链接形式对外公开，可设置有效期与访问密码"
-      extra={
-        <Space wrap size={8}>
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-            刷新
-          </Button>
-          {canWrite && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
-              创建分享
-            </Button>
-          )}
-        </Space>
-      }
-    >
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 12 }}
-        message="公开分享需要在「系统设置 → 安全」中开启「允许公开分享」；分享链接无需登录即可访问。"
-      />
-
-      <Card styles={{ body: { padding: 12 } }} style={{ border: '1px solid #DCDDDD', borderRadius: 10, marginBottom: 14 }}>
-        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 10 }}>
-          <Input.Search
-            allowClear
-            placeholder="搜索标题 / 报表名 / token"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            size={isMobile ? 'large' : 'middle'}
-            style={{ flex: 1 }}
-          />
+      search={
+        <>
           <Select
             value={statusFilter}
             onChange={setStatusFilter}
-            style={{ width: isMobile ? '100%' : 150 }}
-            size={isMobile ? 'large' : 'middle'}
+            style={{ width: isMobile ? 120 : 140 }}
             options={[
               { value: 'all', label: '全部状态' },
               { value: 'active', label: '生效中' },
@@ -415,15 +437,51 @@ export default function SharesPage() {
               { value: 'expired', label: '已过期' },
             ]}
           />
-        </div>
-      </Card>
+          <Input.Search
+            allowClear
+            placeholder="搜索标题 / 报表名 / token"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            onSearch={(v) => setKeyword(v)}
+            style={{ width: isMobile ? 190 : 250 }}
+          />
+        </>
+      }
+      actions={
+        canWrite ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
+            创建分享
+          </Button>
+        ) : undefined
+      }
+      extra={
+        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
+          刷新
+        </Button>
+      }
+      stats={statItems}
+    >
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title="加载分享列表失败"
+          description={loadError}
+          action={
+            <Button size="small" onClick={load}>
+              重试
+            </Button>
+          }
+        />
+      )}
 
       {loading ? (
         <div style={{ padding: 60, textAlign: 'center' }}>
           <Spin size="large" />
         </div>
       ) : filtered.length === 0 ? (
-        <Card style={{ border: '1px dashed #DCDDDD', borderRadius: 12 }}>
+        <Card style={{ border: `1px dashed ${NEUTRAL.border}`, borderRadius: 12 }}>
           <Empty description={keyword || statusFilter !== 'all' ? '没有符合条件的分享' : '还没有创建分享链接'}>
             {canWrite && <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>创建第一个分享</Button>}
           </Empty>
@@ -437,7 +495,7 @@ export default function SharesPage() {
           ))}
         </Row>
       ) : (
-        <Card styles={{ body: { padding: 0 } }} style={{ border: '1px solid #DCDDDD', borderRadius: 12, overflow: 'hidden' }}>
+        <Card styles={{ body: { padding: 0 } }} style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, overflow: 'hidden' }}>
           <ProTable<ShareItem>
             rowKey="id"
             columns={columns}
@@ -486,11 +544,11 @@ export default function SharesPage() {
                   {shareUrlOf(created)}
                 </Paragraph>
                 <Space size={6} wrap>
-                  <Tag bordered={false} color="#3687FF" style={{ color: '#FFFFFF' }}>
+                  <Tag bordered={false} color={PALETTE.primary} style={{ color: NEUTRAL.textInverse }}>
                     {created.expiresAt ? `有效期至 ${fmtTime(created.expiresAt, 'YYYY-MM-DD')}` : '永久有效'}
                   </Tag>
-                  {created.hasPassword && <Tag color="#FFC000">需要访问密码</Tag>}
-                  {created.allowExport && <Tag color="#A2D73C">允许导出</Tag>}
+                  {created.hasPassword && <Tag color={PALETTE.yellow}>需要访问密码</Tag>}
+                  {created.allowExport && <Tag color={PALETTE.green}>允许导出</Tag>}
                 </Space>
               </div>
             }
@@ -532,22 +590,12 @@ export default function SharesPage() {
             <Form.Item name="allowExport" label="允许导出" valuePropName="checked">
               <Switch />
             </Form.Item>
-            <div style={{ fontSize: 12, color: 'rgba(0,51,120,.5)' }}>
+            <div style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>
               提示：分享链接格式为 <Text code>/s/&lt;token&gt;</Text>，可在分享管理中随时停用或删除。
             </div>
           </Form>
         )}
       </Modal>
-
-      {/* 快捷入口 */}
-      {!isMobile && reports.length > 0 && (
-        <div style={{ marginTop: 12, fontSize: 12, color: 'rgba(0,51,120,.5)' }}>
-          也可以从报表中心的「分享」按钮直接生成 7 天有效链接。{' '}
-          <Button type="link" size="small" onClick={() => navigate('/reports')}>
-            去报表中心
-          </Button>
-        </div>
-      )}
     </Page>
   );
 }

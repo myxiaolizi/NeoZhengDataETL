@@ -1,8 +1,8 @@
-/** 数据集管理：SQL / 数据表 / 项目 三种来源 + 动态列预览（ProTable）+ 增删改 */
+/** 数据集管理：SQL / 数据表 / 项目 三种来源 + V4.1 标准结构 + 动态列预览（Modal）+ 结构化 SQL 报错与自动加引号提示 */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Button, Space, Tag, Drawer, Empty, Alert, Typography, App, Table, Tooltip,
-  Segmented, Spin, Statistic, Card,
+  Button, Space, Tag, Modal, Empty, Alert, Typography, App, Table, Tooltip,
+  Segmented, Spin, Statistic, Card, Input, Select, Grid,
 } from 'antd';
 import {
   PlusOutlined, ReloadOutlined, PlayCircleOutlined, DeleteOutlined, EditOutlined,
@@ -15,25 +15,28 @@ import {
 } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import Page from '@/components/Page';
-import { useAppStore, usePermission } from '@/stores/app';
+import type { StatCardItem } from '@/components/StatCards';
+import { NEUTRAL, PALETTE } from '@/theme';
+import { usePermission } from '@/stores/app';
 import { fmtTime, fmtNum, truncate } from '@/utils';
 import {
   listDatasets, createDataset, updateDataset, deleteDataset, previewDataset, testDatasetSql,
-  listProjectOptions,
+  listProjectOptions, parseStructuredSqlError,
 } from '@/api/datasets';
 import type {
   Dataset, DatasetPayload, DatasetPreview, DatasetSourceType, ProjectOption, PreviewColumn,
+  StructuredSqlError,
 } from '@/api/datasets';
-import { listDatasources } from '@/api/datasources';
+import { listDatasources, listDatasourceTables } from '@/api/datasources';
 import type { Datasource, DsTableInfo } from '@/api/datasources';
-import { listDatasourceTables } from '@/api/datasources';
 
 const { Text, Paragraph } = Typography;
+const { useBreakpoint } = Grid;
 
 const SOURCE_TYPE_META: Record<DatasetSourceType, { label: string; color: string; icon: React.ReactNode; desc: string }> = {
-  sql: { label: 'SQL 查询', color: '#3687FF', icon: <CodeOutlined />, desc: '手写只读 SELECT / WITH 查询，支持连表与聚合' },
-  table: { label: '数据表', color: '#45B4FF', icon: <TableOutlined />, desc: '直接读取数据源中的整张表' },
-  project: { label: '项目数据', color: '#A2D73C', icon: <ProjectOutlined />, desc: '读取推送项目的原始表或解析表' },
+  sql: { label: 'SQL 查询', color: PALETTE.primary, icon: <CodeOutlined />, desc: '手写只读 SELECT / WITH 查询，支持连表与聚合；包含连字符等特殊字符的表名将自动添加引号' },
+  table: { label: '数据表', color: PALETTE.cyan, icon: <TableOutlined />, desc: '直接读取数据源中的整张表' },
+  project: { label: '项目数据', color: PALETTE.green, icon: <ProjectOutlined />, desc: '读取推送项目的原始表或解析表' },
 };
 
 type DsFormValues = {
@@ -48,31 +51,114 @@ type DsFormValues = {
   status?: number | boolean;
 };
 
+/** 结构化 SQL 错误展示组件：完整展示错误码、原始 SQL、数据库报错与修复建议 */
+function SqlErrorAlert({ error, title = 'SQL 执行失败' }: { error: StructuredSqlError; title?: string }) {
+  return (
+    <Alert
+      type="error"
+      showIcon
+      style={{ marginBottom: 14 }}
+      title={
+        <Space size={8} wrap>
+          <span style={{ fontWeight: 600 }}>{title}</span>
+          {error.code && <Tag color={PALETTE.red} style={{ marginInlineEnd: 0 }}>错误码：{error.code}</Tag>}
+        </Space>
+      }
+      description={
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6, fontSize: 12.5 }}>
+          <div style={{ color: NEUTRAL.text }}>
+            <strong>错误说明：</strong>{error.message}
+          </div>
+          {error.sqlMessage && error.sqlMessage !== error.message && (
+            <div style={{ color: NEUTRAL.textSecondary }}>
+              <strong>数据库返回（sqlMessage）：</strong>
+              <Text code style={{ fontSize: 12 }}>{error.sqlMessage}</Text>
+            </div>
+          )}
+          {(error.originalSql || error.sql) && (
+            <div style={{ color: NEUTRAL.textSecondary }}>
+              <strong>原始 SQL：</strong>
+              <pre
+                style={{
+                  margin: '4px 0 0',
+                  padding: '6px 10px',
+                  background: NEUTRAL.surfaceAlt,
+                  border: `1px solid ${NEUTRAL.border}`,
+                  borderRadius: 6,
+                  fontSize: 12,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                  color: NEUTRAL.text,
+                }}
+              >
+                {error.originalSql || error.sql}
+              </pre>
+            </div>
+          )}
+          {error.rewrittenSql && error.rewrittenSql !== (error.originalSql || error.sql) && (
+            <div style={{ color: NEUTRAL.textSecondary }}>
+              <strong>自动重写 SQL：</strong>
+              <Text code style={{ fontSize: 12 }}>{error.rewrittenSql}</Text>
+            </div>
+          )}
+          {error.suggestion && (
+            <div
+              style={{
+                marginTop: 2,
+                padding: '6px 10px',
+                background: NEUTRAL.surface,
+                border: `1px solid ${NEUTRAL.border}`,
+                borderLeft: `3px solid ${PALETTE.orange}`,
+                borderRadius: 6,
+                color: NEUTRAL.text,
+              }}
+            >
+              <strong style={{ color: PALETTE.orange }}>修复建议：</strong>{error.suggestion}
+            </div>
+          )}
+        </div>
+      }
+    />
+  );
+}
+
 export default function DatasetsPage() {
   const { message, modal } = App.useApp();
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
   const can = usePermission();
   const canWrite = can('dataset:write');
 
   const actionRef = useRef<ActionType>(null);
+  const [allDatasets, setAllDatasets] = useState<Dataset[]>([]);
   const [datasources, setDatasources] = useState<Datasource[]>([]);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
   const [tables, setTables] = useState<DsTableInfo[]>([]);
   const [tablesLoading, setTablesLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string>('');
+
+  /* ---------- 搜索筛选 ---------- */
+  const [keyword, setKeyword] = useState('');
+  const [sourceTypeFilter, setSourceTypeFilter] = useState<string>('');
+
+  /* ---------- 最近自动加引号提示横幅 ---------- */
+  const [autoQuoteBanner, setAutoQuoteBanner] = useState<string>('');
 
   /* ---------- 新建 / 编辑 ---------- */
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Dataset | null>(null);
   const [curSource, setCurSource] = useState<DatasetSourceType>('sql');
   const [sqlTesting, setSqlTesting] = useState(false);
-  const [sqlResult, setSqlResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [sqlSuccess, setSqlSuccess] = useState<{ text: string; autoQuoteNotice?: string; sql?: string } | null>(null);
+  const [sqlError, setSqlError] = useState<StructuredSqlError | null>(null);
   const formRef = useRef<any>(null);
 
-  /* ---------- 预览 ---------- */
+  /* ---------- 预览（Modal） ---------- */
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewRow, setPreviewRow] = useState<Dataset | null>(null);
   const [preview, setPreview] = useState<DatasetPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState('');
+  const [previewError, setPreviewError] = useState<StructuredSqlError | null>(null);
   const [previewLimit, setPreviewLimit] = useState(20);
   const [visibleCols, setVisibleCols] = useState<number>(20);
 
@@ -121,7 +207,8 @@ export default function DatasetsPage() {
   const openCreate = () => {
     setEditing(null);
     setCurSource('sql');
-    setSqlResult(null);
+    setSqlSuccess(null);
+    setSqlError(null);
     setTables([]);
     setFormOpen(true);
   };
@@ -129,7 +216,8 @@ export default function DatasetsPage() {
   const openEdit = (row: Dataset) => {
     setEditing(row);
     setCurSource(row.sourceType);
-    setSqlResult(null);
+    setSqlSuccess(null);
+    setSqlError(null);
     setFormOpen(true);
     if (row.sourceType === 'table') loadTables(row.datasourceId);
   };
@@ -163,18 +251,26 @@ export default function DatasetsPage() {
       cacheTtl: values.cacheTtl ?? 0,
       status: values.status === 0 || values.status === false ? 0 : 1,
     };
+    setSqlError(null);
     try {
+      let saved: Dataset;
       if (editing) {
-        await updateDataset(editing.id, payload);
+        saved = await updateDataset(editing.id, payload);
         message.success('数据集已更新');
       } else {
-        await createDataset(payload);
+        saved = await createDataset(payload);
         message.success('数据集已创建');
+      }
+      if (saved?.autoQuoteNotice) {
+        setAutoQuoteBanner(saved.autoQuoteNotice);
+        message.info(saved.autoQuoteNotice, 5);
       }
       actionRef.current?.reload();
       setFormOpen(false);
       return true;
-    } catch {
+    } catch (e) {
+      const structured = parseStructuredSqlError(e as Error, values.sourceSql);
+      setSqlError(structured);
       return false;
     }
   };
@@ -182,48 +278,46 @@ export default function DatasetsPage() {
   /** 表单内试跑 SQL */
   const handleTestSql = async () => {
     if (!formRef.current) return;
-    let values: DsFormValues;
-    try {
-      values = await formRef.current.validateFields();
-    } catch {
-      return;
-    }
-    if (!values.sourceSql) {
+    const rawSql = formRef.current.getFieldValue('sourceSql');
+    const dsId = formRef.current.getFieldValue('datasourceId') ?? 0;
+    if (!rawSql || !String(rawSql).trim()) {
       message.warning('请先填写 SQL 查询语句');
       return;
     }
     setSqlTesting(true);
-    setSqlResult(null);
+    setSqlSuccess(null);
+    setSqlError(null);
     try {
       const r = await testDatasetSql({
-        datasourceId: values.datasourceId ?? 0,
-        sql: values.sourceSql,
+        datasourceId: dsId,
+        sql: String(rawSql),
         limit: 10,
       });
-      setSqlResult({
-        ok: true,
-        text: `试跑成功：${r.rowCount} 行 / ${r.columns.length} 列，耗时 ${r.elapsed}ms`,
+      setSqlSuccess({
+        text: `试跑成功：返回 ${r.rowCount} 行 / ${r.columns.length} 列，耗时 ${r.elapsed}ms`,
+        autoQuoteNotice: r.autoQuoteNotice,
+        sql: r.rewrittenSql || r.sql,
       });
     } catch (e) {
-      setSqlResult({ ok: false, text: e instanceof Error ? e.message : '试跑失败' });
+      setSqlError(parseStructuredSqlError(e as Error, String(rawSql)));
     } finally {
       setSqlTesting(false);
     }
   };
 
-  /* ---------- 预览 ---------- */
+  /* ---------- 预览（Modal） ---------- */
   const openPreview = async (row: Dataset) => {
     setPreviewRow(row);
     setPreviewOpen(true);
     setPreview(null);
-    setPreviewError('');
+    setPreviewError(null);
     setVisibleCols(20);
     setPreviewLoading(true);
     try {
       const r = await previewDataset(row.id, previewLimit);
       setPreview(r);
     } catch (e) {
-      setPreviewError(e instanceof Error ? e.message : '预览失败');
+      setPreviewError(parseStructuredSqlError(e as Error, row.sourceSql));
     } finally {
       setPreviewLoading(false);
     }
@@ -233,13 +327,13 @@ export default function DatasetsPage() {
     if (!previewRow) return;
     setPreviewLimit(limit);
     setPreview(null);
-    setPreviewError('');
+    setPreviewError(null);
     setPreviewLoading(true);
     try {
       const r = await previewDataset(previewRow.id, limit);
       setPreview(r);
     } catch (e) {
-      setPreviewError(e instanceof Error ? e.message : '预览失败');
+      setPreviewError(parseStructuredSqlError(e as Error, previewRow.sourceSql));
     } finally {
       setPreviewLoading(false);
     }
@@ -248,7 +342,7 @@ export default function DatasetsPage() {
   const handleDelete = (row: Dataset) => {
     modal.confirm({
       title: `删除数据集「${row.name}」`,
-      icon: <ExclamationCircleOutlined style={{ color: '#E86161' }} />,
+      icon: <ExclamationCircleOutlined style={{ color: PALETTE.red }} />,
       content: '删除后不可恢复；若已被报表引用将无法删除。',
       okText: '删除',
       okButtonProps: { danger: true },
@@ -263,35 +357,68 @@ export default function DatasetsPage() {
     });
   };
 
-  const columns: ProColumns<Dataset>[] = [
-    {
-      title: '关键词',
-      dataIndex: 'keyword',
-      hideInTable: true,
-      fieldProps: { placeholder: '名称 / 编码 / 描述' },
-    },
-    {
-      title: '来源类型',
-      dataIndex: 'sourceTypeFilter',
-      hideInTable: true,
-      valueType: 'select',
-      fieldProps: {
-        placeholder: '全部来源',
-        options: (Object.keys(SOURCE_TYPE_META) as DatasetSourceType[]).map((k) => ({
-          label: SOURCE_TYPE_META[k].label,
-          value: k,
-        })),
+  /** V4.1 数据卡片（5 个：数据集总数 / 表型 / 项目型 / SQL 型 / 停用数） */
+  const statItems = useMemo<StatCardItem[]>(() => {
+    const total = allDatasets.length;
+    const tableCount = allDatasets.filter((d) => d.sourceType === 'table').length;
+    const projectCount = allDatasets.filter((d) => d.sourceType === 'project').length;
+    const sqlCount = allDatasets.filter((d) => d.sourceType === 'sql').length;
+    const disabledCount = allDatasets.filter((d) => !d.status).length;
+
+    return [
+      {
+        key: 'total',
+        label: '数据集总数',
+        value: total,
+        suffix: '个',
+        color: PALETTE.primary,
+        onClick: () => setSourceTypeFilter(''),
       },
-    },
+      {
+        key: 'table',
+        label: '表型数据集',
+        value: tableCount,
+        suffix: '个',
+        color: PALETTE.cyan,
+        onClick: () => setSourceTypeFilter('table'),
+      },
+      {
+        key: 'project',
+        label: '项目型数据集',
+        value: projectCount,
+        suffix: '个',
+        color: PALETTE.green,
+        onClick: () => setSourceTypeFilter('project'),
+      },
+      {
+        key: 'sql',
+        label: 'SQL 型数据集',
+        value: sqlCount,
+        suffix: '个',
+        color: PALETTE.violet,
+        onClick: () => setSourceTypeFilter('sql'),
+      },
+      {
+        key: 'disabled',
+        label: '停用数',
+        value: disabledCount,
+        suffix: '个',
+        color: disabledCount > 0 ? PALETTE.yellow : PALETTE.teal,
+      },
+    ];
+  }, [allDatasets]);
+
+  const columns: ProColumns<Dataset>[] = [
     {
       title: '数据集名称',
       dataIndex: 'name',
       width: 240,
+      sorter: (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
       render: (_, row) => (
-        <Space size={6} direction="vertical">
+        <Space size={4} direction="vertical">
           <Space size={6} wrap>
-            <TableOutlined style={{ color: '#3687FF' }} />
-            <Text strong style={{ color: '#003378' }}>{row.name}</Text>
+            <TableOutlined style={{ color: PALETTE.primary }} />
+            <Text strong style={{ color: NEUTRAL.text }}>{row.name}</Text>
           </Space>
           <Text type="secondary" style={{ fontSize: 12 }}>{row.code}</Text>
         </Space>
@@ -300,7 +427,8 @@ export default function DatasetsPage() {
     {
       title: '来源',
       dataIndex: 'sourceType',
-      width: 220,
+      width: 230,
+      sorter: (a, b) => String(a.sourceType || '').localeCompare(String(b.sourceType || '')),
       render: (_, row) => {
         const meta = SOURCE_TYPE_META[row.sourceType] || SOURCE_TYPE_META.sql;
         return (
@@ -322,11 +450,13 @@ export default function DatasetsPage() {
     {
       title: '数据源',
       dataIndex: 'datasourceName',
-      width: 190,
+      width: 180,
       render: (_, row) => (
         <Space size={4}>
-          <DatabaseOutlined style={{ color: '#B5B5B6' }} />
-          <Text style={{ fontSize: 13 }}>{row.datasourceName || (row.datasourceId === 0 ? '本机数据库' : `#${row.datasourceId}`)}</Text>
+          <DatabaseOutlined style={{ color: NEUTRAL.textTertiary }} />
+          <Text style={{ fontSize: 13, color: NEUTRAL.textSecondary }}>
+            {row.datasourceName || (row.datasourceId === 0 ? '本机数据库' : `#${row.datasourceId}`)}
+          </Text>
         </Space>
       ),
     },
@@ -340,19 +470,22 @@ export default function DatasetsPage() {
       title: '缓存',
       dataIndex: 'cacheTtl',
       width: 100,
+      sorter: (a, b) => Number(a.cacheTtl || 0) - Number(b.cacheTtl || 0),
       render: (_, row) =>
-        row.cacheTtl ? <Tag color="#FFC000">{row.cacheTtl}s</Tag> : <Text type="secondary">关闭</Text>,
+        row.cacheTtl ? <Tag color={PALETTE.yellow}>{row.cacheTtl}s</Tag> : <Text type="secondary">关闭</Text>,
     },
     {
       title: '状态',
       dataIndex: 'status',
       width: 90,
-      render: (_, row) => (row.status ? <Tag color="#A2D73C">启用</Tag> : <Tag color="#B5B5B6">停用</Tag>),
+      sorter: (a, b) => Number(a.status || 0) - Number(b.status || 0),
+      render: (_, row) => (row.status ? <Tag color={PALETTE.green}>启用</Tag> : <Tag color={PALETTE.gray}>停用</Tag>),
     },
     {
       title: '创建时间',
       dataIndex: 'createdAt',
       width: 165,
+      sorter: (a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime(),
       render: (_, row) => <Text type="secondary" style={{ fontSize: 12.5 }}>{fmtTime(row.createdAt)}</Text>,
     },
     {
@@ -367,7 +500,7 @@ export default function DatasetsPage() {
           </a>
           {canWrite && <a onClick={() => openEdit(row)}><EditOutlined /> 编辑</a>}
           {canWrite && (
-            <a style={{ color: '#E86161' }} onClick={() => handleDelete(row)}>
+            <a style={{ color: PALETTE.red }} onClick={() => handleDelete(row)}>
               <DeleteOutlined /> 删除
             </a>
           )}
@@ -382,8 +515,8 @@ export default function DatasetsPage() {
     return preview.columns.slice(0, visibleCols).map((c: PreviewColumn) => ({
       title: (
         <Space size={4} direction="vertical" style={{ lineHeight: 1.25 }}>
-          <span style={{ fontSize: 12.5, fontWeight: 600 }}>{c.name}</span>
-          <span style={{ fontSize: 10.5, color: '#B5B5B6', fontWeight: 400 }}>{c.type}</span>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: NEUTRAL.text }}>{c.name}</span>
+          <span style={{ fontSize: 10.5, color: NEUTRAL.textTertiary, fontWeight: 400 }}>{c.type}</span>
         </Space>
       ),
       dataIndex: c.name,
@@ -409,52 +542,119 @@ export default function DatasetsPage() {
   return (
     <Page
       title="数据集"
-      subTitle="把 SQL 查询、数据表或项目数据封装为可复用的数据集，供报表与 AI 问数使用"
-      extra={
+      search={
         <>
-          <Button icon={<ReloadOutlined />} onClick={() => { loadRefs(); actionRef.current?.reload(); }}>
-            刷新
-          </Button>
-          {canWrite && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建数据集
-            </Button>
-          )}
+          <Select
+            allowClear
+            placeholder="来源类型筛选"
+            value={sourceTypeFilter || undefined}
+            onChange={(v) => setSourceTypeFilter(v || '')}
+            options={(Object.keys(SOURCE_TYPE_META) as DatasetSourceType[]).map((k) => ({
+              label: SOURCE_TYPE_META[k].label,
+              value: k,
+            }))}
+            style={{ width: isMobile ? 140 : 170 }}
+          />
+          <Input.Search
+            allowClear
+            placeholder="搜索名称 / 编码 / 描述"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            onSearch={(v) => setKeyword(v)}
+            style={{ width: isMobile ? 190 : 250 }}
+          />
         </>
       }
+      actions={
+        canWrite ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新建数据集
+          </Button>
+        ) : undefined
+      }
+      extra={
+        <Button icon={<ReloadOutlined />} onClick={() => { loadRefs(); actionRef.current?.reload(); }}>
+          刷新
+        </Button>
+      }
+      stats={statItems}
     >
+      {autoQuoteBanner && (
+        <Alert
+          type="info"
+          showIcon
+          closable
+          onClose={() => setAutoQuoteBanner('')}
+          style={{ marginBottom: 12 }}
+          title="SQL 标识符已自动加引号"
+          description={autoQuoteBanner}
+        />
+      )}
+
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title="加载数据集列表失败"
+          description={loadError}
+          action={
+            <Button size="small" onClick={() => actionRef.current?.reload()}>
+              重试
+            </Button>
+          }
+        />
+      )}
+
       <ProTable<Dataset, { keyword?: string; sourceTypeFilter?: string }>
         rowKey="id"
         actionRef={actionRef}
         columns={columns}
-        scroll={{ x: 1240 }}
-        search={{ labelWidth: 'auto', defaultCollapsed: false }}
+        params={{ keyword, sourceTypeFilter }}
+        scroll={{ x: 'max-content' }}
+        search={false}
         options={{ density: false, fullScreen: true, setting: true, reload: false }}
         pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
         headerTitle="数据集列表"
+        locale={{ emptyText: <Empty description={keyword || sourceTypeFilter ? '没有符合条件的数据集' : '暂无数据集'} /> }}
         request={async (params) => {
-          let list = await listDatasets(params.keyword);
-          if (params.sourceTypeFilter) {
-            list = list.filter((d) => d.sourceType === params.sourceTypeFilter);
+          setLoadError('');
+          try {
+            const fullList = await listDatasets(params.keyword);
+            if (!params.keyword) setAllDatasets(fullList || []);
+            let list = fullList || [];
+            if (params.sourceTypeFilter) {
+              list = list.filter((d) => d.sourceType === params.sourceTypeFilter);
+            }
+            return { data: list, total: list.length, success: true };
+          } catch (e) {
+            setLoadError(e instanceof Error ? e.message : '请求失败');
+            return { data: [], total: 0, success: false };
           }
-          return { data: list, total: list.length, success: true };
         }}
       />
 
-      {/* ---------- 新建 / 编辑 ---------- */}
+      {/* ---------- 新建 / 编辑（ModalForm） ---------- */}
       <ModalForm<DsFormValues>
         title={editing ? `编辑数据集 · ${editing.name}` : '新建数据集'}
         open={formOpen}
-        onOpenChange={(o) => { setFormOpen(o); if (!o) setSqlResult(null); }}
+        onOpenChange={(o) => {
+          setFormOpen(o);
+          if (!o) {
+            setSqlSuccess(null);
+            setSqlError(null);
+          }
+        }}
         formRef={formRef}
-        width={680}
+        width={isMobile ? '94vw' : 700}
         initialValues={initialValues}
         onFinish={handleSubmit}
         modalProps={{ destroyOnHidden: true }}
         onValuesChange={(changed: Partial<DsFormValues>) => {
           if (changed.sourceType !== undefined) {
             setCurSource(changed.sourceType);
-            setSqlResult(null);
+            setSqlSuccess(null);
+            setSqlError(null);
             if (changed.sourceType === 'table') {
               const dsId = formRef.current?.getFieldValue('datasourceId');
               loadTables(dsId);
@@ -518,24 +718,41 @@ export default function DatasetsPage() {
             <ProFormTextArea
               name="sourceSql"
               label="SQL 查询"
-              placeholder="SELECT * FROM your_table WHERE ..."
-              tooltip="仅允许单条只读 SELECT / WITH 查询，禁止分号与写关键字"
+              placeholder="SELECT * FROM `zkcrm-ry` WHERE ..."
+              tooltip="仅允许单条只读 SELECT / WITH 查询；特殊表名（含连字符 - 等）系统将自动加引号"
               fieldProps={{ autoSize: { minRows: 5, maxRows: 14 }, style: { fontFamily: 'monospace', fontSize: 12.5 } }}
               rules={[{ required: true, message: '请输入 SQL 查询语句' }]}
             />
-            <Space style={{ marginBottom: 8 }}>
+            <Space style={{ marginBottom: 10 }} wrap>
               <Button icon={<ThunderboltOutlined />} loading={sqlTesting} onClick={handleTestSql}>
-                试跑 SQL（前 10 行）
+                测试 SQL（前 10 行）
               </Button>
             </Space>
-            {sqlResult && (
+            {sqlSuccess && (
               <Alert
-                type={sqlResult.ok ? 'success' : 'error'}
+                type="success"
                 showIcon
                 style={{ marginBottom: 16 }}
-                title={sqlResult.text}
+                title={sqlSuccess.text}
+                description={
+                  (sqlSuccess.autoQuoteNotice || sqlSuccess.sql) ? (
+                    <div style={{ fontSize: 12, marginTop: 4 }}>
+                      {sqlSuccess.autoQuoteNotice && (
+                        <div style={{ color: PALETTE.primaryDeep, fontWeight: 500, marginBottom: 2 }}>
+                          {sqlSuccess.autoQuoteNotice}
+                        </div>
+                      )}
+                      {sqlSuccess.sql && (
+                        <div>
+                          执行语句：<Text code style={{ fontSize: 12 }}>{sqlSuccess.sql}</Text>
+                        </div>
+                      )}
+                    </div>
+                  ) : undefined
+                }
               />
             )}
+            {sqlError && <SqlErrorAlert error={sqlError} title="SQL 校验 / 执行失败" />}
           </>
         )}
 
@@ -583,34 +800,45 @@ export default function DatasetsPage() {
         <ProFormSwitch name="status" label="启用该数据集" />
       </ModalForm>
 
-      {/* ---------- 数据预览抽屉 ---------- */}
-      <Drawer
+      {/* ---------- 数据预览弹窗（Modal） ---------- */}
+      <Modal
         title={`数据预览 · ${previewRow?.name || ''}`}
         open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-        size={1080}
+        onCancel={() => setPreviewOpen(false)}
+        footer={<Button onClick={() => setPreviewOpen(false)}>关闭</Button>}
+        width={isMobile ? '95vw' : 1040}
         destroyOnHidden
       >
         {previewLoading ? (
-          <div style={{ padding: 60, textAlign: 'center' }}><Spin size="large" tip="加载中…" /></div>
+          <div style={{ padding: 60, textAlign: 'center' }}><Spin size="large" /></div>
         ) : previewError ? (
-          <Alert type="error" showIcon title="预览失败" description={previewError} />
+          <SqlErrorAlert error={previewError} title="数据集预览失败" />
         ) : !preview ? (
           <Empty description="暂无数据" />
         ) : (
           <>
+            {preview.autoQuoteNotice && (
+              <Alert
+                type="info"
+                showIcon
+                style={{ marginBottom: 12 }}
+                title="已自动为特殊标识符加引号"
+                description={preview.autoQuoteNotice}
+              />
+            )}
+
             <Space wrap style={{ marginBottom: 14 }}>
-              <Card size="small" styles={{ body: { padding: '8px 14px' } }}>
-                <Statistic title="返回行数" value={preview.rowCount} valueStyle={{ fontSize: 18, color: '#3687FF' }} />
+              <Card size="small" styles={{ body: { padding: '8px 14px' } }} style={{ borderColor: NEUTRAL.border }}>
+                <Statistic title="返回行数" value={preview.rowCount} valueStyle={{ fontSize: 18, color: PALETTE.primary }} />
               </Card>
-              <Card size="small" styles={{ body: { padding: '8px 14px' } }}>
-                <Statistic title="列数" value={preview.columns.length} valueStyle={{ fontSize: 18, color: '#2D6FE4' }} />
+              <Card size="small" styles={{ body: { padding: '8px 14px' } }} style={{ borderColor: NEUTRAL.border }}>
+                <Statistic title="列数" value={preview.columns.length} valueStyle={{ fontSize: 18, color: PALETTE.cyan }} />
               </Card>
-              <Card size="small" styles={{ body: { padding: '8px 14px' } }}>
-                <Statistic title="耗时" value={preview.elapsed} suffix="ms" valueStyle={{ fontSize: 18, color: '#A2D73C' }} />
+              <Card size="small" styles={{ body: { padding: '8px 14px' } }} style={{ borderColor: NEUTRAL.border }}>
+                <Statistic title="耗时" value={preview.elapsed} suffix="ms" valueStyle={{ fontSize: 18, color: PALETTE.green }} />
               </Card>
-              <Card size="small" styles={{ body: { padding: '8px 14px' } }}>
-                <Statistic title="数据源" value={preview.datasourceName} valueStyle={{ fontSize: 15, color: '#003378' }} />
+              <Card size="small" styles={{ body: { padding: '8px 14px' } }} style={{ borderColor: NEUTRAL.border }}>
+                <Statistic title="数据源" value={preview.datasourceName} valueStyle={{ fontSize: 15, color: NEUTRAL.text }} />
               </Card>
             </Space>
 
@@ -657,19 +885,19 @@ export default function DatasetsPage() {
                 rowKey={(_, i) => String(i)}
                 dataSource={preview.rows}
                 columns={previewColumns}
-                scroll={{ x: 'max-content', y: 460 }}
+                scroll={{ x: 'max-content', y: 400 }}
                 pagination={{ pageSize: 20, showSizeChanger: false, showTotal: (t) => `共 ${fmtNum(t)} 行` }}
               />
             )}
 
             {preview.columns.length > visibleCols && (
-              <Paragraph type="secondary" style={{ fontSize: 12.5, marginTop: 10 }}>
+              <Paragraph type="secondary" style={{ fontSize: 12.5, marginTop: 10, marginBottom: 0 }}>
                 当前仅展示前 {visibleCols} 列，共 {preview.columns.length} 列。可切换「全部」查看所有字段。
               </Paragraph>
             )}
           </>
         )}
-      </Drawer>
+      </Modal>
     </Page>
   );
 }

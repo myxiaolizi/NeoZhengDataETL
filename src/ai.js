@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const db = require('./db');
 const settings = require('./settings');
 const reports = require('./reports');
+const datasources = require('./datasources');
 
 /**
  * AI 问数
@@ -180,21 +181,34 @@ async function callLLM(messages, options) {
   if (!apiKey) throw new Error('未配置 AI 接口密钥');
 
   const url = baseUrl + '/chat/completions';
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + apiKey,
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature: opts.temperature === undefined ? 0.1 : opts.temperature,
-      max_tokens: opts.maxTokens || 2000,
-      stream: false,
-    }),
-    signal: AbortSignal.timeout(60000),
-  });
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + apiKey,
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: opts.temperature === undefined ? 0.1 : opts.temperature,
+        max_tokens: opts.maxTokens || 2000,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(Number(opts.timeoutMs) || 60000),
+    });
+  } catch (err) {
+    // 网络层异常（超时 / DNS / 连接被拒）统一翻成中文，别把 AbortError 直接甩给用户
+    if (err && (err.name === 'TimeoutError' || err.name === 'AbortError'
+      || /aborted|timeout/i.test(String(err.message)))) {
+      throw new Error('AI 接口请求超时（60 秒未返回），请稍后重试或换用更快的模型');
+    }
+    if (err && (err.code === 'ENOTFOUND' || err.code === 'ECONNREFUSED' || err.code === 'EHOSTUNREACH')) {
+      throw new Error(`无法连接 AI 接口（${err.code}）：${baseUrl}，请检查网络与接口地址`);
+    }
+    throw new Error('调用 AI 接口失败：' + ((err && err.message) || String(err)));
+  }
 
   const text = await resp.text();
   if (!resp.ok) {
@@ -281,6 +295,8 @@ async function ask(question, options) {
   if (!q) throw new Error('请输入问题');
 
   const sessionKey = opts.sessionKey || crypto.randomBytes(8).toString('hex');
+  // 失败时把已生成的 SQL 记进历史，便于用户/运维定位是哪条 SQL 出错
+  let lastSql = null;
 
   try {
     // 1) 构建 schema 上下文
@@ -291,9 +307,11 @@ async function ask(question, options) {
 
     // 2) 生成 SQL
     const gen = await generateSql(q, ctx.text, opts.history);
+    lastSql = gen.sql;
 
-    // 3) 安全校验
-    reports.assertReadOnly(gen.sql);
+    // 3) 安全校验（剥掉字符串/注释后判定，`WITH` 与窗口函数不会被误杀）
+    const safeSql = reports.assertReadOnly(gen.sql);
+    lastSql = safeSql;
 
     // 4) 选择数据集执行
     let targetDatasetId = opts.datasetId;
@@ -302,7 +320,7 @@ async function ask(question, options) {
       let best = ctx.datasets[0];
       let bestScore = -1;
       for (const d of ctx.datasets) {
-        const score = d.columns.filter((c) => gen.sql.includes(c)).length;
+        const score = d.columns.filter((c) => safeSql.includes(c)).length;
         if (score > bestScore) { bestScore = score; best = d; }
       }
       targetDatasetId = best.id;
@@ -311,11 +329,20 @@ async function ask(question, options) {
     const dataset = await reports.getDataset(targetDatasetId);
     if (!dataset) throw new Error('数据集不存在');
 
-    // 5) 执行
-    const query = await reports.buildQuery(dataset, 500);
+    // 5) 执行：与数据集预览走同一条链路（补引号 → 分页 → 结构化错误）
     const dsMod = require('./datasource');
-    const sql = dsMod.paginate(query.ds, gen.sql, 500, 0);
-    const rows = await dsMod.query(query.ds, sql, query.params);
+    const source = await datasources.getById(dataset.datasourceId || 0);
+    if (!source) throw new Error('数据集「' + dataset.name + '」的数据源不存在或已删除');
+
+    const normalizedSql = dsMod.normalizeSql(source, safeSql);
+    const sql = dsMod.paginate(source, normalizedSql, 500, 0);
+    let rows;
+    try {
+      rows = await dsMod.query(source, sql, []);
+    } catch (err) {
+      throw dsMod.describeDbError(source, err, sql, safeSql, normalizedSql);
+    }
+    gen.sql = safeSql;
 
     // 6) 解读
     let answer = '';
@@ -359,7 +386,7 @@ async function ask(question, options) {
       sessionKey,
       question: q,
       answer: null,
-      sqlText: null,
+      sqlText: lastSql,
       datasetId: opts.datasetId || null,
       resultRows: 0,
       success: false,

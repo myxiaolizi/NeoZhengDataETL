@@ -1,42 +1,35 @@
-/** 表单数据：提交记录列表（动态列）/ 详情 / 导出（含移动端适配） */
+/** 表单数据（V4.1 页面规范）：提交记录列表（动态列）/ 详情 / 导出（含移动端适配）
+ *
+ * 结构：本页名称 + 操作 → 数据卡片 → 搜索区 → 提交记录列表
+ * V4.1：提交详情由右侧 Drawer 改为 Modal（禁止抽屉承载业务内容）。
+ */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
-  Button, Card, Descriptions, Drawer, Empty, Grid, Input, Pagination, Space,
-  Statistic, Tag, Tooltip, message,
+  Alert, Button, Card, Descriptions, Empty, Grid, Input, Modal, Pagination, Space,
+  Tag, Tooltip, message,
 } from 'antd';
 import {
-  DownloadOutlined, LeftOutlined, ReloadOutlined, RightOutlined, SearchOutlined,
+  ArrowLeftOutlined, DownloadOutlined, EditOutlined, ReloadOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
+import { NEUTRAL, PALETTE } from '@/theme';
 import { formsApi } from '@/api/forms';
 import type { FormDetail, FormField, FormRecord } from '@/api/forms';
 import { formatFieldValue } from '@/pages/forms/fieldTypes';
-import { fmtTime } from '@/utils';
+import { fmtNum, fmtTime } from '@/utils';
 
 const { useBreakpoint } = Grid;
-
-/** 调色板（契约唯一允许的 13 色） */
-const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  deep: '#003378',
-  green: '#A2D73C',
-  orange: '#EC673C',
-  red: '#E86161',
-  yellow: '#FFC000',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
 
 const PAGE_SIZE = 20;
 
 const STATUS_META: Record<string, { text: string; color: string }> = {
-  ok: { text: '正常', color: C.green },
-  partial: { text: '部分成功', color: C.yellow },
-  invalid: { text: '校验失败', color: C.red },
+  ok: { text: '正常', color: PALETTE.green },
+  partial: { text: '部分成功', color: PALETTE.yellow },
+  invalid: { text: '校验失败', color: PALETTE.red },
 };
 
 export default function FormDataPage() {
@@ -52,6 +45,7 @@ export default function FormDataPage() {
   const [keyword, setKeyword] = useState('');
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
   const [active, setActive] = useState<FormRecord | null>(null);
 
@@ -68,12 +62,13 @@ export default function FormDataPage() {
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setError('');
     try {
       const res = await formsApi.records(id, { page, pageSize: PAGE_SIZE, keyword });
       setRecords(res.list || []);
       setTotal(res.total || 0);
-    } catch {
-      /* client 已提示 */
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '提交记录加载失败');
     } finally {
       setLoading(false);
     }
@@ -101,6 +96,13 @@ export default function FormDataPage() {
     }
   };
 
+  /* ---------- 数据卡片 ---------- */
+  const statItems = useMemo<StatCardItem[]>(() => [
+    { key: 'total', label: '提交总数', value: fmtNum(detail?.submitCount ?? total), suffix: '条', color: PALETTE.primary },
+    { key: 'fields', label: '字段数', value: fmtNum(fields.length), suffix: '个', color: PALETTE.cyan },
+    { key: 'page', label: '当前页', value: fmtNum(records.length), suffix: '条', color: PALETTE.orange, hint: `第 ${page} 页` },
+  ], [detail, total, fields.length, records.length, page]);
+
   /* ---------- 列 ---------- */
   const columns: ProColumns<FormRecord>[] = useMemo(() => {
     const fieldCols: ProColumns<FormRecord>[] = fields.map((f: FormField) => ({
@@ -120,6 +122,7 @@ export default function FormDataPage() {
         dataIndex: 'created_at',
         width: 165,
         fixed: 'left',
+        sorter: (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')),
         render: (_: React.ReactNode, record: FormRecord) => (
           <span style={{ fontSize: 12.5 }}>{fmtTime(record.created_at)}</span>
         ),
@@ -136,7 +139,7 @@ export default function FormDataPage() {
         dataIndex: 'ip',
         width: 130,
         render: (_: React.ReactNode, record: FormRecord) => (
-          <span style={{ fontSize: 12, color: C.gray }}>{record.ip || '-'}</span>
+          <span style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>{record.ip || '-'}</span>
         ),
       },
       {
@@ -144,9 +147,9 @@ export default function FormDataPage() {
         dataIndex: 'status',
         width: 100,
         render: (_: React.ReactNode, record: FormRecord) => {
-          const meta = STATUS_META[record.status] || { text: record.status, color: C.gray };
+          const meta = STATUS_META[record.status] || { text: record.status, color: NEUTRAL.textTertiary };
           return (
-            <Tag style={{ color: meta.color, background: '#FFFFFF', borderColor: meta.color }}>
+            <Tag style={{ color: meta.color, background: NEUTRAL.surface, borderColor: meta.color, margin: 0 }}>
               {meta.text}
             </Tag>
           );
@@ -166,55 +169,6 @@ export default function FormDataPage() {
     ];
   }, [fields]);
 
-  /* ---------- 详情内容 ---------- */
-  const detailContent = active ? (
-    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-      <Descriptions
-        size="small"
-        column={1}
-        bordered
-        items={[
-          { key: 'time', label: '提交时间', children: fmtTime(active.created_at) },
-          { key: 'submitter', label: '提交人', children: active.submitter || '匿名用户' },
-          { key: 'ip', label: '提交 IP', children: active.ip || '-' },
-          {
-            key: 'status',
-            label: '状态',
-            children: STATUS_META[active.status]?.text || active.status,
-          },
-          ...(active.message
-            ? [{ key: 'msg', label: '备注', children: active.message }]
-            : []),
-          ...(active.user_agent
-            ? [{ key: 'ua', label: '浏览器', children: <span style={{ fontSize: 12 }}>{active.user_agent}</span> }]
-            : []),
-        ]}
-      />
-      <Card size="small" title="提交内容">
-        <Descriptions
-          size="small"
-          column={1}
-          bordered
-          items={fields.map((f) => ({
-            key: f.key,
-            label: f.label,
-            children: <span style={{ wordBreak: 'break-all' }}>{formatFieldValue(f, active.data?.[f.key])}</span>,
-          }))}
-        />
-      </Card>
-      <Card size="small" title="原始 JSON">
-        <pre
-          style={{
-            margin: 0, fontSize: 12, background: 'rgba(54,135,255,.04)', padding: 10,
-            borderRadius: 8, overflow: 'auto', maxHeight: 240,
-          }}
-        >
-          {JSON.stringify(active.data, null, 2)}
-        </pre>
-      </Card>
-    </Space>
-  ) : null;
-
   /* ---------- 移动端卡片 ---------- */
   const mobileList = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -224,19 +178,19 @@ export default function FormDataPage() {
         records.map((record) => (
           <Card key={record.id} size="small" onClick={() => setActive(record)} styles={{ body: { padding: 14 } }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 12.5, color: C.gray }}>{fmtTime(record.created_at)}</span>
+              <span style={{ fontSize: 12.5, color: NEUTRAL.textTertiary }}>{fmtTime(record.created_at)}</span>
               <Tag
                 style={{
-                  color: (STATUS_META[record.status] || { color: C.gray }).color,
-                  background: '#FFFFFF',
-                  borderColor: (STATUS_META[record.status] || { color: C.gray }).color,
+                  color: (STATUS_META[record.status] || { color: NEUTRAL.textTertiary }).color,
+                  background: NEUTRAL.surface,
+                  borderColor: (STATUS_META[record.status] || { color: NEUTRAL.border }).color,
                   marginInlineEnd: 0,
                 }}
               >
                 {STATUS_META[record.status]?.text || record.status}
               </Tag>
             </div>
-            <div style={{ marginTop: 8, fontSize: 13, color: C.deep }}>
+            <div style={{ marginTop: 8, fontSize: 13, color: NEUTRAL.text }}>
               {fields
                 .filter((f) => {
                   const v = record.data?.[f.key];
@@ -246,7 +200,7 @@ export default function FormDataPage() {
                 .map((f) => `${f.label}：${formatFieldValue(f, record.data?.[f.key])}`)
                 .join('　') || '（无内容）'}
             </div>
-            <div style={{ marginTop: 8, fontSize: 12, color: C.gray }}>
+            <div style={{ marginTop: 8, fontSize: 12, color: NEUTRAL.textTertiary }}>
               提交人：{record.submitter || '匿名用户'} · IP：{record.ip || '-'}
             </div>
           </Card>
@@ -266,41 +220,27 @@ export default function FormDataPage() {
 
   return (
     <Page
-      title={`表单数据${detail ? ` · ${detail.name}` : ''}`}
-      subTitle={detail ? `${detail.code} · 共 ${total} 条提交记录` : '加载中…'}
-      extra={
-        <Space wrap size={8}>
-          <Button icon={<LeftOutlined />} onClick={() => navigate('/forms')}>
-            返回表单中心
+      title={detail ? detail.name : '表单数据'}
+      actions={
+        <>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/forms')}>
+            {isMobile ? '' : '返回表单中心'}
           </Button>
-          <Button
-            icon={<RightOutlined />}
-            onClick={() => navigate(`/forms/${id}/design`)}
-          >
-            表单设计
+          <Button icon={<EditOutlined />} onClick={() => navigate(`/forms/${id}/design`)}>
+            {isMobile ? '' : '表单设计'}
           </Button>
-          <Button icon={<DownloadOutlined />} loading={exporting} onClick={doExport}>
-            导出 CSV
+          <Button type="primary" icon={<DownloadOutlined />} loading={exporting} onClick={doExport}>
+            {isMobile ? '' : '导出 CSV'}
           </Button>
-        </Space>
+        </>
       }
+      stats={statItems}
     >
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-        <Card size="small" style={{ flex: 1, minWidth: 150 }} styles={{ body: { padding: 14 } }}>
-          <Statistic title="提交总数" value={detail?.submitCount ?? total} styles={{ content: { color: C.primary, fontWeight: 700 } }} />
-        </Card>
-        <Card size="small" style={{ flex: 1, minWidth: 150 }} styles={{ body: { padding: 14 } }}>
-          <Statistic title="字段数" value={fields.length} styles={{ content: { color: C.blue, fontWeight: 700 } }} />
-        </Card>
-        <Card size="small" style={{ flex: 1, minWidth: 150 }} styles={{ body: { padding: 14 } }}>
-          <Statistic title="当前页" value={records.length} styles={{ content: { color: C.orange, fontWeight: 700 } }} />
-        </Card>
-      </div>
-
+      {/* 搜索区 */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
         <Input
           allowClear
-          prefix={<SearchOutlined style={{ color: C.gray }} />}
+          prefix={<SearchOutlined style={{ color: NEUTRAL.textQuaternary }} />}
           placeholder="搜索提交内容 / 提交人 / IP"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
@@ -337,6 +277,17 @@ export default function FormDataPage() {
         </Space>
       </div>
 
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          title="加载失败"
+          description={error}
+          action={<Button size="small" icon={<ReloadOutlined />} onClick={load}>重试</Button>}
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
+
       {isMobile ? (
         mobileList
       ) : (
@@ -368,15 +319,64 @@ export default function FormDataPage() {
         </>
       )}
 
-      <Drawer
+      {/* 提交详情：内容少 → Modal（V4.1 禁止右侧抽屉） */}
+      <Modal
         title="提交详情"
-        placement="right"
-        size={isMobile ? '100%' : 560}
         open={!!active}
-        onClose={() => setActive(null)}
+        onCancel={() => setActive(null)}
+        footer={<Button onClick={() => setActive(null)}>关闭</Button>}
+        width={isMobile ? '94%' : 640}
+        destroyOnHidden
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto', paddingRight: 4 } }}
       >
-        {detailContent}
-      </Drawer>
+        {active && (
+          <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+            <Descriptions
+              size="small"
+              column={1}
+              bordered
+              items={[
+                { key: 'time', label: '提交时间', children: fmtTime(active.created_at) },
+                { key: 'submitter', label: '提交人', children: active.submitter || '匿名用户' },
+                { key: 'ip', label: '提交 IP', children: active.ip || '-' },
+                {
+                  key: 'status',
+                  label: '状态',
+                  children: STATUS_META[active.status]?.text || active.status,
+                },
+                ...(active.message
+                  ? [{ key: 'msg', label: '备注', children: active.message }]
+                  : []),
+                ...(active.user_agent
+                  ? [{ key: 'ua', label: '浏览器', children: <span style={{ fontSize: 12 }}>{active.user_agent}</span> }]
+                  : []),
+              ]}
+            />
+            <Card size="small" title="提交内容">
+              <Descriptions
+                size="small"
+                column={1}
+                bordered
+                items={fields.map((f) => ({
+                  key: f.key,
+                  label: f.label,
+                  children: <span style={{ wordBreak: 'break-all' }}>{formatFieldValue(f, active.data?.[f.key])}</span>,
+                }))}
+              />
+            </Card>
+            <Card size="small" title="原始 JSON">
+              <pre
+                style={{
+                  margin: 0, fontSize: 12, background: NEUTRAL.surfaceSunken, padding: 10,
+                  borderRadius: 8, overflow: 'auto', maxHeight: 240, color: NEUTRAL.textSecondary,
+                }}
+              >
+                {JSON.stringify(active.data, null, 2)}
+              </pre>
+            </Card>
+          </Space>
+        )}
+      </Modal>
     </Page>
   );
 }

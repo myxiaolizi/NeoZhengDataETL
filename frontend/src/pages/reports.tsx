@@ -1,11 +1,12 @@
 /**
- * 报表中心
+ * 报表中心（V4.1 统一规范）
+ * - Page 标准结构：title="报表中心" + search + actions(新建报表) + subTabs(类型子标签) + stats(5个数据卡片) + 列表/卡片
+ * - 系统内置看板（客户签约看板等预置报表，直接查看、不参与增删改）
  * - 卡片视图 / 表格视图（ProTable）切换
- * - 关键词、类型、分类筛选；新建报表、查看、设计、分享、启停、删除
- * - 移动端（<768px）：卡片单列 + 触控目标 ≥44px
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   App as AntApp,
   Badge,
   Button,
@@ -22,15 +23,16 @@ import {
   Space,
   Spin,
   Switch,
+  Tabs,
   Tag,
   Tooltip,
-  Typography,
 } from 'antd';
 import {
   BarChartOutlined,
   DeleteOutlined,
   EditOutlined,
   EyeOutlined,
+  FundOutlined,
   PlusOutlined,
   ReloadOutlined,
   ShareAltOutlined,
@@ -43,6 +45,8 @@ import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
+import { NEUTRAL, PALETTE, SIDER } from '@/theme';
 import { useAppStore } from '@/stores/app';
 import { copyText, fmtAgo, fmtNum, fmtTime } from '@/utils';
 import {
@@ -58,17 +62,41 @@ import {
 } from '@/api/reports';
 
 const { useBreakpoint } = Grid;
-const { Text } = Typography;
 
 const TYPE_META: Record<string, { label: string; color: string }> = {
-  chart: { label: '图表', color: '#3687FF' },
-  table: { label: '表格', color: '#73DBFF' },
-  dashboard: { label: '看板', color: '#A2D73C' },
+  chart: { label: '图表', color: PALETTE.primary },
+  table: { label: '表格', color: PALETTE.cyan },
+  dashboard: { label: '看板', color: PALETTE.green },
 };
 
 function typeMeta(t: string) {
-  return TYPE_META[t] || { label: t || '图表', color: '#B5B5B6' };
+  return TYPE_META[t] || { label: t || '图表', color: PALETTE.gray };
 }
+
+/** 系统内置看板条目 */
+interface BuiltinBoard {
+  key: string;
+  name: string;
+  desc: string;
+  path: string;
+  color: string;
+  tags: string[];
+}
+
+/**
+ * 系统内置看板：由后端实时聚合、无需配置的预置报表。
+ * 它们不属于「我的报表」，因此在报表中心单独成区块，点击直接进入看板页。
+ */
+const BUILTIN_BOARDS: BuiltinBoard[] = [
+  {
+    key: 'crm',
+    name: '客户签约看板',
+    desc: '从客户签约项目实时聚合：签约总数、门店覆盖、区域 / 类型分布、销售排行与签约明细。',
+    path: '/dashboard/crm',
+    color: PALETTE.primary,
+    tags: ['看板', 'CRM'],
+  },
+];
 
 export default function ReportsPage() {
   const navigate = useNavigate();
@@ -80,6 +108,7 @@ export default function ReportsPage() {
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [datasets, setDatasets] = useState<DatasetItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [viewMode, setViewMode] = useState<'card' | 'table'>('card');
   const [keyword, setKeyword] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -94,6 +123,7 @@ export default function ReportsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [list, ds] = await Promise.all([
         listReports(),
@@ -101,8 +131,9 @@ export default function ReportsPage() {
       ]);
       setReports(list || []);
       setDatasets(ds || []);
-    } catch {
+    } catch (e) {
       setReports([]);
+      setLoadError(e instanceof Error ? e.message : '加载报表列表失败');
     } finally {
       setLoading(false);
     }
@@ -123,6 +154,7 @@ export default function ReportsPage() {
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
     return reports.filter((r) => {
+      if (typeFilter === 'builtin') return false;
       if (typeFilter !== 'all' && r.reportType !== typeFilter) return false;
       if (categoryFilter !== 'all' && (r.category || '') !== categoryFilter) return false;
       if (!kw) return true;
@@ -132,11 +164,66 @@ export default function ReportsPage() {
     });
   }, [reports, keyword, typeFilter, categoryFilter]);
 
-  const stats = useMemo(() => {
+  /** 内置看板同样响应筛选：类型选「全部 / 看板 / 内置看板」、或关键词命中时才显示 */
+  const builtinBoards = useMemo(() => {
+    if (typeFilter !== 'all' && typeFilter !== 'dashboard' && typeFilter !== 'builtin') return [];
+    if (categoryFilter !== 'all') return [];
+    const kw = keyword.trim().toLowerCase();
+    if (!kw) return BUILTIN_BOARDS.slice();
+    return BUILTIN_BOARDS.filter((b) =>
+      [b.name, b.desc, ...b.tags].filter(Boolean).some((v) => String(v).toLowerCase().includes(kw))
+    );
+  }, [keyword, typeFilter, categoryFilter]);
+
+  /** V4.1 数据卡片（5 个：报表数 / 已发布 / 本月访问 / 分享数 / 看板数） */
+  const statItems = useMemo<StatCardItem[]>(() => {
     const total = reports.length;
-    const shared = reports.filter((r) => (r.shareCount || 0) > 0).length;
+    const published = reports.filter((r) => Number(r.status) === 1).length;
     const views = reports.reduce((s, r) => s + (r.viewCount || 0), 0);
-    return { total, shared, views };
+    const shares = reports.reduce((s, r) => s + (r.shareCount || 0), 0);
+    const boards = BUILTIN_BOARDS.length + reports.filter((r) => r.reportType === 'dashboard').length;
+
+    return [
+      {
+        key: 'total',
+        label: '报表数',
+        value: fmtNum(total),
+        suffix: '个',
+        color: PALETTE.primary,
+        onClick: () => setTypeFilter('all'),
+      },
+      {
+        key: 'published',
+        label: '已发布',
+        value: fmtNum(published),
+        suffix: '个',
+        color: PALETTE.green,
+        hint: total > 0 ? `启用率 ${Math.round((published / total) * 100)}%` : undefined,
+      },
+      {
+        key: 'views',
+        label: '本月访问',
+        value: fmtNum(views),
+        suffix: '次',
+        color: PALETTE.cyan,
+      },
+      {
+        key: 'shares',
+        label: '分享数',
+        value: fmtNum(shares),
+        suffix: '个',
+        color: PALETTE.yellow,
+      },
+      {
+        key: 'boards',
+        label: '看板数',
+        value: fmtNum(boards),
+        suffix: '个',
+        color: PALETTE.violet,
+        hint: `含预置看板 ${BUILTIN_BOARDS.length} 个`,
+        onClick: () => setTypeFilter('dashboard'),
+      },
+    ];
   }, [reports]);
 
   const openCreate = () => {
@@ -208,12 +295,13 @@ export default function ReportsPage() {
     {
       title: '报表',
       dataIndex: 'name',
+      sorter: (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
       render: (_, r) => (
         <div style={{ minWidth: 0 }}>
           <a onClick={() => navigate(`/reports/${r.id}/view`)} style={{ fontWeight: 600, fontSize: 13.5 }}>
             {r.name}
           </a>
-          <div style={{ fontSize: 11.5, color: '#B5B5B6' }}>
+          <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary }}>
             {r.code}
             {r.description ? ` · ${r.description}` : ''}
           </div>
@@ -224,10 +312,11 @@ export default function ReportsPage() {
       title: '类型',
       dataIndex: 'reportType',
       width: 88,
+      sorter: (a, b) => String(a.reportType || '').localeCompare(String(b.reportType || '')),
       render: (_, r) => {
         const m = typeMeta(r.reportType);
         return (
-          <Tag color={m.color} bordered={false} style={{ color: '#FFFFFF', marginInlineEnd: 0 }}>
+          <Tag color={m.color} bordered={false} style={{ color: NEUTRAL.textInverse, marginInlineEnd: 0 }}>
             {m.label}
           </Tag>
         );
@@ -238,24 +327,27 @@ export default function ReportsPage() {
     {
       title: '浏览',
       dataIndex: 'viewCount',
-      width: 80,
+      width: 85,
       align: 'right',
+      sorter: (a, b) => Number(a.viewCount || 0) - Number(b.viewCount || 0),
       render: (_, r) => fmtNum(r.viewCount || 0),
     },
     {
       title: '分享',
       dataIndex: 'shareCount',
-      width: 80,
+      width: 85,
       align: 'center',
+      sorter: (a, b) => Number(a.shareCount || 0) - Number(b.shareCount || 0),
       render: (_, r) => (
-        <Badge count={r.shareCount || 0} showZero={false} color="#3687FF" />
+        <Badge count={r.shareCount || 0} showZero={false} color={PALETTE.primary} />
       ),
     },
     {
       title: '启用',
       dataIndex: 'status',
-      width: 70,
+      width: 75,
       align: 'center',
+      sorter: (a, b) => Number(a.status || 0) - Number(b.status || 0),
       render: (_, r) => (
         <Switch
           size="small"
@@ -269,9 +361,10 @@ export default function ReportsPage() {
       title: '最近更新',
       dataIndex: 'updatedAt',
       width: 140,
+      sorter: (a, b) => new Date(a.updatedAt || 0).getTime() - new Date(b.updatedAt || 0).getTime(),
       render: (_, r) => (
         <Tooltip title={fmtTime(r.updatedAt)}>
-          <span style={{ fontSize: 12, color: 'rgba(0,51,120,.55)' }}>{fmtAgo(r.updatedAt)}</span>
+          <span style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>{fmtAgo(r.updatedAt)}</span>
         </Tooltip>
       ),
     },
@@ -295,7 +388,7 @@ export default function ReportsPage() {
           </a>
         ) : null,
         canWrite ? (
-          <a key="del" style={{ color: '#E86161' }} onClick={() => handleDelete(r)}>
+          <a key="del" style={{ color: PALETTE.red }} onClick={() => handleDelete(r)}>
             删除
           </a>
         ) : null,
@@ -303,13 +396,87 @@ export default function ReportsPage() {
     },
   ];
 
+  /** 内置看板卡片：整体可点击，与「我的报表」卡片同一视觉体系 */
+  const renderBuiltin = (b: BuiltinBoard) => (
+    <Card
+      key={b.key}
+      hoverable
+      style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, height: '100%', overflow: 'hidden' }}
+      styles={{ body: { padding: 16 } }}
+      onClick={() => navigate(b.path)}
+    >
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <div
+          style={{
+            width: 38,
+            height: 38,
+            flex: '0 0 38px',
+            borderRadius: 10,
+            background: `linear-gradient(135deg, ${b.color}, ${SIDER.bgTo})`,
+            color: NEUTRAL.textInverse,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: 17,
+          }}
+        >
+          <FundOutlined />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14.5, color: NEUTRAL.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {b.name}
+          </div>
+          <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, marginTop: 2 }}>系统预置 · 数据实时聚合</div>
+        </div>
+        <Tag color={PALETTE.cyan} bordered={false} style={{ color: NEUTRAL.textInverse, marginInlineEnd: 0 }}>
+          看板
+        </Tag>
+      </div>
+
+      <div
+        style={{
+          marginTop: 10,
+          fontSize: 12.5,
+          color: NEUTRAL.textSecondary,
+          minHeight: 36,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}
+      >
+        {b.desc}
+      </div>
+
+      <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {b.tags.map((t) => (
+          <Tag key={t} bordered={false} style={{ marginInlineEnd: 0, background: NEUTRAL.surfaceSunken, color: PALETTE.primary }}>
+            {t}
+          </Tag>
+        ))}
+      </div>
+
+      <div style={{ marginTop: 12, display: 'flex', gap: 8 }} onClick={(e) => e.stopPropagation()}>
+        <Button
+          type="primary"
+          size={isMobile ? 'middle' : 'small'}
+          icon={<FundOutlined />}
+          onClick={() => navigate(b.path)}
+          style={{ minHeight: 32 }}
+        >
+          打开看板
+        </Button>
+      </div>
+    </Card>
+  );
+
   const renderCard = (r: ReportItem) => {
     const m = typeMeta(r.reportType);
     return (
       <Card
         key={r.id}
         hoverable
-        style={{ border: '1px solid #DCDDDD', borderRadius: 12, height: '100%', overflow: 'hidden' }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, height: '100%', overflow: 'hidden' }}
         styles={{ body: { padding: 16 } }}
         onClick={() => navigate(`/reports/${r.id}/view`)}
       >
@@ -320,8 +487,8 @@ export default function ReportsPage() {
               height: 38,
               flex: '0 0 38px',
               borderRadius: 10,
-              background: `linear-gradient(135deg, ${m.color}, #003378)`,
-              color: '#FFFFFF',
+              background: `linear-gradient(135deg, ${m.color}, ${SIDER.bgTo})`,
+              color: NEUTRAL.textInverse,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -331,15 +498,15 @@ export default function ReportsPage() {
             {r.reportType === 'table' ? <TableOutlined /> : <BarChartOutlined />}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 14.5, color: '#003378', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ fontWeight: 700, fontSize: 14.5, color: NEUTRAL.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {r.name}
             </div>
-            <div style={{ fontSize: 11.5, color: '#B5B5B6', marginTop: 2 }}>
+            <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, marginTop: 2 }}>
               {r.code}
               {r.category ? ` · ${r.category}` : ''}
             </div>
           </div>
-          <Tag color={m.color} bordered={false} style={{ color: '#FFFFFF', marginInlineEnd: 0 }}>
+          <Tag color={m.color} bordered={false} style={{ color: NEUTRAL.textInverse, marginInlineEnd: 0 }}>
             {m.label}
           </Tag>
         </div>
@@ -348,7 +515,7 @@ export default function ReportsPage() {
           style={{
             marginTop: 10,
             fontSize: 12.5,
-            color: 'rgba(0,51,120,.6)',
+            color: NEUTRAL.textSecondary,
             minHeight: 36,
             display: '-webkit-box',
             WebkitLineClamp: 2,
@@ -359,7 +526,7 @@ export default function ReportsPage() {
           {r.description || '暂无描述'}
         </div>
 
-        <div style={{ marginTop: 10, display: 'flex', gap: 14, fontSize: 12, color: 'rgba(0,51,120,.55)', flexWrap: 'wrap' }}>
+        <div style={{ marginTop: 10, display: 'flex', gap: 14, fontSize: 12, color: NEUTRAL.textSecondary, flexWrap: 'wrap' }}>
           <span>
             <EyeOutlined /> {fmtNum(r.viewCount || 0)}
           </span>
@@ -369,7 +536,7 @@ export default function ReportsPage() {
           <span>
             <ClockCircleOutlined /> {fmtAgo(r.updatedAt)}
           </span>
-          {Number(r.status) !== 1 && <Tag color="#B5B5B6">已停用</Tag>}
+          {Number(r.status) !== 1 && <Tag color={PALETTE.gray}>已停用</Tag>}
         </div>
 
         <div
@@ -413,117 +580,146 @@ export default function ReportsPage() {
   return (
     <Page
       title="报表中心"
-      subTitle="数据集驱动的图表与表格报表，支持分享与对外发布"
-      extra={
-        <Space wrap size={8}>
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-            刷新
-          </Button>
-          {canWrite && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建报表
-            </Button>
-          )}
-        </Space>
-      }
-    >
-      {/* 统计条 */}
-      <Row gutter={[10, 10]} style={{ marginBottom: 14 }}>
-        {[
-          { label: '报表总数', value: stats.total, color: '#3687FF' },
-          { label: '已分享', value: stats.shared, color: '#45B4FF' },
-          { label: '累计浏览', value: stats.views, color: '#A2D73C' },
-        ].map((s) => (
-          <Col xs={8} key={s.label}>
-            <Card styles={{ body: { padding: isMobile ? '10px 12px' : '14px 16px' } }} style={{ border: '1px solid #DCDDDD', borderRadius: 10 }}>
-              <div style={{ fontSize: 11.5, color: 'rgba(0,51,120,.55)' }}>{s.label}</div>
-              <div style={{ fontSize: isMobile ? 18 : 22, fontWeight: 700, color: s.color, lineHeight: 1.3 }}>
-                {fmtNum(s.value)}
-              </div>
-            </Card>
-          </Col>
-        ))}
-      </Row>
-
-      {/* 工具栏 */}
-      <Card styles={{ body: { padding: 12 } }} style={{ border: '1px solid #DCDDDD', borderRadius: 10, marginBottom: 14 }}>
-        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 10, alignItems: isMobile ? 'stretch' : 'center' }}>
+      search={
+        <>
+          <Select
+            value={categoryFilter}
+            onChange={setCategoryFilter}
+            style={{ width: isMobile ? 120 : 140 }}
+            options={[{ value: 'all', label: '全部分类' }, ...categories.map((c) => ({ value: c, label: c }))]}
+          />
           <Input.Search
             allowClear
             placeholder="搜索报表名称 / 编码 / 分类"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
-            style={{ flex: 1, minWidth: 180 }}
-            size={isMobile ? 'large' : 'middle'}
+            onSearch={(v) => setKeyword(v)}
+            style={{ width: isMobile ? 190 : 250 }}
           />
-          <Space wrap size={8}>
-            <Select
-              value={typeFilter}
-              onChange={setTypeFilter}
-              style={{ width: 120 }}
-              size={isMobile ? 'large' : 'middle'}
-              options={[
-                { value: 'all', label: '全部类型' },
-                { value: 'chart', label: '图表' },
-                { value: 'table', label: '表格' },
-                { value: 'dashboard', label: '看板' },
-              ]}
-            />
-            <Select
-              value={categoryFilter}
-              onChange={setCategoryFilter}
-              style={{ width: 130 }}
-              size={isMobile ? 'large' : 'middle'}
-              options={[{ value: 'all', label: '全部分类' }, ...categories.map((c) => ({ value: c, label: c }))]}
-            />
-            <Segmented
-              value={viewMode}
-              onChange={(v) => setViewMode(v as 'card' | 'table')}
-              size={isMobile ? 'middle' : 'middle'}
-              options={[
-                { value: 'card', icon: <AppstoreOutlined />, label: isMobile ? '' : '卡片' },
-                { value: 'table', icon: <UnorderedListOutlined />, label: isMobile ? '' : '表格' },
-              ]}
-            />
-          </Space>
-        </div>
-      </Card>
+        </>
+      }
+      actions={
+        canWrite ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新建报表
+          </Button>
+        ) : undefined
+      }
+      extra={
+        <Space wrap size={8}>
+          <Segmented
+            value={viewMode}
+            onChange={(v) => setViewMode(v as 'card' | 'table')}
+            options={[
+              { value: 'card', icon: <AppstoreOutlined />, label: isMobile ? '' : '卡片' },
+              { value: 'table', icon: <UnorderedListOutlined />, label: isMobile ? '' : '表格' },
+            ]}
+          />
+          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
+            刷新
+          </Button>
+        </Space>
+      }
+      subTabs={
+        <Tabs
+          activeKey={typeFilter}
+          onChange={setTypeFilter}
+          items={[
+            { key: 'all', label: '全部报表' },
+            { key: 'chart', label: '图表报表' },
+            { key: 'table', label: '表格报表' },
+            { key: 'dashboard', label: '数据看板' },
+            { key: 'builtin', label: `系统内置看板（${BUILTIN_BOARDS.length}）` },
+          ]}
+        />
+      }
+      stats={statItems}
+    >
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title="加载报表列表失败"
+          description={loadError}
+          action={
+            <Button size="small" onClick={load}>
+              重试
+            </Button>
+          }
+        />
+      )}
 
-      {loading ? (
-        <div style={{ padding: 60, textAlign: 'center' }}>
-          <Spin size="large" />
+      {/* 系统内置看板：预置报表，点击直接进入看板页 */}
+      {builtinBoards.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: isMobile ? 13.5 : 14.5, fontWeight: 700, color: NEUTRAL.text }}>系统内置看板</span>
+            <span style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>预置报表，直接查看，无需配置</span>
+          </div>
+          <Row gutter={[12, 12]}>
+            {builtinBoards.map((b) => (
+              <Col xs={24} sm={12} lg={8} xxl={6} key={b.key}>
+                {renderBuiltin(b)}
+              </Col>
+            ))}
+          </Row>
         </div>
-      ) : filtered.length === 0 ? (
-        <Card style={{ border: '1px dashed #DCDDDD', borderRadius: 12 }}>
-          <Empty description={keyword || typeFilter !== 'all' || categoryFilter !== 'all' ? '没有符合条件的报表' : '还没有报表'}>
-            {canWrite && (
-              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-                新建第一个报表
-              </Button>
-            )}
-          </Empty>
-        </Card>
-      ) : viewMode === 'card' || isMobile ? (
-        <Row gutter={[12, 12]}>
-          {filtered.map((r) => (
-            <Col xs={24} sm={12} lg={8} xxl={6} key={r.id}>
-              {renderCard(r)}
-            </Col>
-          ))}
-        </Row>
-      ) : (
-        <Card styles={{ body: { padding: 0 } }} style={{ border: '1px solid #DCDDDD', borderRadius: 12, overflow: 'hidden' }}>
-          <ProTable<ReportItem>
-            rowKey="id"
-            columns={columns}
-            dataSource={filtered}
-            search={false}
-            options={{ reload: false, density: false, setting: false }}
-            toolBarRender={false}
-            scroll={{ x: 'max-content' }}
-            pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 个报表` }}
-          />
-        </Card>
+      )}
+
+      {/* 我的报表 */}
+      {typeFilter !== 'builtin' && (
+        <>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: isMobile ? 13.5 : 14.5, fontWeight: 700, color: NEUTRAL.text }}>我的报表</span>
+            <span style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>共 {fmtNum(filtered.length)} 个</span>
+          </div>
+
+          {loading ? (
+            <div style={{ padding: 60, textAlign: 'center' }}>
+              <Spin size="large" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <Card style={{ border: `1px dashed ${NEUTRAL.border}`, borderRadius: 12 }}>
+              <Empty
+                description={
+                  keyword || typeFilter !== 'all' || categoryFilter !== 'all'
+                    ? '没有符合条件的自建报表'
+                    : builtinBoards.length > 0
+                      ? '还没有自建报表，可先从上方的内置看板开始'
+                      : '还没有报表'
+                }
+              >
+                {canWrite && (
+                  <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                    {reports.length ? '新建报表' : '新建第一个报表'}
+                  </Button>
+                )}
+              </Empty>
+            </Card>
+          ) : viewMode === 'card' || isMobile ? (
+            <Row gutter={[12, 12]}>
+              {filtered.map((r) => (
+                <Col xs={24} sm={12} lg={8} xxl={6} key={r.id}>
+                  {renderCard(r)}
+                </Col>
+              ))}
+            </Row>
+          ) : (
+            <Card styles={{ body: { padding: 0 } }} style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, overflow: 'hidden' }}>
+              <ProTable<ReportItem>
+                rowKey="id"
+                columns={columns}
+                dataSource={filtered}
+                search={false}
+                options={{ reload: false, density: false, setting: false }}
+                toolBarRender={false}
+                scroll={{ x: 'max-content' }}
+                pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 个报表` }}
+              />
+            </Card>
+          )}
+        </>
       )}
 
       {/* 新建报表 */}

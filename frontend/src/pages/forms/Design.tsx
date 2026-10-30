@@ -1,15 +1,26 @@
-/** 表单设计器：三栏布局（左侧字段组件面板 / 中间画布 / 右侧属性面板） */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+/**
+ * 表单设计器：三栏布局（左侧字段组件面板 / 中间画布 / 右侧属性面板）
+ *
+ * V4.1 布局修复要点：
+ *  1. 不再使用 calc(100vh - 固定px) —— 顶部多了多标签页导航条（TabsBar）后固定值必然算错。
+ *     改为运行时量取工作区真实顶部位置，把「工作区高度」精确算成视口剩余高度，
+ *     因此页面本身不再产生纵向滚动条，滚动只发生在三栏内部。
+ *  2. 三栏等高（alignItems: stretch），左/右栏固定宽度、中栏 flex:1 + minWidth:0，
+ *     并给滚动容器加 scrollbar-gutter: stable，内容多少都不会让栏宽跳动。
+ *  3. 断点：<1280px 右栏折叠为抽屉；<768px 左右栏都折叠（字段抽屉 + 属性抽屉）。
+ */
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Button, Card, Checkbox, Divider, Drawer, Empty, Grid, Input, InputNumber,
-  Radio, Rate, Segmented, Select, Slider, Space, Spin, Switch, Tag, Tooltip, message,
+  Button, Card, Checkbox, Divider, Drawer, Empty, Input, InputNumber,
+  Modal, Radio, Rate, Segmented, Select, Slider, Space, Spin, Switch, Tag, Tooltip, message,
 } from 'antd';
 import {
-  ArrowDownOutlined, ArrowUpOutlined, CopyOutlined, DeleteOutlined, EyeOutlined,
-  LeftOutlined, LinkOutlined, PlusOutlined, SaveOutlined,
+  AppstoreOutlined, ArrowDownOutlined, ArrowUpOutlined, CopyOutlined, DeleteOutlined,
+  EyeOutlined, LeftOutlined, LinkOutlined, PlusOutlined, SaveOutlined, SettingOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
+import { NEUTRAL, PALETTE } from '@/theme';
 import { copyText } from '@/utils';
 import { formsApi, publicFormUrl } from '@/api/forms';
 import type { FormDetail, FormField, FormMeta, FormSettings } from '@/api/forms';
@@ -18,21 +29,98 @@ import {
   hasOptions, isLayoutType, isNumericType, normalizeFieldList, typeIcon, typeName, widthToSpan,
 } from './fieldTypes';
 
-const { useBreakpoint } = Grid;
+/** 布局断点：右栏在 <1280 折叠为抽屉，左右两侧在 <768 全部折叠 */
+const NARROW_WIDTH = 1280;
+const MOBILE_WIDTH = 768;
 
-/** 调色板（契约唯一允许的 13 色） */
+/** 左栏 / 右栏固定宽度（px），内容多少都不变 */
+const LEFT_RAIL_WIDTH = 208;
+const RIGHT_RAIL_WIDTH = 320;
+
+/** 视口宽度：自带 resize 监听，首帧就能拿到真实值（避免 useBreakpoint 首帧空对象导致的布局闪跳） */
+function useViewportWidth(): number {
+  const [width, setWidth] = useState<number>(() =>
+    typeof window === 'undefined' ? 1440 : window.innerWidth
+  );
+  useEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    onResize();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
+  return width;
+}
+
+/**
+ * 计算「工作区」应有的高度：视口高度 - 工作区顶部真实位置 - 底部留白。
+ *
+ * 用运行时量取替代 calc(100vh - Npx)，所以 Header / TabsBar / 标题行高度怎么变都不会算错；
+ * 量到的高度让整页高度正好等于视口，页面因此没有纵向滚动条，滚动被限制在各栏内部。
+ */
+function useWorkspaceHeight(
+  ref: React.RefObject<HTMLDivElement>,
+  bottomGap: number,
+  recalcKey: string
+): number {
+  const [height, setHeight] = useState(0);
+  useLayoutEffect(() => {
+    let raf = 0;
+    const measure = () => {
+      const el = ref.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top;
+      const viewportH = window.visualViewport?.height || window.innerHeight;
+      // 下限只防止极端矮视口下算出 0/负数；高度不够时让三栏内部滚动，而不是把页面撑出滚动条
+      const next = Math.max(120, Math.floor(viewportH - top - bottomGap));
+      setHeight((prev) => (prev === next ? prev : next));
+    };
+    const schedule = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(measure);
+    };
+    // 布局阶段先同步量一次，避免首帧用占位 minHeight 造成的闪跳
+    measure();
+    schedule();
+    // 标题行/字体/标签栏可能异步撑开，补两次测量兜底
+    const t1 = window.setTimeout(measure, 120);
+    const t2 = window.setTimeout(measure, 480);
+    window.addEventListener('resize', schedule);
+    window.addEventListener('orientationchange', schedule);
+    window.visualViewport?.addEventListener('resize', schedule);
+    // 标签页导航条 / 标题行高度若异步变化（字体加载、标签换行），顶部位置会平移，这里跟着重量
+    const parent = ref.current?.parentElement;
+    const ro = parent && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null;
+    if (ro && parent) ro.observe(parent);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(t1);
+      window.clearTimeout(t2);
+      window.removeEventListener('resize', schedule);
+      window.removeEventListener('orientationchange', schedule);
+      window.visualViewport?.removeEventListener('resize', schedule);
+      ro?.disconnect();
+    };
+  }, [ref, bottomGap, recalcKey]);
+  return height;
+}
+
+/** 调色板：全部取自 @/theme 令牌（V4.1 禁止写死旧色值） */
 const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  deep: '#003378',
-  cyan: '#45B4FF',
-  light: '#73DBFF',
-  green: '#A2D73C',
-  orange: '#EC673C',
-  red: '#E86161',
-  yellow: '#FFC000',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
+  primary: PALETTE.primary,
+  blue: PALETTE.primaryDeep,
+  deep: NEUTRAL.text,
+  cyan: PALETTE.cyan,
+  light: PALETTE.cyan,
+  green: PALETTE.green,
+  orange: PALETTE.orange,
+  red: PALETTE.red,
+  yellow: PALETTE.yellow,
+  gray: NEUTRAL.textTertiary,
+  line: NEUTRAL.border,
 };
 
 /** 拖拽载荷 */
@@ -118,7 +206,7 @@ function FieldControl({ field, interactive = false }: { field: FormField; intera
         <div
           style={{
             border: `1px dashed ${C.line}`, borderRadius: 8, padding: '18px 12px',
-            textAlign: 'center', color: C.gray, fontSize: 12.5, background: '#FFFFFF',
+            textAlign: 'center', color: C.gray, fontSize: 12.5, background: NEUTRAL.surface,
           }}
         >
           {field.type === 'image' ? '点击上传图片' : '点击上传附件'}
@@ -153,8 +241,12 @@ function FieldControl({ field, interactive = false }: { field: FormField; intera
 export default function FormDesignPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const screens = useBreakpoint();
-  const isMobile = !screens.md;
+  const viewportWidth = useViewportWidth();
+  const isMobile = viewportWidth < MOBILE_WIDTH;
+  const isNarrow = viewportWidth < NARROW_WIDTH;
+
+  /** 工作区（三栏容器）：高度由运行时量取，精确填满标题行以下的剩余视口 */
+  const workspaceRef = useRef<HTMLDivElement>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -171,8 +263,16 @@ export default function FormDesignPage() {
   const [panel, setPanel] = useState<'field' | 'form'>('form');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [propOpen, setPropOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const dragRef = useRef<DragPayload>(null);
+
+  const workspaceHeight = useWorkspaceHeight(
+    workspaceRef,
+    isMobile ? 12 : 20,
+    // 切换断点或数据加载完成（工作区首次挂载）时都要重新量取
+    `${isMobile ? 'm' : 'd'}-${isNarrow ? 'n' : 'w'}-${loading ? 'loading' : detail ? detail.id : 'empty'}`
+  );
 
   /* ---------- 加载 ---------- */
   useEffect(() => {
@@ -347,7 +447,7 @@ export default function FormDesignPage() {
     <Space orientation="vertical" size={12} style={{ width: '100%' }}>
       <div>
         <div style={{ fontSize: 12, color: C.gray, marginBottom: 4 }}>字段类型</div>
-        <Tag style={{ color: C.primary, background: '#FFFFFF', borderColor: C.primary }}>
+        <Tag style={{ color: C.primary, background: NEUTRAL.surface, borderColor: C.primary }}>
           {typeIcon(field.type, meta)} {typeName(field.type, meta)}
         </Tag>
       </div>
@@ -610,7 +710,7 @@ export default function FormDesignPage() {
         </div>
         <div>
           <div style={{ fontSize: 12, color: C.gray, marginBottom: 4 }}>表单类型</div>
-          <Tag style={{ color: C.deep, background: '#FFFFFF', borderColor: C.line }}>
+          <Tag style={{ color: C.deep, background: NEUTRAL.surface, borderColor: C.line }}>
             {FORM_TYPE_NAME[formType] || formType}
           </Tag>
           <span style={{ fontSize: 12, color: C.gray, marginLeft: 8 }}>可在「表单中心」修改</span>
@@ -726,49 +826,67 @@ export default function FormDesignPage() {
     );
   };
 
-  const propPanel = (
-    <div>
-      <Segmented
-        block
-        value={panel}
-        onChange={(v) => setPanel(v as 'field' | 'form')}
-        options={[
-          { value: 'field', label: '字段属性' },
-          { value: 'form', label: '表单设置' },
-        ]}
-        style={{ marginBottom: 12 }}
-      />
-      {panel === 'field' ? (
-        selected ? (
-          renderFieldProps(selected)
-        ) : (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={<span style={{ fontSize: 12.5, color: C.gray }}>点击画布中的字段编辑属性</span>}
-          />
-        )
+  /* ---------- 右侧属性面板：分段器常驻，内容区独立滚动 ---------- */
+  const propSegmented = (
+    <Segmented
+      block
+      value={panel}
+      onChange={(v) => setPanel(v as 'field' | 'form')}
+      options={[
+        { value: 'field', label: '字段属性' },
+        { value: 'form', label: '表单设置' },
+      ]}
+      style={{ marginBottom: 12, flexShrink: 0 }}
+    />
+  );
+
+  const propContent =
+    panel === 'field' ? (
+      selected ? (
+        renderFieldProps(selected)
       ) : (
-        renderFormSettings()
-      )}
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description={<span style={{ fontSize: 12.5, color: C.gray }}>点击画布中的字段编辑属性</span>}
+        />
+      )
+    ) : (
+      renderFormSettings()
+    );
+
+  const propPanel = (
+    <div
+      data-role="prop-panel"
+      style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, height: '100%' }}
+    >
+      {propSegmented}
+      <div
+        data-role="prop-scroll"
+        style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', scrollbarGutter: 'stable', paddingBottom: 4 }}
+      >
+        {propContent}
+      </div>
     </div>
   );
 
-  /* ---------- 画布 ---------- */
+  /* ---------- 画布（滚动由外层容器负责） ---------- */
   const canvas = (
     <div
+      data-role="design-canvas"
       style={{
-        background: '#FFFFFF', border: `1px solid ${C.line}`, borderRadius: 12,
-        padding: isMobile ? 10 : 16, minHeight: 420,
+        background: NEUTRAL.surface, border: `1px solid ${C.line}`, borderRadius: 12,
+        padding: isMobile ? 10 : 16, minHeight: '100%',
       }}
     >
       <div
         style={{
-          background: 'linear-gradient(135deg, rgba(45,111,228,.06), rgba(115,219,255,.14))',
+          background: NEUTRAL.surfaceAlt,
+          border: `1px solid ${NEUTRAL.borderSubtle}`,
           borderRadius: 10, padding: '14px 16px', marginBottom: 12,
         }}
       >
-        <div style={{ fontSize: 16, fontWeight: 700, color: C.deep }}>{name || '未命名表单'}</div>
-        {description && <div style={{ fontSize: 12.5, color: 'rgba(0,51,120,.6)', marginTop: 4 }}>{description}</div>}
+        <div style={{ fontSize: 16, fontWeight: 700, color: NEUTRAL.text }}>{name || '未命名表单'}</div>
+        {description && <div style={{ fontSize: 12.5, color: NEUTRAL.textSecondary, marginTop: 4 }}>{description}</div>}
         <div style={{ fontSize: 12, color: C.gray, marginTop: 6 }}>
           {fields.length} 个字段 · {FORM_TYPE_NAME[formType] || formType}
         </div>
@@ -789,7 +907,7 @@ export default function FormDesignPage() {
         {fields.map((field, i) => (
           <div
             key={field.key}
-            style={{ width: `${(widthToSpan(field.width) / 24) * 100}%`, minWidth: isMobile ? '100%' : 220, padding: 4, boxSizing: 'border-box' }}
+            style={{ width: `${(widthToSpan(field.width) / 24) * 100}%`, minWidth: isMobile ? '100%' : 220, maxWidth: '100%', padding: 4, boxSizing: 'border-box' }}
           >
             <div
               draggable
@@ -814,7 +932,8 @@ export default function FormDesignPage() {
               onClick={() => {
                 setSelectedKey(field.key);
                 setPanel('field');
-                if (isMobile) setPropOpen(true);
+                // 右栏折叠（平板/手机）时，选中字段直接弹出属性抽屉
+                if (isNarrow) setPropOpen(true);
               }}
               style={{
                 border:
@@ -825,20 +944,20 @@ export default function FormDesignPage() {
                       : `1px dashed ${C.line}`,
                 borderRadius: 10,
                 padding: isLayoutType(field.type) ? '6px 10px' : '10px 12px',
-                background: overIndex === i ? 'rgba(54,135,255,.04)' : '#FFFFFF',
+                background: overIndex === i ? NEUTRAL.surfaceSunken : NEUTRAL.surface,
                 cursor: 'move',
-                boxShadow: selectedKey === field.key ? '0 0 0 3px rgba(54,135,255,.12)' : 'none',
+                boxShadow: selectedKey === field.key ? `0 0 0 3px ${PALETTE.primarySoft}` : 'none',
                 position: 'relative',
                 transition: 'border-color .15s, box-shadow .15s',
               }}
             >
               {!isLayoutType(field.type) && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontSize: 13, color: C.deep }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4, marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, color: C.deep, flex: '1 1 auto', minWidth: 0, wordBreak: 'break-word' }}>
                     {field.label}
                     {field.required && <span style={{ color: C.red, marginLeft: 3 }}>*</span>}
                   </span>
-                  <span style={{ display: 'flex', gap: 2 }} onClick={(e) => e.stopPropagation()}>
+                  <span style={{ display: 'flex', gap: 2, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
                     <Tooltip title="上移">
                       <Button type="text" size="small" icon={<ArrowUpOutlined />} onClick={() => moveField(i, -1)} />
                     </Tooltip>
@@ -859,7 +978,13 @@ export default function FormDesignPage() {
               {field.type === 'section' && (
                 <div style={{ fontWeight: 700, fontSize: 14, color: C.deep }}>{field.label}</div>
               )}
-              {!isLayoutType(field.type) && <FieldControl field={field} />}
+              {!isLayoutType(field.type) && (
+                // 控件本身只作预览（disabled），pointerEvents:none 让点击穿透到整卡，
+                // 否则 disabled 控件会吞掉 click，点字段主体选不中字段（属性面板也就出不来）
+                <div style={{ pointerEvents: 'none' }} data-role="canvas-preview-control">
+                  <FieldControl field={field} />
+                </div>
+              )}
               {field.hint && !isLayoutType(field.type) && (
                 <div style={{ fontSize: 11.5, color: C.gray, marginTop: 4 }}>{field.hint}</div>
               )}
@@ -887,7 +1012,7 @@ export default function FormDesignPage() {
           textAlign: 'center',
           fontSize: 12.5,
           color: overIndex === fields.length ? C.primary : C.gray,
-          background: overIndex === fields.length ? 'rgba(54,135,255,.04)' : 'transparent',
+          background: overIndex === fields.length ? NEUTRAL.surfaceSunken : 'transparent',
         }}
       >
         拖拽字段到此处添加到末尾
@@ -895,9 +1020,9 @@ export default function FormDesignPage() {
     </div>
   );
 
-  /* ---------- 左侧字段面板 ---------- */
+  /* ---------- 左侧字段面板（滚动交给外层栏，自身不再写死高度） ---------- */
   const palette = (
-    <div style={{ maxHeight: isMobile ? 150 : 'calc(100vh - 220px)', overflow: 'auto' }}>
+    <div data-role="field-palette">
       {groups.map((g) => (
         <div key={g.group} style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 11.5, color: C.gray, margin: '0 0 6px 2px' }}>{g.group}</div>
@@ -914,7 +1039,11 @@ export default function FormDesignPage() {
                 onDragEnd={() => {
                   dragRef.current = null;
                 }}
-                onClick={() => addField(t.key)}
+                onClick={() => {
+                  addField(t.key);
+                  // 手机端面板在抽屉里，点完收起，直接看到画布
+                  if (isMobile) setPaletteOpen(false);
+                }}
                 title={`${t.name}｜点击添加，或拖到画布`}
                 style={{
                   width: isMobile ? 'auto' : '100%',
@@ -927,7 +1056,7 @@ export default function FormDesignPage() {
                   fontSize: 12.5,
                   color: C.deep,
                   cursor: 'grab',
-                  background: '#FFFFFF',
+                  background: NEUTRAL.surface,
                   minHeight: 34,
                 }}
               >
@@ -961,83 +1090,175 @@ export default function FormDesignPage() {
 
   return (
     <Page
-      title={`表单设计 · ${name || detail.name}`}
-      subTitle={`${detail.code} · ${fields.length} 个字段${dirty ? ' · 有未保存修改' : ''}`}
-      extra={
-        <Space wrap size={8}>
-          <Button icon={<LeftOutlined />} onClick={() => navigate('/forms')}>
-            返回
-          </Button>
+      title={
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          表单设计
+          <span style={{ fontSize: 13.5, fontWeight: 600, color: NEUTRAL.textSecondary }}>
+            {name || detail.name}
+          </span>
+          {dirty && <Tag color="orange" style={{ marginInlineStart: 2 }}>未保存</Tag>}
+        </span>
+      }
+      actions={
+        <>
+          {isMobile && (
+            <Button icon={<AppstoreOutlined />} onClick={() => setPaletteOpen(true)}>
+              字段
+            </Button>
+          )}
+          {isNarrow && (
+            <Button
+              icon={<SettingOutlined />}
+              onClick={() => {
+                if (!selected) setPanel('form');
+                setPropOpen(true);
+              }}
+            >
+              {panel === 'field' ? '字段属性' : '表单设置'}
+            </Button>
+          )}
           <Button icon={<LinkOutlined />} onClick={copyLink}>
-            公开链接
+            {isMobile ? '' : '公开链接'}
           </Button>
           <Button icon={<EyeOutlined />} onClick={() => setPreviewOpen(true)}>
-            预览
+            {isMobile ? '' : '预览'}
           </Button>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>
             保存
           </Button>
-        </Space>
+        </>
+      }
+      extra={
+        <Button icon={<LeftOutlined />} onClick={() => navigate('/forms')}>
+          {isMobile ? '' : '返回表单中心'}
+        </Button>
       }
     >
-      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-        {/* 左：字段面板 */}
-        <Card
-          size="small"
-          title="字段组件"
-          style={{ width: isMobile ? '100%' : 208, flexShrink: 0 }}
-          styles={{ body: { padding: 10 } }}
-        >
-          {palette}
-        </Card>
-
-        {/* 中：画布 */}
-        <div style={{ flex: 1, minWidth: 0 }}>{canvas}</div>
-
-        {/* 右：属性面板 */}
+      {/*
+        工作区：高度 = 视口 - 顶部真实位置 - 底部留白（运行时量取）。
+        三栏等高，各自内部滚动；页面本身不产生滚动条。
+      */}
+      <div
+        ref={workspaceRef}
+        data-role="design-workspace"
+        style={{
+          display: 'flex',
+          gap: 12,
+          alignItems: 'stretch',
+          height: workspaceHeight ? `${workspaceHeight}px` : undefined,
+          minHeight: workspaceHeight ? undefined : 360,
+        }}
+      >
+        {/* 左：字段组件（<768 折叠为抽屉） */}
         {!isMobile && (
-          <Card
-            size="small"
-            title="属性"
-            style={{ width: 320, flexShrink: 0, maxHeight: 'calc(100vh - 180px)', overflow: 'auto' }}
-            styles={{ body: { padding: 12 } }}
+          <div
+            data-role="design-left"
+            style={{ width: LEFT_RAIL_WIDTH, flex: `0 0 ${LEFT_RAIL_WIDTH}px`, height: '100%', minWidth: 0 }}
           >
-            {propPanel}
-          </Card>
+            <Card
+              size="small"
+              title="字段组件"
+              style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+              styles={{
+                body: { padding: 10, flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', scrollbarGutter: 'stable' },
+              }}
+            >
+              {palette}
+            </Card>
+          </div>
+        )}
+
+        {/* 中：画布（独立滚动，宽度随窗口伸缩但不会被内容撑破） */}
+        <div
+          data-role="design-canvas-col"
+          style={{ flex: '1 1 0%', minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column' }}
+        >
+          <div
+            data-role="design-canvas-scroll"
+            style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', scrollbarGutter: 'stable' }}
+          >
+            {canvas}
+          </div>
+        </div>
+
+        {/* 右：属性面板（<1280 折叠为抽屉） */}
+        {!isNarrow && (
+          <div
+            data-role="design-right"
+            style={{ width: RIGHT_RAIL_WIDTH, flex: `0 0 ${RIGHT_RAIL_WIDTH}px`, height: '100%', minWidth: 0 }}
+          >
+            <Card
+              size="small"
+              title="属性"
+              style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+              styles={{
+                body: { padding: 12, flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
+              }}
+            >
+              {propPanel}
+            </Card>
+          </div>
         )}
       </div>
 
-      {/* 移动端属性抽屉 */}
-      {isMobile && (
+      {/* 属性抽屉：<1280 用右侧抽屉，<768 用底部抽屉 */}
+      {isNarrow && (
         <Drawer
           title={panel === 'field' ? '字段属性' : '表单设置'}
-          placement="bottom"
-          size="78%"
+          placement={isMobile ? 'bottom' : 'right'}
+          size={isMobile ? '82%' : 360}
           open={propOpen}
           onClose={() => setPropOpen(false)}
-          styles={{ body: { padding: 12 } }}
+          styles={{
+            body: { padding: 12, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' },
+          }}
         >
           {propPanel}
         </Drawer>
       )}
 
-      {/* 预览 */}
-      <Drawer
+      {/* 移动端字段组件抽屉 */}
+      {isMobile && (
+        <Drawer
+          title="字段组件"
+          placement="left"
+          size={288}
+          open={paletteOpen}
+          onClose={() => setPaletteOpen(false)}
+          styles={{ body: { padding: 10 } }}
+        >
+          {palette}
+        </Drawer>
+      )}
+
+      {/* 预览：承载表单内容 → Modal（V4.1 禁止 Drawer 承载业务内容） */}
+      <Modal
         title="表单预览"
-        placement="right"
-        size={isMobile ? '100%' : 460}
         open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
+        onCancel={() => setPreviewOpen(false)}
+        footer={
+          <Space>
+            <Button icon={<LinkOutlined />} onClick={copyLink}>
+              复制公开填写链接
+            </Button>
+            <Button type="primary" onClick={() => setPreviewOpen(false)}>
+              关闭
+            </Button>
+          </Space>
+        }
+        width={isMobile ? '94%' : 520}
+        destroyOnHidden
+        styles={{ body: { maxHeight: '68vh', overflowY: 'auto', paddingRight: 4 } }}
       >
         <div
           style={{
-            maxWidth: 375, margin: '0 auto', background: '#FFFFFF', border: `1px solid ${C.line}`,
+            maxWidth: 375, margin: '0 auto', background: NEUTRAL.surface, border: `1px solid ${C.line}`,
             borderRadius: 16, padding: 16,
           }}
         >
           <div style={{ fontSize: 17, fontWeight: 700, color: C.deep }}>{name || '未命名表单'}</div>
           {description && (
-            <div style={{ fontSize: 12.5, color: 'rgba(0,51,120,.6)', marginTop: 6 }}>{description}</div>
+            <div style={{ fontSize: 12.5, color: NEUTRAL.textSecondary, marginTop: 6 }}>{description}</div>
           )}
           <Divider style={{ margin: '12px 0' }} />
           {fields.length === 0 ? (
@@ -1070,12 +1291,7 @@ export default function FormDesignPage() {
             </Space>
           )}
         </div>
-        <div style={{ marginTop: 16, textAlign: 'center' }}>
-          <Button icon={<LinkOutlined />} onClick={copyLink}>
-            复制公开填写链接
-          </Button>
-        </div>
-      </Drawer>
+      </Modal>
     </Page>
   );
 }

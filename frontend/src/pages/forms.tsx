@@ -1,35 +1,29 @@
-/** 表单中心：列表 / 新建 / 编辑 / 发布 / 复制公开链接（含移动端适配） */
+/** 表单中心（V4.1 页面规范）：列表 / 新建 / 编辑 / 发布 / 复制公开链接（含移动端适配）
+ *
+ * 结构：本页名称 + 搜索区 + 新建 → 子标签页（表单类型）→ 数据卡片 → 表单列表
+ */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
-  Button, Card, Col, Dropdown, Empty, Form, Grid, Input, Modal, Popconfirm,
-  Row, Select, Space, Statistic, Switch, Tag, message,
+  Alert, Button, Card, Col, Dropdown, Empty, Form, Grid, Input, Modal, Popconfirm,
+  Row, Select, Space, Switch, Tabs, Tag, message,
 } from 'antd';
 import {
-  CopyOutlined, DeleteOutlined, EditOutlined, FormOutlined, LinkOutlined,
+  CopyOutlined, DeleteOutlined, EditOutlined, LinkOutlined,
   MoreOutlined, PlusOutlined, ReloadOutlined, TableOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
+import { usePermission } from '@/stores/app';
+import { NEUTRAL, PALETTE } from '@/theme';
 import { api } from '@/api/client';
 import { formsApi, publicFormUrl } from '@/api/forms';
 import type { FormItem } from '@/api/forms';
-import { copyText, fmtTime } from '@/utils';
+import { copyText, fmtNum, fmtTime } from '@/utils';
 
 const { useBreakpoint } = Grid;
-
-/** 调色板（契约唯一允许的 13 色） */
-const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  deep: '#003378',
-  cyan: '#45B4FF',
-  green: '#A2D73C',
-  orange: '#EC673C',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
 
 const FORM_TYPE_NAME: Record<string, string> = {
   fill: '填写表单',
@@ -37,9 +31,9 @@ const FORM_TYPE_NAME: Record<string, string> = {
   exam: '考试表单',
 };
 const FORM_TYPE_COLOR: Record<string, string> = {
-  fill: C.primary,
-  flow: C.orange,
-  exam: C.green,
+  fill: PALETTE.primary,
+  flow: PALETTE.orange,
+  exam: PALETTE.green,
 };
 
 interface FormValues {
@@ -58,15 +52,27 @@ interface Stats {
   today: number;
 }
 
+/** 是否最近 7 天内创建 */
+function isThisWeek(v?: string | null): boolean {
+  if (!v) return false;
+  const t = new Date(v).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t <= 7 * 24 * 3600 * 1000;
+}
+
 export default function FormsPage() {
   const navigate = useNavigate();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
+  const can = usePermission();
+  const canWrite = can('form:write');
 
   const [rows, setRows] = useState<FormItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [keyword, setKeyword] = useState('');
+  const [typeTab, setTypeTab] = useState('all');
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<FormItem | null>(null);
@@ -76,12 +82,13 @@ export default function FormsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const res = await formsApi.list(keyword);
       setRows(res.list || []);
       setStats(res.stats || null);
-    } catch {
-      /* 错误已由 client 统一提示 */
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '表单列表加载失败');
     } finally {
       setLoading(false);
     }
@@ -215,6 +222,46 @@ export default function FormsPage() {
     }
   };
 
+  /* ---------- 子标签页：按表单类型过滤 ---------- */
+  const typeCounts = useMemo(() => {
+    const m: Record<string, number> = { all: rows.length };
+    rows.forEach((r) => {
+      const t = r.formType || 'fill';
+      m[t] = (m[t] || 0) + 1;
+    });
+    return m;
+  }, [rows]);
+
+  const subTabs = (
+    <Tabs
+      activeKey={typeTab}
+      onChange={setTypeTab}
+      size={isMobile ? 'small' : 'middle'}
+      items={[
+        { key: 'all', label: `全部（${typeCounts.all || 0}）` },
+        { key: 'fill', label: `填写表单（${typeCounts.fill || 0}）` },
+        { key: 'flow', label: `流程表单（${typeCounts.flow || 0}）` },
+        { key: 'exam', label: `考试表单（${typeCounts.exam || 0}）` },
+      ]}
+    />
+  );
+
+  const visibleRows = useMemo(
+    () => (typeTab === 'all' ? rows : rows.filter((r) => (r.formType || 'fill') === typeTab)),
+    [rows, typeTab],
+  );
+
+  /* ---------- 数据卡片（就地统计，不新增接口） ---------- */
+  const statItems = useMemo<StatCardItem[]>(() => {
+    const weekNew = rows.filter((r) => isThisWeek(r.createdAt)).length;
+    return [
+      { key: 'forms', label: '表单总数', value: fmtNum(stats?.forms ?? rows.length), suffix: '个', color: PALETTE.primary },
+      { key: 'active', label: '已发布', value: fmtNum(stats?.active ?? 0), suffix: '个', color: PALETTE.green, hint: stats?.forms ? `占比 ${Math.round(((stats.active || 0) / stats.forms) * 100)}%` : undefined },
+      { key: 'records', label: '收集数据', value: fmtNum(stats?.records ?? 0), suffix: '条', color: PALETTE.cyan, hint: `今日提交 ${fmtNum(stats?.today ?? 0)}` },
+      { key: 'week', label: '本周新增', value: fmtNum(weekNew), suffix: '个', color: PALETTE.orange, hint: '按创建时间统计' },
+    ];
+  }, [stats, rows]);
+
   /* ---------- 表格列 ---------- */
   const columns: ProColumns<FormItem>[] = useMemo(
     () => [
@@ -223,15 +270,16 @@ export default function FormsPage() {
         dataIndex: 'name',
         width: 240,
         fixed: 'left',
+        sorter: (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
         render: (_, record) => (
           <div style={{ minWidth: 0 }}>
             <a
               onClick={() => navigate(`/forms/${record.id}/design`)}
-              style={{ fontWeight: 600, color: C.deep }}
+              style={{ fontWeight: 600, color: NEUTRAL.text }}
             >
               {record.name}
             </a>
-            <div style={{ fontSize: 12, color: C.gray, marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, marginTop: 2 }}>
               {record.code}
               {record.description ? ` · ${record.description}` : ''}
             </div>
@@ -244,14 +292,9 @@ export default function FormsPage() {
         width: 110,
         render: (_, record) => {
           const t = record.formType || 'fill';
+          const c = FORM_TYPE_COLOR[t] || PALETTE.primary;
           return (
-            <Tag
-              style={{
-                color: FORM_TYPE_COLOR[t] || C.primary,
-                background: '#FFFFFF',
-                borderColor: FORM_TYPE_COLOR[t] || C.primary,
-              }}
-            >
+            <Tag style={{ color: c, background: NEUTRAL.surface, borderColor: c, margin: 0 }}>
               {FORM_TYPE_NAME[t] || record.formTypeName || t}
             </Tag>
           );
@@ -262,19 +305,19 @@ export default function FormsPage() {
         dataIndex: 'projectName',
         width: 160,
         ellipsis: true,
-        render: (_, record) => record.projectName || <span style={{ color: C.gray }}>—</span>,
+        render: (_, record) => record.projectName || <span style={{ color: NEUTRAL.textQuaternary }}>—</span>,
       },
-      { title: '字段数', dataIndex: 'fieldCount', width: 80, align: 'right' },
-      { title: '提交数', dataIndex: 'submitCount', width: 90, align: 'right' },
+      { title: '字段数', dataIndex: 'fieldCount', width: 80, align: 'right', sorter: (a, b) => (a.fieldCount ?? 0) - (b.fieldCount ?? 0) },
+      { title: '提交数', dataIndex: 'submitCount', width: 90, align: 'right', sorter: (a, b) => (a.submitCount ?? 0) - (b.submitCount ?? 0) },
       {
         title: '公开填写',
         dataIndex: 'allowPublic',
         width: 100,
         render: (_, record) =>
           record.allowPublic ? (
-            <Tag style={{ color: C.green, background: '#FFFFFF', borderColor: C.green }}>已开启</Tag>
+            <Tag style={{ color: PALETTE.green, background: NEUTRAL.surface, borderColor: PALETTE.green, margin: 0 }}>已开启</Tag>
           ) : (
-            <Tag style={{ color: C.gray, background: '#FFFFFF', borderColor: C.line }}>未开启</Tag>
+            <Tag style={{ color: NEUTRAL.textTertiary, background: NEUTRAL.surface, borderColor: NEUTRAL.border, margin: 0 }}>未开启</Tag>
           ),
       },
       {
@@ -288,9 +331,10 @@ export default function FormsPage() {
               checked={record.status === 1}
               checkedChildren="发布"
               unCheckedChildren="停用"
+              disabled={!canWrite}
               onChange={(checked) => togglePublish(record, checked)}
             />
-            <span style={{ fontSize: 12, color: record.status === 1 ? C.green : C.gray }}>
+            <span style={{ fontSize: 12, color: record.status === 1 ? PALETTE.green : NEUTRAL.textTertiary }}>
               {record.status === 1 ? '已发布' : '已停用'}
             </span>
           </Space>
@@ -300,8 +344,9 @@ export default function FormsPage() {
         title: '更新时间',
         dataIndex: 'updatedAt',
         width: 165,
+        sorter: (a, b) => String(a.updatedAt || a.createdAt || '').localeCompare(String(b.updatedAt || b.createdAt || '')),
         render: (_, record) => (
-          <span style={{ fontSize: 12.5, color: C.gray }}>
+          <span style={{ fontSize: 12.5, color: NEUTRAL.textTertiary }}>
             {fmtTime(record.updatedAt || record.createdAt)}
           </span>
         ),
@@ -326,10 +371,10 @@ export default function FormsPage() {
             trigger={['click']}
             menu={{
               items: [
-                { key: 'edit', icon: <EditOutlined />, label: '编辑信息' },
-                { key: 'regen', icon: <CopyOutlined />, label: '重置公开链接' },
+                { key: 'edit', icon: <EditOutlined />, label: '编辑信息', disabled: !canWrite },
+                { key: 'regen', icon: <CopyOutlined />, label: '重置公开链接', disabled: !canWrite },
                 { type: 'divider' as const },
-                { key: 'delete', icon: <DeleteOutlined />, label: '删除表单', danger: true },
+                { key: 'delete', icon: <DeleteOutlined />, label: '删除表单', danger: true, disabled: !canWrite },
               ],
               onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
@@ -355,34 +400,27 @@ export default function FormsPage() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [navigate]
+    [navigate, canWrite]
   );
-
-  const statCards = [
-    { title: '表单总数', value: stats?.forms ?? 0, color: C.primary, icon: <FormOutlined /> },
-    { title: '已发布', value: stats?.active ?? 0, color: C.green, icon: <LinkOutlined /> },
-    { title: '提交记录', value: stats?.records ?? 0, color: C.cyan, icon: <TableOutlined /> },
-    { title: '今日提交', value: stats?.today ?? 0, color: C.orange, icon: <ReloadOutlined /> },
-  ];
 
   /* ---------- 移动端卡片列表 ---------- */
   const mobileList = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {rows.length === 0 ? (
+      {visibleRows.length === 0 ? (
         <Empty description="还没有表单，点击右上角新建" />
       ) : (
-        rows.map((record) => (
+        visibleRows.map((record) => (
           <Card key={record.id} size="small" styles={{ body: { padding: 14 } }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 600, color: C.deep, fontSize: 15 }}>{record.name}</div>
-                <div style={{ fontSize: 12, color: C.gray, marginTop: 2 }}>{record.code}</div>
+                <div style={{ fontWeight: 600, color: NEUTRAL.text, fontSize: 15 }}>{record.name}</div>
+                <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, marginTop: 2 }}>{record.code}</div>
               </div>
               <Tag
                 style={{
-                  color: record.status === 1 ? C.green : C.gray,
-                  background: '#FFFFFF',
-                  borderColor: record.status === 1 ? C.green : C.line,
+                  color: record.status === 1 ? PALETTE.green : NEUTRAL.textTertiary,
+                  background: NEUTRAL.surface,
+                  borderColor: record.status === 1 ? PALETTE.green : NEUTRAL.border,
                   flexShrink: 0,
                   marginInlineEnd: 0,
                 }}
@@ -393,24 +431,26 @@ export default function FormsPage() {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
               <Tag
                 style={{
-                  color: FORM_TYPE_COLOR[record.formType || 'fill'] || C.primary,
-                  background: '#FFFFFF',
-                  borderColor: C.line,
+                  color: FORM_TYPE_COLOR[record.formType || 'fill'] || PALETTE.primary,
+                  background: NEUTRAL.surface,
+                  borderColor: NEUTRAL.border,
+                  margin: 0,
                 }}
               >
                 {FORM_TYPE_NAME[record.formType || 'fill'] || record.formTypeName}
               </Tag>
-              <Tag style={{ color: C.gray, background: '#FFFFFF', borderColor: C.line }}>
+              <Tag style={{ color: NEUTRAL.textSecondary, background: NEUTRAL.surface, borderColor: NEUTRAL.border, margin: 0 }}>
                 {record.fieldCount ?? 0} 字段
               </Tag>
-              <Tag style={{ color: C.gray, background: '#FFFFFF', borderColor: C.line }}>
+              <Tag style={{ color: NEUTRAL.textSecondary, background: NEUTRAL.surface, borderColor: NEUTRAL.border, margin: 0 }}>
                 {record.submitCount ?? 0} 提交
               </Tag>
               <Tag
                 style={{
-                  color: record.allowPublic ? C.green : C.gray,
-                  background: '#FFFFFF',
-                  borderColor: record.allowPublic ? C.green : C.line,
+                  color: record.allowPublic ? PALETTE.green : NEUTRAL.textTertiary,
+                  background: NEUTRAL.surface,
+                  borderColor: record.allowPublic ? PALETTE.green : NEUTRAL.border,
+                  margin: 0,
                 }}
               >
                 {record.allowPublic ? '公开填写' : '仅内部'}
@@ -427,23 +467,25 @@ export default function FormsPage() {
                 链接
               </Button>
             </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <Button size="large" block onClick={() => openEdit(record)}>
-                编辑
-              </Button>
-              <Popconfirm
-                title="删除表单"
-                description="提交记录会一并删除"
-                okText="删除"
-                cancelText="取消"
-                okButtonProps={{ danger: true }}
-                onConfirm={() => remove(record)}
-              >
-                <Button size="large" block danger>
-                  删除
+            {canWrite && (
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <Button size="large" block onClick={() => openEdit(record)}>
+                  编辑
                 </Button>
-              </Popconfirm>
-            </div>
+                <Popconfirm
+                  title="删除表单"
+                  description="提交记录会一并删除"
+                  okText="删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => remove(record)}
+                >
+                  <Button size="large" block danger>
+                    删除
+                  </Button>
+                </Popconfirm>
+              </div>
+            )}
           </Card>
         ))
       )}
@@ -453,38 +495,39 @@ export default function FormsPage() {
   return (
     <Page
       title="表单中心"
-      subTitle="拖拽设计表单、收集数据、公开填写与分享"
-      extra={
-        <Space wrap size={8}>
-          <Input.Search
-            allowClear
-            placeholder="搜索表单名称 / 编码"
-            onSearch={(v) => setKeyword(v.trim())}
-            style={{ width: isMobile ? 160 : 240 }}
-          />
-          <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
-            刷新
-          </Button>
+      search={
+        <Input.Search
+          allowClear
+          placeholder="搜索表单名称 / 编码"
+          onSearch={(v) => setKeyword(v.trim())}
+          style={{ width: isMobile ? '100%' : 240 }}
+        />
+      }
+      actions={
+        canWrite ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
             新建表单
           </Button>
-        </Space>
+        ) : null
       }
+      extra={
+        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>
+          {isMobile ? '' : '刷新'}
+        </Button>
+      }
+      subTabs={subTabs}
+      stats={statItems}
     >
-      <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-        {statCards.map((s) => (
-          <Col key={s.title} xs={12} sm={12} md={6}>
-            <Card size="small" styles={{ body: { padding: isMobile ? 12 : 16 } }}>
-              <Statistic
-                title={<span style={{ fontSize: 12.5, color: C.gray }}>{s.title}</span>}
-                value={s.value}
-                styles={{ content: { color: s.color, fontSize: isMobile ? 20 : 24, fontWeight: 700 } }}
-                prefix={<span style={{ color: s.color, marginRight: 6 }}>{s.icon}</span>}
-              />
-            </Card>
-          </Col>
-        ))}
-      </Row>
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          title="加载失败"
+          description={error}
+          action={<Button size="small" icon={<ReloadOutlined />} onClick={load}>重试</Button>}
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
 
       {isMobile ? (
         mobileList
@@ -492,7 +535,7 @@ export default function FormsPage() {
         <ProTable<FormItem>
           rowKey="id"
           columns={columns}
-          dataSource={rows}
+          dataSource={visibleRows}
           loading={loading}
           search={false}
           options={false}
@@ -500,11 +543,12 @@ export default function FormsPage() {
           headerTitle="表单列表"
           toolBarRender={false}
           scroll={{ x: 1280 }}
-          pagination={{ pageSize: 10, showSizeChanger: false, showTotal: (t) => `共 ${t} 个表单` }}
+          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 个表单` }}
           locale={{ emptyText: <Empty description="还没有表单，点击右上角「新建表单」" /> }}
         />
       )}
 
+      {/* 新建 / 编辑：内容少 → Modal */}
       <Modal
         title={editing ? `编辑表单 · ${editing.name}` : '新建表单'}
         open={modalOpen}

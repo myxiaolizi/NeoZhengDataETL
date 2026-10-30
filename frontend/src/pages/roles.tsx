@@ -8,27 +8,29 @@ import {
   DeleteOutlined, InfoCircleOutlined, KeyOutlined, PlusOutlined, SaveOutlined, TeamOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore, usePermission } from '@/stores/app';
 import { createRole, deleteRole, listRoles, updateRole } from '@/api/users';
 import type { PermissionGroup, RoleRow } from '@/api/users';
+import { PALETTE, NEUTRAL } from '@/theme';
 
 const { Text } = Typography;
 const { useBreakpoint } = Grid;
 
-/** 调色板（仅使用 V4 契约允许的 13 色） */
+/** 语义色别名（基于 @/theme 令牌，供同域页面复用，保持命名兼容） */
 export const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  navy: '#003378',
-  cyan: '#45B4FF',
-  light: '#73DBFF',
-  green: '#A2D73C',
-  yellow: '#FFC000',
-  orange: '#EC673C',
-  red: '#E86161',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
+  primary: PALETTE.primary,
+  blue: PALETTE.primary,
+  navy: NEUTRAL.text,
+  cyan: PALETTE.cyan,
+  light: PALETTE.cyan,
+  green: PALETTE.green,
+  yellow: PALETTE.yellow,
+  orange: PALETTE.orange,
+  red: PALETTE.red,
+  gray: NEUTRAL.textTertiary,
+  line: NEUTRAL.border,
+} as const;
 
 /** 淡色标签样式：背景取主色 10% 透明度，不引入新色相 */
 export function softStyle(color: string): React.CSSProperties {
@@ -122,9 +124,11 @@ export function PermissionEditor({ groups, value, onChange, disabled }: Permissi
 export interface RoleManagerProps {
   /** 嵌入「用户管理」标签页时使用紧凑布局 */
   embedded?: boolean;
+  /** 角色/权限点数据回传（供上层页面计算统计卡片） */
+  onData?: (roles: RoleRow[], groups: PermissionGroup[]) => void;
 }
 
-export function RoleManager({ embedded = false }: RoleManagerProps) {
+export function RoleManager({ embedded = false, onData }: RoleManagerProps) {
   // 订阅 user：登录态就绪后需要重新计算权限（can 是稳定引用，单独订阅不会触发重渲染）
   const currentUser = useAppStore((s) => s.user);
   const can = usePermission();
@@ -170,6 +174,7 @@ export function RoleManager({ embedded = false }: RoleManagerProps) {
         setRoles(data.list);
         setGroups(data.groups);
         setAll(data.all);
+        if (onData) onData(data.list, data.groups);
         const targetId = preferId ?? activeRef.current;
         const target = data.list.find((r) => r.id === targetId) || data.list[0] || null;
         if (target) selectRole(target, data.all);
@@ -184,7 +189,7 @@ export function RoleManager({ embedded = false }: RoleManagerProps) {
         setLoading(false);
       }
     },
-    [selectRole]
+    [selectRole, onData]
   );
 
   useEffect(() => {
@@ -307,7 +312,7 @@ export function RoleManager({ embedded = false }: RoleManagerProps) {
                     padding: '9px 11px',
                     borderRadius: 8,
                     border: `1px solid ${on ? C.primary : C.line}`,
-                    background: on ? 'rgba(54,135,255,.06)' : '#FFFFFF',
+                    background: on ? NEUTRAL.surfaceSunken : NEUTRAL.surface,
                     transition: 'all .15s',
                   }}
                 >
@@ -320,7 +325,7 @@ export function RoleManager({ embedded = false }: RoleManagerProps) {
                     <span style={{ fontSize: 11.5, color: C.gray }}>
                       {r.permissions.includes('*') ? '全部权限' : `${r.permissions.length} 个权限点`}
                     </span>
-                    <span style={{ fontSize: 11.5, color: C.line }}>·</span>
+                    <span style={{ fontSize: 11.5, color: NEUTRAL.textQuaternary }}>·</span>
                     <span style={{ fontSize: 11.5, color: C.gray }}>{r.userCount ?? 0} 个用户</span>
                   </div>
                 </div>
@@ -523,28 +528,27 @@ export function RoleManager({ embedded = false }: RoleManagerProps) {
 /* ══════════════ 页面 ══════════════ */
 
 export default function RolesPage() {
-  const screens = useBreakpoint();
-  const isMobile = !screens.md;
+  const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [groups, setGroups] = useState<PermissionGroup[]>([]);
+
+  const onData = useCallback((r: RoleRow[], g: PermissionGroup[]) => {
+    setRoles(r);
+    setGroups(g);
+  }, []);
+
+  const stats = useMemo<StatCardItem[]>(() => {
+    const permCount = groups.reduce((s, g) => s + g.items.length, 0);
+    const assigned = roles.reduce((s, r) => s + (r.userCount ?? 0), 0);
+    return [
+      { key: 'roles', label: '角色数', value: roles.length, suffix: '个', color: PALETTE.primary },
+      { key: 'perms', label: '权限项数', value: permCount, suffix: '项', color: PALETTE.violet },
+      { key: 'assigned', label: '已分配用户', value: assigned, suffix: '人', color: PALETTE.green },
+    ];
+  }, [roles, groups]);
+
   return (
-    <Page
-      title="角色权限"
-      subTitle="角色决定用户可见的菜单与可执行的操作 · 权限变更即时生效"
-      extra={
-        <Tag style={{ ...softStyle(C.primary), padding: '3px 10px', fontSize: 12.5 }}>
-          权限点按模块分组
-        </Tag>
-      }
-    >
-      <div style={{ marginBottom: isMobile ? 10 : 14 }}>
-        <Alert
-          type="info"
-          showIcon
-          title="权限体系说明"
-          description="权限点采用「模块:操作」命名；内置角色（超级管理员/数据管理员/只读用户）不可删除，但除超级管理员外均可调整权限。"
-          style={{ borderColor: `${C.primary}33` }}
-        />
-      </div>
-      <RoleManager />
+    <Page title="角色权限" stats={stats}>
+      <RoleManager onData={onData} />
     </Page>
   );
 }

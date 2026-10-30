@@ -31,7 +31,10 @@ export const MENU_GROUPS = [
 export const ROUTES: RouteConf[] = [
   // ---------- 概览 ----------
   { path: '/dashboard', name: '数据概览', icon: 'DashboardOutlined', group: 'overview', component: 'dashboard', mobile: true },
-  { path: '/dashboard/crm', name: '客户签约看板', icon: 'FundOutlined', group: 'overview', component: 'dashboard/CrmDashboard', mobile: true },
+  // V5.0 中康智能体客户看板（独立看板页，支持移动端 + 二维码进入）
+  { path: '/dashboard/board', name: '中康智能体客户看板', icon: 'FundProjectionScreenOutlined', group: 'analysis', component: 'dashboard/Board', mobile: true },
+  // 客户签约看板 = 报表中心的内置看板：路由保留（页面可直接访问 / 可从报表中心进入），但不进左侧菜单
+  { path: '/dashboard/crm', name: '客户签约看板', icon: 'FundOutlined', group: 'analysis', hideInMenu: true, component: 'dashboard/CrmDashboard', mobile: true },
 
   // ---------- 数据接入 ----------
   { path: '/projects', name: '数据项目', icon: 'ProjectOutlined', permission: 'project:read', group: 'data', component: 'projects' },
@@ -43,6 +46,8 @@ export const ROUTES: RouteConf[] = [
   { path: '/integrations', name: '数据集成', icon: 'SwapOutlined', permission: 'integration:read', group: 'data', component: 'integrations' },
   { path: '/integrations/:id', name: '集成详情', permission: 'integration:read', hideInMenu: true, group: 'data', component: 'integrations/Detail' },
   { path: '/mail-push', name: '邮箱推送', icon: 'MailOutlined', permission: 'project:read', group: 'data', component: 'mail-push' },
+  /* V4.1：邮件推送「数据项目」改用独立新页面（不再用右侧抽屉） */
+  { path: '/mail-push/projects/:id', name: '数据项目详情', permission: 'project:read', hideInMenu: true, group: 'data', component: 'mail-push/Project', mobile: true },
 
   // ---------- 数据处理 ----------
   { path: '/flows', name: '处理流程', icon: 'NodeIndexOutlined', permission: 'flow:read', group: 'process', component: 'flows' },

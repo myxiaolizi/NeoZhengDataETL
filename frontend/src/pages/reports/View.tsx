@@ -1,7 +1,6 @@
 /**
- * 报表查看（大屏风格）
- * - 深色渐变 Hero：报表标题、编码、KPI、工具条（刷新 / 自动刷新 / 导出 / 分享 / 全屏）
- * - 图表主体 + 数据明细表；移动端单列，图表与表格自适应
+ * 报表查看（V4.1 统一规范：Page 顶部标题区 + stats 数据卡片 + @/theme 配色令牌）
+ * - 图表主体 + 报表信息 + 数据明细表；移动端单列，图表与表格自适应
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -29,10 +28,12 @@ import {
   FullscreenOutlined,
   ReloadOutlined,
   ShareAltOutlined,
-  ClockCircleOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
+import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
 import Chart from '@/components/Chart';
+import { NEUTRAL, PALETTE } from '@/theme';
 import { useAppStore } from '@/stores/app';
 import { copyText, fmtAgo, fmtNum, fmtTime } from '@/utils';
 import {
@@ -143,7 +144,7 @@ export default function ReportView() {
       ellipsis: true,
       width: 140,
       render: (v: unknown) => {
-        if (v === null || v === undefined) return <span style={{ color: '#B5B5B6' }}>-</span>;
+        if (v === null || v === undefined) return <span style={{ color: NEUTRAL.textQuaternary }}>-</span>;
         const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
         return <span title={s}>{s}</span>;
       },
@@ -176,99 +177,84 @@ export default function ReportView() {
     }
   };
 
-  const kpis = [
-    { label: '数据行数', value: rowCount, color: '#45B4FF' },
-    { label: '字段数', value: columns.length, color: '#FFC000' },
-    { label: '浏览次数', value: report?.viewCount || 0, color: '#A2D73C' },
-  ];
+  const statItems = useMemo<StatCardItem[]>(() => [
+    { key: 'rows', label: '数据行数', value: fmtNum(rowCount), suffix: '行', color: PALETTE.primary },
+    { key: 'cols', label: '字段数', value: fmtNum(columns.length), suffix: '个', color: PALETTE.cyan },
+    { key: 'views', label: '浏览次数', value: fmtNum(report?.viewCount || 0), suffix: '次', color: PALETTE.green },
+    {
+      key: 'updated',
+      label: '数据刷新',
+      value: updatedAt ? fmtTime(updatedAt, 'HH:mm:ss') : '-',
+      color: PALETTE.violet,
+      hint: report?.updatedAt ? `报表更新于 ${fmtAgo(report.updatedAt)}` : undefined,
+    },
+  ], [rowCount, columns.length, report?.viewCount, report?.updatedAt, updatedAt]);
 
   if (loading && !report) {
     return (
-      <Card style={{ border: '1px solid #DCDDDD', borderRadius: 12 }}>
-        <Skeleton active paragraph={{ rows: 10 }} />
-      </Card>
+      <Page title="报表查看">
+        <Card style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12 }}>
+          <Skeleton active paragraph={{ rows: 10 }} />
+        </Card>
+      </Page>
     );
   }
 
   if (!report) {
     return (
-      <Alert
-        type="error"
-        showIcon
-        message="报表加载失败"
-        description={runErr || '报表不存在，或当前账号没有查看权限'}
-        action={
-          <Button size="small" onClick={() => navigate('/reports')}>
+      <Page
+        title="报表查看"
+        actions={
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/reports')}>
             返回报表中心
           </Button>
         }
-      />
+      >
+        <Alert
+          type="error"
+          showIcon
+          message="报表加载失败"
+          description={runErr || '报表不存在，或当前账号没有查看权限'}
+          action={
+            <Button size="small" onClick={() => navigate('/reports')}>
+              返回报表中心
+            </Button>
+          }
+        />
+      </Page>
     );
   }
 
   return (
-    <div ref={wrapRef} style={{ margin: isMobile ? -12 : -20, background: '#FFFFFF', minHeight: '100%' }}>
-      {/* ── 大屏 Hero ── */}
-      <div
-        style={{
-          background: 'linear-gradient(135deg, #003378 0%, #2D6FE4 58%, #3687FF 100%)',
-          color: '#FFFFFF',
-          padding: isMobile ? '14px 14px 18px' : '20px 24px 24px',
-          borderRadius: 0,
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: isMobile ? 'column' : 'row',
-            alignItems: isMobile ? 'stretch' : 'flex-start',
-            justifyContent: 'space-between',
-            gap: 12,
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <Space size={8} wrap style={{ marginBottom: 6 }}>
-              <Button
-                size="small"
-                type="text"
-                icon={<ArrowLeftOutlined />}
-                onClick={() => navigate('/reports')}
-                style={{ color: 'rgba(255,255,255,.85)' }}
-              >
-                报表中心
+    <div ref={wrapRef} style={{ background: NEUTRAL.pageBg, minHeight: '100%' }}>
+      <Page
+        title={report.name}
+        actions={
+          <>
+            <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/reports')}>
+              返回
+            </Button>
+            {canWrite && (
+              <Button icon={<EditOutlined />} onClick={() => navigate(`/reports/${report.id}/design`)}>
+                设计
               </Button>
-              <Tag bordered={false} style={{ background: 'rgba(255,255,255,.16)', color: '#FFFFFF' }}>
-                {report.reportType === 'table' ? '表格报表' : report.reportType === 'dashboard' ? '看板' : '图表报表'}
-              </Tag>
-              {config.chartType && (
-                <Tag bordered={false} style={{ background: 'rgba(255,255,255,.12)', color: '#FFFFFF' }}>
-                  {config.chartType}
-                </Tag>
-              )}
-              {Number(report.status) !== 1 && <Tag color="#E86161">已停用</Tag>}
-            </Space>
-            <div style={{ fontSize: isMobile ? 20 : 26, fontWeight: 700, lineHeight: 1.25, wordBreak: 'break-word' }}>
-              {report.name}
-            </div>
-            <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,.72)', marginTop: 6, maxWidth: 760 }}>
-              {report.code ? `${report.code} · ` : ''}
-              {report.category ? `${report.category} · ` : ''}
-              {report.datasetName ? `数据集：${report.datasetName}` : '未绑定数据集'}
-              {report.description ? ` · ${report.description}` : ''}
-            </div>
-          </div>
-
+            )}
+            {canShare && (
+              <Button icon={<ShareAltOutlined />} onClick={handleShare}>
+                分享
+              </Button>
+            )}
+            <Button icon={<DownloadOutlined />} onClick={handleExport}>
+              导出 CSV
+            </Button>
+          </>
+        }
+        extra={
           <Space wrap size={8}>
-            <Tooltip title="刷新数据">
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={() => load()}
-                loading={loading}
-                style={{ background: 'rgba(255,255,255,.14)', borderColor: 'rgba(255,255,255,.28)', color: '#FFFFFF' }}
-              >
-                {isMobile ? '' : '刷新'}
-              </Button>
-            </Tooltip>
+            <Tag bordered={false} color={PALETTE.primary} style={{ color: NEUTRAL.textInverse }}>
+              {report.reportType === 'table' ? '表格报表' : report.reportType === 'dashboard' ? '看板' : '图表报表'}
+            </Tag>
+            {Number(report.status) !== 1 && <Tag color={PALETTE.red}>已停用</Tag>}
             <Tooltip title="每 60 秒自动刷新">
               <span
                 style={{
@@ -278,85 +264,30 @@ export default function ReportView() {
                   height: 32,
                   padding: '0 10px',
                   borderRadius: 8,
-                  background: 'rgba(255,255,255,.14)',
+                  background: NEUTRAL.surface,
+                  border: `1px solid ${NEUTRAL.border}`,
                   fontSize: 12.5,
+                  color: NEUTRAL.textSecondary,
                 }}
               >
                 <Switch size="small" checked={autoRefresh} onChange={setAutoRefresh} />
                 自动
               </span>
             </Tooltip>
-            <Button
-              icon={<DownloadOutlined />}
-              onClick={handleExport}
-              style={{ background: 'rgba(255,255,255,.14)', borderColor: 'rgba(255,255,255,.28)', color: '#FFFFFF' }}
-            >
-              {isMobile ? '' : '导出 CSV'}
-            </Button>
-            {canShare && (
-              <Button
-                icon={<ShareAltOutlined />}
-                onClick={handleShare}
-                style={{ background: 'rgba(255,255,255,.14)', borderColor: 'rgba(255,255,255,.28)', color: '#FFFFFF' }}
-              >
-                {isMobile ? '' : '分享'}
+            <Tooltip title="刷新数据">
+              <Button icon={<ReloadOutlined />} onClick={() => load()} loading={loading}>
+                {isMobile ? '' : '刷新'}
               </Button>
-            )}
-            {canWrite && (
-              <Button
-                icon={<EditOutlined />}
-                onClick={() => navigate(`/reports/${report.id}/design`)}
-                style={{ background: 'rgba(255,255,255,.14)', borderColor: 'rgba(255,255,255,.28)', color: '#FFFFFF' }}
-              >
-                {isMobile ? '' : '设计'}
-              </Button>
-            )}
+            </Tooltip>
             {!isMobile && (
-              <Button
-                icon={<FullscreenOutlined />}
-                onClick={toggleFullscreen}
-                style={{ background: 'rgba(255,255,255,.14)', borderColor: 'rgba(255,255,255,.28)', color: '#FFFFFF' }}
-              />
+              <Tooltip title="全屏查看">
+                <Button icon={<FullscreenOutlined />} onClick={toggleFullscreen} />
+              </Tooltip>
             )}
           </Space>
-        </div>
-
-        {/* KPI */}
-        <Row gutter={[10, 10]} style={{ marginTop: isMobile ? 14 : 18 }}>
-          {kpis.map((k) => (
-            <Col xs={8} key={k.label}>
-              <div
-                style={{
-                  background: 'rgba(255,255,255,.10)',
-                  border: '1px solid rgba(255,255,255,.16)',
-                  borderRadius: 10,
-                  padding: isMobile ? '8px 10px' : '12px 14px',
-                }}
-              >
-                <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,.68)' }}>{k.label}</div>
-                <div
-                  style={{
-                    fontSize: isMobile ? 20 : 28,
-                    fontWeight: 700,
-                    color: k.color,
-                    lineHeight: 1.25,
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
-                  {fmtNum(k.value)}
-                </div>
-              </div>
-            </Col>
-          ))}
-        </Row>
-        <div style={{ marginTop: 8, fontSize: 11.5, color: 'rgba(255,255,255,.6)' }}>
-          <ClockCircleOutlined /> 数据更新于 {updatedAt ? fmtTime(updatedAt, 'HH:mm:ss') : '-'}
-          {report.updatedAt ? ` · 报表更新于 ${fmtAgo(report.updatedAt)}` : ''}
-        </div>
-      </div>
-
-      {/* ── 主体 ── */}
-      <div style={{ padding: isMobile ? 12 : 20, background: '#FFFFFF' }}>
+        }
+        stats={statItems}
+      >
         {Number(report.status) !== 1 && (
           <Alert
             type="warning"
@@ -404,18 +335,18 @@ export default function ReportView() {
           <Col xs={24} xl={16}>
             <Card
               title={
-                <span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>
+                <span style={{ fontSize: 14, fontWeight: 600, color: NEUTRAL.text }}>
                   {config.title || report.name}
                 </span>
               }
               extra={
                 <Badge
                   status="processing"
-                  text={<span style={{ fontSize: 12, color: 'rgba(0,51,120,.55)' }}>{fmtNum(rowCount)} 行数据</span>}
+                  text={<span style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>{fmtNum(rowCount)} 行数据</span>}
                 />
               }
               styles={{ body: { padding: isMobile ? 8 : 14 } }}
-              style={{ border: '1px solid #DCDDDD', borderRadius: 12, height: '100%' }}
+              style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, height: '100%' }}
             >
               {built.kind === 'table' ? (
                 <Table
@@ -430,12 +361,12 @@ export default function ReportView() {
               ) : built.kind === 'number' ? (
                 <div style={{ padding: isMobile ? '24px 8px' : '42px 8px', textAlign: 'center' }}>
                   <Statistic
-                    title={<span style={{ color: 'rgba(0,51,120,.6)' }}>{built.metric?.label}</span>}
+                    title={<span style={{ color: NEUTRAL.textSecondary }}>{built.metric?.label}</span>}
                     value={built.metric?.value}
                     formatter={(v) => fmtNum(Number(v))}
-                    valueStyle={{ color: '#2D6FE4', fontWeight: 700, fontSize: isMobile ? 34 : 48 }}
+                    valueStyle={{ color: PALETTE.primary, fontWeight: 700, fontSize: isMobile ? 34 : 48 }}
                   />
-                  <div style={{ marginTop: 8, fontSize: 12, color: 'rgba(0,51,120,.5)' }}>
+                  <div style={{ marginTop: 8, fontSize: 12, color: NEUTRAL.textTertiary }}>
                     基于 {fmtNum(built.metric?.total || 0)} 行数据聚合
                   </div>
                 </div>
@@ -454,9 +385,9 @@ export default function ReportView() {
           {/* 数据概览 */}
           <Col xs={24} xl={8}>
             <Card
-              title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>报表信息</span>}
+              title={<span style={{ fontSize: 14, fontWeight: 600, color: NEUTRAL.text }}>报表信息</span>}
               styles={{ body: { padding: 14 } }}
-              style={{ border: '1px solid #DCDDDD', borderRadius: 12, height: '100%' }}
+              style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, height: '100%' }}
             >
               {[
                 { k: '编码', v: report.code || '-' },
@@ -476,12 +407,12 @@ export default function ReportView() {
                     justifyContent: 'space-between',
                     gap: 12,
                     padding: '7px 0',
-                    borderBottom: '1px dashed #DCDDDD',
+                    borderBottom: `1px dashed ${NEUTRAL.borderSubtle}`,
                     fontSize: 12.5,
                   }}
                 >
-                  <span style={{ color: 'rgba(0,51,120,.55)', flexShrink: 0 }}>{row.k}</span>
-                  <span style={{ color: '#003378', textAlign: 'right', wordBreak: 'break-all' }}>{row.v}</span>
+                  <span style={{ color: NEUTRAL.textSecondary, flexShrink: 0 }}>{row.k}</span>
+                  <span style={{ color: NEUTRAL.text, textAlign: 'right', wordBreak: 'break-all' }}>{row.v}</span>
                 </div>
               ))}
               {canShare && (
@@ -496,10 +427,10 @@ export default function ReportView() {
           {built.kind !== 'table' && (
             <Col xs={24}>
               <Card
-                title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>数据明细</span>}
-                extra={<span style={{ fontSize: 12, color: 'rgba(0,51,120,.55)' }}>共 {fmtNum(rowCount)} 行</span>}
+                title={<span style={{ fontSize: 14, fontWeight: 600, color: NEUTRAL.text }}>数据明细</span>}
+                extra={<span style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>共 {fmtNum(rowCount)} 行</span>}
                 styles={{ body: { padding: 8 } }}
-                style={{ border: '1px solid #DCDDDD', borderRadius: 12 }}
+                style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12 }}
               >
                 {rows.length ? (
                   <Table
@@ -518,7 +449,7 @@ export default function ReportView() {
             </Col>
           )}
         </Row>
-      </div>
+      </Page>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-﻿/** 鏁版嵁婧?API 灏佽锛堝榻?src/datasources.js + src/dstypes.js + routes/api.js锛?*/
+/** 数据源 API 封装（对齐 src/datasources.js + src/dstypes.js + routes/api.js） */
 import { api, qs } from '@/api/client';
 
 export type DsConn = 'sql' | 'api';
@@ -9,7 +9,7 @@ export interface DsTypeResource {
   api: string;
 }
 
-/** 鏁版嵁婧愮被鍨嬶紙/datasource-types/:key 杩斿洖瀹屾暣瀹氫箟锛屽惈 fields / resources锛?*/
+/** 数据源类型（/datasource-types/:key 返回完整定义，含 fields / resources） */
 export interface DsType {
   key: string;
   name: string;
@@ -59,7 +59,7 @@ export type Datasource = {
   lastTestMsg?: string;
   createdAt?: string;
   updatedAt?: string;
-}
+};
 
 export interface DatasourceListResult {
   list: Datasource[];
@@ -104,24 +104,24 @@ export interface DatasourcePayload {
   status?: number;
 }
 
-/** 鍚庣銆屾祴璇曡繛鎺ャ€嶇被鎺ュ彛鐢?HTTP 200 + {ok:false} 鎵胯浇澶辫触锛岃繖閲屼繚鐣欏師濮嬬粨鏋?*/
+/** 后端「测试连接」类接口用 HTTP 200 + {ok:false} 承载失败，这里保留原始结果 */
 export interface RawActionResult<T> {
   ok: boolean;
   data?: T;
   message?: string;
 }
 
-/** 鏁版嵁婧愬垪琛紙鍚屾椂甯﹀洖绫诲瀷鐩綍涓庣粺璁★級 */
+/** 数据源列表（同时带回类型目录与统计） */
 export async function listDatasources(): Promise<DatasourceListResult> {
   return api.get<DatasourceListResult>('/datasources');
 }
 
-/** 鍏ㄩ儴绫诲瀷鐩綍锛堟棤闇€鐧诲綍鏉冮檺涔嬪鐨勯檺鍒讹紝鐢ㄤ簬鏂板缓琛ㄥ崟锛?*/
+/** 全部类型目录（无需登录权限之外的限制，用于新建表单） */
 export async function listDatasourceTypes(): Promise<DatasourceTypeMeta> {
   return api.get<DatasourceTypeMeta>('/datasource-types');
 }
 
-/** 鍗曚釜绫诲瀷璇︽儏锛氬惈 fields锛堣繛鎺ュ弬鏁板瓧娈碉級涓?resources锛堝彲鎺ヨ祫婧愶級 */
+/** 单个类型详情：含 fields（连接参数字段）与 resources（可接资源） */
 export async function getDatasourceType(key: string): Promise<DsType> {
   return api.get<DsType>(`/datasource-types/${encodeURIComponent(key)}`);
 }
@@ -141,7 +141,7 @@ export async function deleteDatasource(id: number): Promise<void> {
   await api.delete(`/datasources/${id}`);
 }
 
-/** 娴嬭瘯宸蹭繚瀛樼殑鏁版嵁婧愯繛鎺?*/
+/** 测试已保存的数据源连接 */
 export async function testDatasource(id: number): Promise<RawActionResult<DsTestResult>> {
   return api.post<RawActionResult<DsTestResult>>(`/datasources/${id}/test`, undefined, {
     silent: true,
@@ -149,7 +149,7 @@ export async function testDatasource(id: number): Promise<RawActionResult<DsTest
   });
 }
 
-/** 娴嬭瘯灏氭湭淇濆瓨鐨勮繛鎺ュ弬鏁?*/
+/** 测试尚未保存的连接参数 */
 export async function testDatasourceRaw(payload: {
   type: string;
   host?: string;
@@ -164,15 +164,14 @@ export async function testDatasourceRaw(payload: {
   });
 }
 
-/** 鏁版嵁婧愪笅鐨勬暟鎹〃 */
+/** 数据源下的数据表 */
 export async function listDatasourceTables(id: number, keyword?: string): Promise<DsTableInfo[]> {
   return api.get<DsTableInfo[]>(`/datasources/${id}/tables` + qs({ keyword }));
 }
 
-/** 鏁版嵁琛ㄥ瓧娈?*/
+/** 数据表字段 */
 export async function listDatasourceColumns(id: number, table: string): Promise<DsColumnInfo[]> {
   return api.get<DsColumnInfo[]>(
     `/datasources/${id}/tables/${encodeURIComponent(table)}/columns`
   );
 }
-

@@ -12,6 +12,7 @@ import { Button, Card, Empty, Grid, Result, Space, Spin, Statistic, Table, Tag, 
 import { BarChartOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useParams } from 'react-router-dom';
 import Chart from '@/components/Chart';
+import { NEUTRAL, PALETTE, SIDER } from '@/theme';
 import { fmtNum, fmtTime } from '@/utils';
 import {
   buildChartOption,
@@ -31,11 +32,11 @@ function Shell({ children, title }: { children: React.ReactNode; title?: string 
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   return (
-    <div style={{ minHeight: '100vh', background: '#FFFFFF' }}>
+    <div style={{ minHeight: '100vh', background: NEUTRAL.pageBg }}>
       <div
         style={{
-          background: 'linear-gradient(135deg, #003378 0%, #2D6FE4 60%, #3687FF 100%)',
-          color: '#FFFFFF',
+          background: `linear-gradient(135deg, ${SIDER.bgTo} 0%, ${PALETTE.primaryDeep} 60%, ${PALETTE.primary} 100%)`,
+          color: NEUTRAL.textInverse,
           padding: isMobile ? '16px 14px' : '20px 28px',
         }}
       >
@@ -59,12 +60,12 @@ function Shell({ children, title }: { children: React.ReactNode; title?: string 
             <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 700, lineHeight: 1.3, wordBreak: 'break-word' }}>
               {title || '数据报表分享'}
             </div>
-            <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,.72)' }}>数据报表 · 公开分享</div>
+            <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,.78)' }}>数据报表 · 公开分享</div>
           </div>
         </div>
       </div>
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: isMobile ? 12 : 24 }}>{children}</div>
-      <div style={{ textAlign: 'center', padding: '16px 12px 28px', fontSize: 11.5, color: '#B5B5B6' }}>
+      <div style={{ textAlign: 'center', padding: '16px 12px 28px', fontSize: 11.5, color: NEUTRAL.textTertiary }}>
         本页面由数据平台自动生成 · 内容归数据所有者所有
       </div>
     </div>
@@ -118,7 +119,7 @@ export default function ShareView() {
       ellipsis: true,
       width: 140,
       render: (v: unknown) => {
-        if (v === null || v === undefined) return <span style={{ color: '#B5B5B6' }}>-</span>;
+        if (v === null || v === undefined) return <span style={{ color: NEUTRAL.textQuaternary }}>-</span>;
         const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
         return <span title={s}>{s}</span>;
       },
@@ -162,7 +163,7 @@ export default function ShareView() {
       {/* 概览条 */}
       <Card
         styles={{ body: { padding: isMobile ? 12 : 16 } }}
-        style={{ border: '1px solid #DCDDDD', borderRadius: 12, marginBottom: 12 }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, marginBottom: 12 }}
       >
         <div
           style={{
@@ -174,20 +175,20 @@ export default function ShareView() {
           }}
         >
           <div style={{ minWidth: 0 }}>
-            <Title level={5} style={{ margin: 0, color: '#003378', fontSize: isMobile ? 16 : 18 }}>
+            <Title level={5} style={{ margin: 0, color: NEUTRAL.text, fontSize: isMobile ? 16 : 18 }}>
               {config.title || title}
             </Title>
-            <div style={{ fontSize: 12, color: 'rgba(0,51,120,.55)', marginTop: 4 }}>
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginTop: 4 }}>
               共 {fmtNum(total)} 行数据 · {columns.length} 个字段
               {report?.updatedAt ? ` · 更新于 ${fmtTime(report.updatedAt, 'YYYY-MM-DD HH:mm')}` : ''}
             </div>
           </div>
           <Space size={6} wrap>
-            <Tag bordered={false} color="#3687FF" style={{ color: '#FFFFFF' }}>
+            <Tag bordered={false} color={PALETTE.primary} style={{ color: NEUTRAL.textInverse }}>
               <EyeOutlined /> 公开分享
             </Tag>
             {config.chartType && (
-              <Tag bordered={false} style={{ background: 'rgba(54,135,255,.1)', color: '#2D6FE4' }}>
+              <Tag bordered={false} style={{ background: NEUTRAL.surfaceSunken, color: PALETTE.primary }}>
                 {config.chartType}
               </Tag>
             )}
@@ -201,17 +202,17 @@ export default function ShareView() {
       {/* 图表 */}
       <Card
         styles={{ body: { padding: isMobile ? 8 : 14 } }}
-        style={{ border: '1px solid #DCDDDD', borderRadius: 12, marginBottom: 12 }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, marginBottom: 12 }}
       >
         {built.kind === 'table' ? (
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="表格数据见下方明细" />
         ) : built.kind === 'number' ? (
           <div style={{ padding: isMobile ? '20px 8px' : '36px 8px', textAlign: 'center' }}>
             <Statistic
-              title={<span style={{ color: 'rgba(0,51,120,.6)' }}>{built.metric?.label}</span>}
+              title={<span style={{ color: NEUTRAL.textSecondary }}>{built.metric?.label}</span>}
               value={built.metric?.value}
               formatter={(v) => fmtNum(Number(v))}
-              valueStyle={{ color: '#2D6FE4', fontWeight: 700, fontSize: isMobile ? 32 : 44 }}
+              valueStyle={{ color: PALETTE.primary, fontWeight: 700, fontSize: isMobile ? 32 : 44 }}
             />
           </div>
         ) : (
@@ -227,10 +228,10 @@ export default function ShareView() {
 
       {/* 明细表 */}
       <Card
-        title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>数据明细</span>}
-        extra={<span style={{ fontSize: 12, color: 'rgba(0,51,120,.55)' }}>共 {fmtNum(total)} 行</span>}
+        title={<span style={{ fontSize: 14, fontWeight: 600, color: NEUTRAL.text }}>数据明细</span>}
+        extra={<span style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>共 {fmtNum(total)} 行</span>}
         styles={{ body: { padding: 8 } }}
-        style={{ border: '1px solid #DCDDDD', borderRadius: 12 }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12 }}
       >
         {rows.length ? (
           <Table
@@ -247,7 +248,7 @@ export default function ShareView() {
         )}
       </Card>
 
-      <Paragraph style={{ marginTop: 14, marginBottom: 0, fontSize: 11.5, color: '#B5B5B6', textAlign: 'center' }}>
+      <Paragraph style={{ marginTop: 14, marginBottom: 0, fontSize: 11.5, color: NEUTRAL.textTertiary, textAlign: 'center' }}>
         <Text type="secondary" style={{ fontSize: 11.5 }}>
           若内容涉及敏感数据，请联系分享者停用该链接
         </Text>

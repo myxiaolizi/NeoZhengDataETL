@@ -2,33 +2,35 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, Button, Card, Col, Descriptions, Empty, Grid, Modal, Progress, Row, Space,
-  Statistic, Table, Tag, Typography, message,
+  Table, Tag, Typography,
 } from 'antd';
 import {
   DatabaseOutlined, FileSearchOutlined, ProjectOutlined, ReloadOutlined,
   TableOutlined, TagsOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore, usePermission } from '@/stores/app';
 import { getGovernanceOverview, getProjectSchema } from '@/api/users';
 import type { GovernanceRow, ProjectSchema, SchemaColumn } from '@/api/users';
+import { PALETTE, NEUTRAL } from '@/theme';
 import { fmtNum, fmtTime } from '@/utils';
 
 const { Text } = Typography;
 const { useBreakpoint } = Grid;
 
 const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  navy: '#003378',
-  cyan: '#45B4FF',
-  green: '#A2D73C',
-  yellow: '#FFC000',
-  orange: '#EC673C',
-  red: '#E86161',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
+  primary: PALETTE.primary,
+  blue: PALETTE.primary,
+  navy: NEUTRAL.text,
+  cyan: PALETTE.cyan,
+  green: PALETTE.green,
+  yellow: PALETTE.yellow,
+  orange: PALETTE.orange,
+  red: PALETTE.red,
+  gray: NEUTRAL.textTertiary,
+  line: NEUTRAL.border,
+} as const;
 
 function softStyle(color: string): React.CSSProperties {
   return { background: `${color}1A`, color, border: 'none', borderRadius: 6, margin: 0, fontSize: 12 };
@@ -115,14 +117,13 @@ export default function GovernancePage() {
     }
   };
 
-  const kpis = [
-    { title: '数据项目', value: summary.projects, color: C.blue, icon: <ProjectOutlined />, suffix: '个' },
-    { title: '数据总条数', value: summary.dataRows, color: C.cyan, icon: <DatabaseOutlined /> },
-    { title: '解析后条数', value: summary.parsedRows, color: C.green, icon: <TableOutlined /> },
-    { title: '字段定义', value: summary.fieldTotal, color: C.orange, icon: <TagsOutlined /> },
-    { title: '注释覆盖率', value: summary.commentPct, color: C.yellow, icon: <FileSearchOutlined />, suffix: '%' },
-    { title: '解析字段', value: summary.fieldParsed, color: C.primary, icon: <FileSearchOutlined /> },
-  ];
+  const stats = useMemo<StatCardItem[]>(() => [
+    { key: 'projects', label: '数据项目', value: summary.projects, suffix: '个', color: PALETTE.primary },
+    { key: 'dataRows', label: '数据总条数', value: fmtNum(summary.dataRows), color: PALETTE.cyan },
+    { key: 'parsedRows', label: '解析后条数', value: fmtNum(summary.parsedRows), color: PALETTE.green },
+    { key: 'fieldTotal', label: '字段定义', value: summary.fieldTotal, color: PALETTE.orange },
+    { key: 'commentPct', label: '注释覆盖率', value: summary.commentPct, suffix: '%', color: PALETTE.yellow },
+  ], [summary]);
 
   const columnColumns = [
     { title: '列名', dataIndex: 'name', width: 220, render: (v: string) => <Text code style={{ fontSize: 12 }}>{v}</Text> },
@@ -197,7 +198,7 @@ export default function GovernancePage() {
         return (
           <div>
             <div style={{ fontSize: 11.5, color: C.gray, marginBottom: 2 }}>{pct}%</div>
-            <Progress percent={pct} showInfo={false} size="small" strokeColor={color} railColor="rgba(54,135,255,.10)" />
+            <Progress percent={pct} showInfo={false} size="small" strokeColor={color} railColor={NEUTRAL.surfaceSunken} />
           </div>
         );
       },
@@ -226,7 +227,7 @@ export default function GovernancePage() {
   return (
     <Page
       title="治理总览"
-      subTitle="数据资产盘点 · 表结构对照 · 字段质量评估"
+      stats={stats}
       extra={
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
           刷新
@@ -239,28 +240,6 @@ export default function GovernancePage() {
         {!canRead ? (
           <Alert type="warning" showIcon title="当前账号没有「查看项目」权限，治理总览仅展示空数据" />
         ) : null}
-
-        {/* KPI */}
-        <Row gutter={[12, 12]}>
-          {kpis.map((k) => (
-            <Col key={k.title} xs={12} md={8} xl={4}>
-              <Card size="small" style={{ borderColor: C.line }} styles={{ body: { padding: '12px 14px' } }}>
-                <Statistic
-                  loading={loading}
-                  title={
-                    <Space size={6}>
-                      <span style={{ color: k.color }}>{k.icon}</span>
-                      <span style={{ fontSize: 12.5, color: C.gray }}>{k.title}</span>
-                    </Space>
-                  }
-                  value={k.value}
-                  suffix={k.suffix ? <span style={{ fontSize: 13, color: C.gray }}>{k.suffix}</span> : undefined}
-                  styles={{ content: { color: k.color, fontSize: 22, fontWeight: 700 } }}
-                />
-              </Card>
-            </Col>
-          ))}
-        </Row>
 
         {/* 质量概览 */}
         <Row gutter={[12, 12]}>
@@ -285,7 +264,7 @@ export default function GovernancePage() {
                       percent={m.pct}
                       showInfo={false}
                       strokeColor={m.color}
-                      railColor="rgba(54,135,255,.10)"
+                      railColor={NEUTRAL.surfaceSunken}
                       size={['100%', 8]}
                     />
                     <div style={{ fontSize: 11.5, color: C.gray, marginTop: 2 }}>{m.hint}</div>
@@ -313,13 +292,13 @@ export default function GovernancePage() {
                           <span style={{ fontSize: 12.5, color: C.navy, fontWeight: 500 }}>{r.name}</span>
                           <span style={{ fontSize: 11.5, color: C.gray, flexShrink: 0 }}>{fmtNum(r.dataCount)} 条</span>
                         </div>
-                        <div style={{ height: 8, borderRadius: 4, background: 'rgba(54,135,255,.10)', overflow: 'hidden' }}>
+                        <div style={{ height: 8, borderRadius: 4, background: NEUTRAL.surfaceSunken, overflow: 'hidden' }}>
                           <div
                             style={{
                               width: `${width}%`,
                               height: '100%',
                               borderRadius: 4,
-                              background: `linear-gradient(90deg, ${C.blue}, ${C.primary})`,
+                              background: `linear-gradient(90deg, ${PALETTE.primary}, ${PALETTE.primaryLight})`,
                             }}
                           />
                         </div>

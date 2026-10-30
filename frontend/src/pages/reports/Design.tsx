@@ -1,5 +1,5 @@
 /**
- * 报表设计器
+ * 报表设计器（V4.1 统一规范：Page 顶部标题区 + @/theme 配色令牌）
  * 流程：选择数据集 → 选择图表类型 → 配置字段 → 预览 → 保存
  * 左：配置面板（桌面） / 上：配置面板（移动端）；右：实时预览 + 数据预览
  */
@@ -45,6 +45,7 @@ import {
 import { useNavigate, useParams } from 'react-router-dom';
 import Page from '@/components/Page';
 import Chart from '@/components/Chart';
+import { NEUTRAL, PALETTE } from '@/theme';
 import { useAppStore } from '@/stores/app';
 import { fmtNum } from '@/utils';
 import {
@@ -285,7 +286,7 @@ export default function ReportDesign() {
   if (loading) {
     return (
       <Page title="报表设计">
-        <Card style={{ border: '1px solid #DCDDDD', borderRadius: 12 }}>
+        <Card style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12 }}>
           <Skeleton active paragraph={{ rows: 8 }} />
         </Card>
       </Page>
@@ -294,7 +295,14 @@ export default function ReportDesign() {
 
   if (!report) {
     return (
-      <Page title="报表设计">
+      <Page
+        title="报表设计"
+        actions={
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/reports')}>
+            返回报表中心
+          </Button>
+        }
+      >
         <Alert
           type="error"
           showIcon
@@ -318,9 +326,9 @@ export default function ReportDesign() {
       {/* ① 基础信息 */}
       <Card
         size="small"
-        title={<span style={{ fontSize: 13.5 }}>① 基础信息</span>}
+        title={<span style={{ fontSize: 13.5, color: NEUTRAL.text }}>① 基础信息</span>}
         styles={{ body: { paddingTop: 10 } }}
-        style={{ border: '1px solid #DCDDDD', borderRadius: 10 }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10 }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <Input
@@ -352,7 +360,7 @@ export default function ReportDesign() {
       {/* ② 数据集 */}
       <Card
         size="small"
-        title={<span style={{ fontSize: 13.5 }}>② 数据集</span>}
+        title={<span style={{ fontSize: 13.5, color: NEUTRAL.text }}>② 数据集</span>}
         extra={
           <Button
             type="link"
@@ -365,7 +373,7 @@ export default function ReportDesign() {
           </Button>
         }
         styles={{ body: { paddingTop: 10 } }}
-        style={{ border: '1px solid #DCDDDD', borderRadius: 10 }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10 }}
       >
         <Select
           value={datasetId}
@@ -377,7 +385,7 @@ export default function ReportDesign() {
           optionFilterProp="label"
           options={datasets.map((d) => ({ value: d.id, label: `${d.name}（${d.datasourceName || '本机数据库'}）` }))}
         />
-        <div style={{ marginTop: 8, fontSize: 12, color: 'rgba(0,51,120,.55)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ marginTop: 8, fontSize: 12, color: NEUTRAL.textSecondary, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           {dsMeta?.sourceType && (
             <span>
               来源：
@@ -392,9 +400,9 @@ export default function ReportDesign() {
       {/* ③ 图表类型 */}
       <Card
         size="small"
-        title={<span style={{ fontSize: 13.5 }}>③ 图表类型</span>}
+        title={<span style={{ fontSize: 13.5, color: NEUTRAL.text }}>③ 图表类型</span>}
         styles={{ body: { paddingTop: 10 } }}
-        style={{ border: '1px solid #DCDDDD', borderRadius: 10 }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10 }}
       >
         <div
           style={{
@@ -411,9 +419,9 @@ export default function ReportDesign() {
                 onClick={() => setChartType(t.key)}
                 style={{
                   cursor: 'pointer',
-                  border: `1px solid ${active ? '#3687FF' : '#DCDDDD'}`,
-                  background: active ? 'rgba(54,135,255,.08)' : '#FFFFFF',
-                  color: active ? '#2D6FE4' : 'rgba(0,51,120,.7)',
+                  border: `1px solid ${active ? PALETTE.primary : NEUTRAL.border}`,
+                  background: active ? NEUTRAL.surfaceSunken : NEUTRAL.surface,
+                  color: active ? PALETTE.primary : NEUTRAL.textSecondary,
                   borderRadius: 8,
                   padding: '10px 4px',
                   minHeight: 54,
@@ -437,13 +445,13 @@ export default function ReportDesign() {
       {/* ④ 字段与样式 */}
       <Card
         size="small"
-        title={<span style={{ fontSize: 13.5 }}>④ 字段与样式</span>}
+        title={<span style={{ fontSize: 13.5, color: NEUTRAL.text }}>④ 字段与样式</span>}
         styles={{ body: { paddingTop: 10 } }}
-        style={{ border: '1px solid #DCDDDD', borderRadius: 10 }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10 }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div>
-            <div style={{ fontSize: 12, color: 'rgba(0,51,120,.6)', marginBottom: 4 }}>
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 4 }}>
               {chartType === 'scatter' ? 'X 轴字段（数值）' : '分类字段 / X 轴'}
             </div>
             <Select
@@ -459,7 +467,7 @@ export default function ReportDesign() {
           </div>
 
           <div>
-            <div style={{ fontSize: 12, color: 'rgba(0,51,120,.6)', marginBottom: 4 }}>
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 4 }}>
               {chartType === 'scatter' ? 'Y 轴字段（数值，按顺序取前 2 个）' : '数值字段（可多选，最多 3 个）'}
             </div>
             {valueOptions.length === 0 ? (
@@ -480,20 +488,20 @@ export default function ReportDesign() {
               />
             )}
             {['pie', 'doughnut', 'funnel', 'gauge', 'number'].includes(chartType) && valueFields.length > 1 && (
-              <div style={{ fontSize: 11.5, color: '#EC673C', marginTop: 4 }}>该图表类型仅使用第一个数值字段</div>
+              <div style={{ fontSize: 11.5, color: PALETTE.orange, marginTop: 4 }}>该图表类型仅使用第一个数值字段</div>
             )}
           </div>
 
           <Divider style={{ margin: '2px 0' }} />
 
           <div>
-            <div style={{ fontSize: 12, color: 'rgba(0,51,120,.6)', marginBottom: 4 }}>图表标题（留空则用报表名称）</div>
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 4 }}>图表标题（留空则用报表名称）</div>
             <Input value={chartTitle} onChange={(e) => setChartTitle(e.target.value)} placeholder={name} maxLength={60} />
           </div>
 
           <Space size={10} style={{ width: '100%' }} wrap>
             <div>
-              <div style={{ fontSize: 12, color: 'rgba(0,51,120,.6)', marginBottom: 4 }}>图表高度</div>
+              <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 4 }}>图表高度</div>
               <InputNumber
                 min={200}
                 max={800}
@@ -506,7 +514,7 @@ export default function ReportDesign() {
             </div>
             {chartType === 'gauge' && (
               <div>
-                <div style={{ fontSize: 12, color: 'rgba(0,51,120,.6)', marginBottom: 4 }}>仪表盘最大值</div>
+                <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 4 }}>仪表盘最大值</div>
                 <InputNumber
                   min={0}
                   value={gaugeMax}
@@ -553,19 +561,19 @@ export default function ReportDesign() {
       <Card
         title={
           <Space size={8}>
-            <span style={{ fontSize: 13.5 }}>实时预览</span>
-            <Tag bordered={false} color="#3687FF" style={{ color: '#FFFFFF' }}>
+            <span style={{ fontSize: 13.5, color: NEUTRAL.text }}>实时预览</span>
+            <Tag bordered={false} color={PALETTE.primary} style={{ color: NEUTRAL.textInverse }}>
               {CHART_TYPE_OPTIONS.find((t) => t.key === chartType)?.name || chartType}
             </Tag>
           </Space>
         }
         extra={
           <Tooltip title="预览使用数据集前 200 行样本数据">
-            <span style={{ fontSize: 12, color: 'rgba(0,51,120,.5)' }}>{rows.length} 行样本</span>
+            <span style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>{rows.length} 行样本</span>
           </Tooltip>
         }
         styles={{ body: { padding: 12 } }}
-        style={{ border: '1px solid #DCDDDD', borderRadius: 10 }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10 }}
       >
         {!datasetId ? (
           <Empty description="请先选择数据集" style={{ padding: '40px 0' }} />
@@ -585,9 +593,9 @@ export default function ReportDesign() {
               title={built.metric?.label}
               value={built.metric?.value}
               formatter={(v) => fmtNum(Number(v))}
-              valueStyle={{ color: '#3687FF', fontSize: isMobile ? 30 : 40, fontWeight: 700 }}
+              valueStyle={{ color: PALETTE.primary, fontSize: isMobile ? 30 : 40, fontWeight: 700 }}
             />
-            <div style={{ fontSize: 12, color: 'rgba(0,51,120,.5)', marginTop: 6 }}>
+            <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, marginTop: 6 }}>
               基于 {built.metric?.total || 0} 行样本聚合
             </div>
           </div>
@@ -603,10 +611,10 @@ export default function ReportDesign() {
       </Card>
 
       <Card
-        title={<span style={{ fontSize: 13.5 }}>数据预览</span>}
-        extra={<span style={{ fontSize: 12, color: 'rgba(0,51,120,.5)' }}>共 {fmtNum(rows.length)} 行</span>}
+        title={<span style={{ fontSize: 13.5, color: NEUTRAL.text }}>数据预览</span>}
+        extra={<span style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>共 {fmtNum(rows.length)} 行</span>}
         styles={{ body: { padding: 8 } }}
-        style={{ border: '1px solid #DCDDDD', borderRadius: 10 }}
+        style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10 }}
       >
         {rows.length ? (
           <Table
@@ -628,17 +636,40 @@ export default function ReportDesign() {
   return (
     <Page
       title={`报表设计 · ${report.name}`}
-      subTitle={report.code ? `编码 ${report.code}` : undefined}
+      actions={
+        <>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={saving}
+            disabled={readOnly}
+            onClick={() => save(false)}
+          >
+            保存
+          </Button>
+          <Button
+            icon={<EyeOutlined />}
+            loading={saving}
+            disabled={readOnly}
+            onClick={() => save(true)}
+          >
+            保存并查看
+          </Button>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/reports')}>
+            返回
+          </Button>
+        </>
+      }
       extra={
         <Space wrap size={8}>
           <Tag
             bordered={false}
-            color={report.reportType === 'table' ? '#73DBFF' : '#3687FF'}
-            style={{ color: '#FFFFFF' }}
+            color={report.reportType === 'table' ? PALETTE.cyan : PALETTE.primary}
+            style={{ color: NEUTRAL.textInverse }}
           >
             {report.reportType === 'table' ? '表格报表' : report.reportType === 'dashboard' ? '看板' : '图表报表'}
           </Tag>
-          {readOnly && <Tag color="#B5B5B6">只读</Tag>}
+          {readOnly && <Tag color={PALETTE.gray}>只读</Tag>}
         </Space>
       }
     >
@@ -679,7 +710,7 @@ export default function ReportDesign() {
             bottom: 0,
             marginTop: 12,
             padding: '10px 0',
-            background: 'rgba(255,255,255,.94)',
+            background: NEUTRAL.surface,
             display: 'flex',
             gap: 8,
           }}

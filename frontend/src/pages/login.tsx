@@ -5,6 +5,7 @@ import { UserOutlined, LockOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/api/client';
 import { useAppStore } from '@/stores/app';
+import { PALETTE, NEUTRAL } from '@/theme';
 
 const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
@@ -66,26 +67,26 @@ export default function Login() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: '#FFFFFF',
+        background: NEUTRAL.pageBg,
         padding: isMobile ? 16 : 24,
       }}
     >
       <Card
-        style={{ width: '100%', maxWidth: 400, border: '1px solid #DCDDDD', borderRadius: 14 }}
+        style={{ width: '100%', maxWidth: 400, border: `1px solid ${NEUTRAL.border}`, borderRadius: 14 }}
         styles={{ body: { padding: isMobile ? 22 : 32 } }}
       >
         <div style={{ textAlign: 'center', marginBottom: 26 }}>
           <div
             style={{
               width: 50, height: 50, borderRadius: 13, margin: '0 auto 14px',
-              background: 'linear-gradient(135deg, #2D6FE4, #3687FF)',
-              color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: `linear-gradient(135deg, ${PALETTE.primary}, ${PALETTE.primaryLight})`,
+              color: NEUTRAL.textInverse, display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: 24, fontWeight: 700,
             }}
           >
             N
           </div>
-          <Title level={4} style={{ margin: 0, color: '#003378' }}>Neo Zheng DataETL</Title>
+          <Title level={4} style={{ margin: 0, color: NEUTRAL.text }}>Neo Zheng DataETL</Title>
           <Text type="secondary" style={{ fontSize: 12.5 }}>企业数据集成平台 · V4.0</Text>
         </div>
 
@@ -95,10 +96,10 @@ export default function Login() {
 
         <Form form={form} layout="vertical" onFinish={onFinish} size="large" requiredMark={false}>
           <Form.Item name="username" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input prefix={<UserOutlined style={{ color: '#B5B5B6' }} />} placeholder="用户名" autoComplete="username" />
+            <Input prefix={<UserOutlined style={{ color: NEUTRAL.textTertiary }} />} placeholder="用户名" autoComplete="username" />
           </Form.Item>
           <Form.Item name="password" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password prefix={<LockOutlined style={{ color: '#B5B5B6' }} />} placeholder="密码" autoComplete="current-password" />
+            <Input.Password prefix={<LockOutlined style={{ color: NEUTRAL.textTertiary }} />} placeholder="密码" autoComplete="current-password" />
           </Form.Item>
           <Form.Item style={{ marginBottom: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -114,7 +115,7 @@ export default function Login() {
         </Form>
 
         <div style={{ textAlign: 'center', marginTop: 18, fontSize: 12.5 }}>
-          <Space split={<span style={{ color: '#DCDDDD' }}>|</span>}>
+          <Space split={<span style={{ color: NEUTRAL.borderSubtle }}>|</span>}>
             <a onClick={() => navigate('/intro')}>项目介绍</a>
             <a onClick={() => navigate('/help')}>使用说明</a>
           </Space>

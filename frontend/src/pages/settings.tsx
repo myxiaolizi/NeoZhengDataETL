@@ -11,38 +11,37 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore, usePermission } from '@/stores/app';
 import {
   getSettings, isOn, listAiProviders, listDatasourceOptions, saveSettings, testAi, testMail,
 } from '@/api/settings';
 import type { AiProvider, DatasourceOption, SettingField, SettingGroup, SettingsPayload } from '@/api/settings';
+import { PALETTE, NEUTRAL, STAT_COLORS } from '@/theme';
 
 const { Text } = Typography;
 const { useBreakpoint } = Grid;
 
-/** V4 调色板（13 色） */
-const PALETTE = [
-  '#3687FF', '#45B4FF', '#003378', '#2D6FE4',
-  '#EC673C', '#E86161', '#FFC000', '#A2D73C',
-  '#73DBFF', '#B5B5B6', '#DCDDDD', '#FFFFFF', '#000000',
-];
-
+/** 语义色别名（基于 @/theme 令牌，保持命名兼容） */
 const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  navy: '#003378',
-  cyan: '#45B4FF',
-  green: '#A2D73C',
-  yellow: '#FFC000',
-  orange: '#EC673C',
-  red: '#E86161',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
+  primary: PALETTE.primary,
+  blue: PALETTE.primary,
+  navy: NEUTRAL.text,
+  cyan: PALETTE.cyan,
+  green: PALETTE.green,
+  yellow: PALETTE.yellow,
+  orange: PALETTE.orange,
+  red: PALETTE.red,
+  gray: NEUTRAL.textTertiary,
+  line: NEUTRAL.border,
+} as const;
 
 function softStyle(color: string): React.CSSProperties {
   return { background: `${color}1A`, color, border: 'none', borderRadius: 6, margin: 0, fontSize: 12 };
 }
+
+/** 主题色预设（ColorPicker 品牌调色板，基于设计令牌） */
+const PALETTE_PRESET = [PALETTE.primary, PALETTE.primaryDeep, PALETTE.primaryLight, PALETTE.cyan, PALETTE.green, PALETTE.yellow, PALETTE.orange, PALETTE.violet, NEUTRAL.text];
 
 /** 分组图标（后端下发字符图标，映射为 antd 图标，保证视觉一致） */
 const GROUP_ICONS: Record<string, React.ReactNode> = {
@@ -149,6 +148,36 @@ export default function SettingsPage() {
     () => (currentProvider?.models || []).map((m) => ({ label: m.name, value: m.key })),
     [currentProvider]
   );
+
+  /* ── 状态卡片（就地由已加载的 values 计算，不新增接口） ── */
+  const aiConfigured = isOn(values.ai_enabled) && values.ai_api_key__set === '1';
+  const dbConfigured = !!values.default_datasource_id && String(values.default_datasource_id) !== '0' && values.default_datasource_id !== '';
+  const stats = useMemo<StatCardItem[]>(() => [
+    {
+      key: 'site',
+      label: '当前站点名',
+      value: values.site_name || '未设置',
+      color: STAT_COLORS[0],
+    },
+    {
+      key: 'mail',
+      label: '邮件服务',
+      value: mailReady ? '已就绪' : '未配置',
+      color: mailReady ? PALETTE.green : NEUTRAL.textTertiary,
+    },
+    {
+      key: 'ai',
+      label: 'AI 问数',
+      value: aiConfigured ? '已配置' : '未配置',
+      color: aiConfigured ? PALETTE.cyan : NEUTRAL.textTertiary,
+    },
+    {
+      key: 'db',
+      label: '默认数据源',
+      value: dbConfigured ? '已连接' : '未配置',
+      color: dbConfigured ? PALETTE.green : NEUTRAL.textTertiary,
+    },
+  ], [values.site_name, mailReady, aiConfigured, dbConfigured]);
 
   /** 拉取设置 + 供应商 + 数据源 */
   const load = useCallback(async () => {
@@ -313,7 +342,7 @@ export default function SettingsPage() {
             format="hex"
             disabledAlpha
             disabled={disabled}
-            presets={[{ label: '品牌调色板', colors: PALETTE }]}
+            presets={[{ label: '品牌调色板', colors: PALETTE_PRESET }]}
           />
         );
         break;
@@ -371,8 +400,13 @@ export default function SettingsPage() {
     const extra: React.ReactNode = (
       <div style={{ fontSize: 11.5, color: C.gray, lineHeight: 1.6 }}>
         {f.hint ? <div>{f.hint}</div> : null}
+        {f.key === 'site_name' ? (
+          <div style={{ marginTop: 2, color: NEUTRAL.textSecondary }}>
+            保存后，左侧菜单顶部的品牌区会同步更新。
+          </div>
+        ) : null}
         {f.type === 'password' && isSet ? (
-          <Tag style={{ ...softStyle(C.green), marginTop: 4 }}>已设置</Tag>
+          <Tag style={{ ...softStyle(PALETTE.green), marginTop: 4 }}>已设置</Tag>
         ) : null}
         {f.type === 'aiprovider' && currentProvider?.keyUrl ? (
           <div style={{ marginTop: 2 }}>
@@ -423,9 +457,9 @@ export default function SettingsPage() {
 
   /* ---------- 分组导航 ---------- */
   const groupBadge = (g: SettingGroup): React.ReactNode => {
-    if (g.key === 'smtp' && mailReady) return <Tag style={softStyle(C.green)}>已配置</Tag>;
-    if (g.key === 'ai' && isOn(values.ai_enabled)) return <Tag style={softStyle(C.primary)}>已启用</Tag>;
-    if (g.key === 'mailpush' && isOn(values.mail_push_enabled)) return <Tag style={softStyle(C.primary)}>已启用</Tag>;
+    if (g.key === 'smtp' && mailReady) return <Tag style={softStyle(PALETTE.green)}>已配置</Tag>;
+    if (g.key === 'ai' && isOn(values.ai_enabled)) return <Tag style={softStyle(PALETTE.primary)}>已启用</Tag>;
+    if (g.key === 'mailpush' && isOn(values.mail_push_enabled)) return <Tag style={softStyle(PALETTE.primary)}>已启用</Tag>;
     if (g.key === 'audit' && isOn(values.audit_enabled)) return <Tag style={softStyle(C.gray)}>记录中</Tag>;
     return <Tag style={softStyle(C.gray)}>{g.fields.length}</Tag>;
   };
@@ -442,7 +476,7 @@ export default function SettingsPage() {
           padding: '9px 11px',
           borderRadius: 8,
           border: `1px solid ${on ? C.primary : 'transparent'}`,
-          background: on ? 'rgba(54,135,255,.06)' : 'transparent',
+          background: on ? NEUTRAL.surfaceSunken : 'transparent',
           transition: 'all .15s',
           minWidth: isMobile ? 132 : undefined,
         }}
@@ -603,26 +637,7 @@ export default function SettingsPage() {
   );
 
   return (
-    <Page
-      title="系统设置"
-      subTitle={
-        isMobile
-          ? '平台配置中心'
-          : '平台配置中心 · 站点 / 安全 / 邮件 / 存储 / 推送 / 报表 / 集成 / AI / 邮箱推送 / 审计'
-      }
-      extra={
-        <Space size={6} wrap>
-          <Tag style={{ ...softStyle(C.primary), padding: '3px 10px', fontSize: 12.5 }}>
-            {groups.length} 个分组
-          </Tag>
-          {payload ? (
-            <Tag style={{ ...softStyle(mailReady ? C.green : C.gray), padding: '3px 10px', fontSize: 12.5 }}>
-              邮件服务：{mailReady ? '就绪' : '未配置'}
-            </Tag>
-          ) : null}
-        </Space>
-      }
-    >
+    <Page title="系统设置" stats={stats}>
       {isMobile ? (
         <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           <Card size="small" style={{ borderColor: C.line }} styles={{ body: { padding: 8 } }}>
@@ -639,7 +654,7 @@ export default function SettingsPage() {
                       padding: '8px 12px',
                       borderRadius: 8,
                       border: `1px solid ${on ? C.primary : C.line}`,
-                      background: on ? 'rgba(54,135,255,.06)' : '#FFFFFF',
+                      background: on ? NEUTRAL.surfaceSunken : NEUTRAL.surface,
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,

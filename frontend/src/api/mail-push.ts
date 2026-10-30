@@ -1,7 +1,7 @@
-﻿/** 閭鎺ㄩ€?API 灏佽锛堝榻?src/mail-accounts.js / src/mail-inbox.js / src/mail-push.js锛?*/
+/** 邮箱推送 API 封装（对接 src/mail-accounts.js / src/mail-inbox.js / src/mail-push.js） */
 import { api, qs } from '@/api/client';
 
-/** 璐︽埛琛岋細snake_case锛宲assword 宸插湪鏈嶅姟绔墧闄わ紝浠呯暀 hasPassword */
+/** 账户行：snake_case；password 已在服务端剔除，仅留 hasPassword */
 export type MailAccount = {
   id: number;
   name: string;
@@ -34,7 +34,7 @@ export interface MailAccountPayload {
   auto_import?: number;
   initial_days?: number;
   max_per_run?: number;
-  /** 缂栬緫鏃剁暀绌鸿〃绀轰笉淇敼 */
+  /** 编辑时留空表示不修改 */
   password?: string;
 }
 
@@ -111,7 +111,7 @@ export interface MailPushStatus {
   perAccount?: Record<string, MailRunSummary>;
 }
 
-/** 瀵煎叆鏃ュ織琛岋紙jdywh_mail_push_logs锛?*/
+/** 导入日志行（jdywh_mail_push_logs） */
 export type MailLogRow = {
   id: number;
   project_id?: number | null;
@@ -161,7 +161,7 @@ export interface RawActionResult<T> {
   message?: string;
 }
 
-/* ---------------- 璐︽埛 ---------------- */
+/* ---------------- 账户 ---------------- */
 
 export async function listMailAccounts(): Promise<MailAccount[]> {
   return api.get<MailAccount[]>('/mail-push/accounts');
@@ -194,7 +194,7 @@ export async function toggleMailAccount(id: number, enabled: boolean): Promise<M
   return api.post<MailAccount>(`/mail-push/accounts/${id}/toggle`, { enabled: enabled ? 1 : 0 });
 }
 
-/** 娴嬭瘯 IMAP 杩炴帴锛堟敮鎸佹湭淇濆瓨鍙傛暟锛涘け璐ヨ繑鍥?ok:false 鑰屼笉鏄姏閿欙級 */
+/** 测试 IMAP 连接（支持未保存参数；失败返回 ok:false 而不是抛错） */
 export async function testMailAccount(
   payload: Partial<MailAccountPayload> & { id?: number }
 ): Promise<RawActionResult<{ ok: boolean; message: string; total?: number }>> {
@@ -203,7 +203,7 @@ export async function testMailAccount(
   >;
 }
 
-/* ---------------- 閭欢娴忚 ---------------- */
+/* ---------------- 邮件浏览 ---------------- */
 
 export async function listMailMessages(
   accountId: number,
@@ -230,9 +230,9 @@ export async function getMailMessage(
   );
 }
 
-/* ---------------- 鎷夊彇涓庣姸鎬?---------------- */
+/* ---------------- 拉取与状态 ---------------- */
 
-/** 鎵嬪姩瑙﹀彂涓€娆℃媺鍙栵紙鍙寚瀹氳处鎴凤級锛涘け璐ヤ篃杩斿洖缁撴灉 */
+/** 手动触发一次拉取（可指定账户）；失败也返回结果 */
 export async function runMailPush(opts?: {
   force?: boolean;
   accountId?: number | null;
@@ -274,5 +274,118 @@ export async function getMailPushSettings(): Promise<MailPushSettings> {
 
 export async function saveMailPushSettings(payload: Partial<MailPushSettings>): Promise<void> {
   await api.put('/mail-push/settings', payload);
+}
+
+/* ---------------- 数据项目（邮件附件导入后的数据管理） ---------------- */
+
+/**
+ * 邮件推送数据项目（jdywh_mail_push_projects）
+ * 每个项目对应一张物理数据表 data_table（jdywh_mail_<id>）
+ */
+export type MailProject = {
+  id: number;
+  name: string;
+  code?: string;
+  data_table: string;
+  source_mail?: string | null;
+  row_count?: number;
+  last_file?: string | null;
+  last_import_at?: string | null;
+  status?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+/** 数据表物理列（information_schema.COLUMNS，comment 为中文列名） */
+export type MailProjectColumn = {
+  name: string;
+  type: string;
+  comment?: string | null;
+  pos?: number;
+  extra?: string | null;
+  ckey?: string | null;
+};
+
+/** 数据行：列名 → 值（值均来自 MySQL，基本为字符串/数字/null） */
+export type MailRow = Record<string, string | number | boolean | null>;
+
+export interface MailProjectRowsResult {
+  rows: MailRow[];
+  total: number;
+  page: number;
+  size: number;
+  columns: MailProjectColumn[];
+}
+
+export interface MailProjectDetail {
+  project: MailProject;
+  columns: MailProjectColumn[];
+  preview: MailRow[];
+}
+
+export async function listMailProjects(): Promise<MailProject[]> {
+  return api.get<MailProject[]>('/mail-push/projects');
+}
+
+export async function getMailProject(id: number, limit = 20): Promise<MailProjectDetail> {
+  return api.get<MailProjectDetail>(`/mail-push/projects/${id}` + qs({ limit }));
+}
+
+/** 分页读取项目数据（keyword 在文本列内模糊搜索，sort 仅允许物理列名） */
+export async function listMailProjectRows(
+  id: number,
+  opts?: {
+    page?: number;
+    size?: number;
+    keyword?: string;
+    sort?: string;
+    order?: 'asc' | 'desc';
+  }
+): Promise<MailProjectRowsResult> {
+  return api.get<MailProjectRowsResult>(
+    `/mail-push/projects/${id}/rows` +
+      qs({
+        page: opts?.page,
+        size: opts?.size,
+        keyword: opts?.keyword,
+        sort: opts?.sort,
+        order: opts?.order,
+      })
+  );
+}
+
+export async function listMailProjectColumns(id: number): Promise<MailProjectColumn[]> {
+  const d = await api.get<{ columns: MailProjectColumn[] }>(`/mail-push/projects/${id}/columns`);
+  return d?.columns || [];
+}
+
+/** 导出 CSV 的直链（后端返回 Content-Disposition: attachment，浏览器直接下载） */
+export function mailProjectExportUrl(id: number): string {
+  return `/api/mail-push/projects/${id}/export`;
+}
+
+export async function updateMailProject(
+  id: number,
+  payload: { name?: string; status?: number }
+): Promise<MailProject> {
+  return api.put<MailProject>(`/mail-push/projects/${id}`, payload);
+}
+
+/** 清空项目数据（保留表结构）；返回后端原始消息 */
+export async function clearMailProject(id: number): Promise<RawActionResult<{ deleted: number }>> {
+  return api.post(`/mail-push/projects/${id}/clear`, {}, { silent: true, raw: true }) as Promise<
+    RawActionResult<{ deleted: number }>
+  >;
+}
+
+/** 删除项目；dropTable=true 时连同数据表一起删除 */
+export async function deleteMailProject(
+  id: number,
+  dropTable = true
+): Promise<RawActionResult<void>> {
+  return api.delete(`/mail-push/projects/${id}` + qs({ dropTable: dropTable ? 1 : '' }), {
+    silent: true,
+    raw: true,
+  }) as Promise<RawActionResult<void>>;
 }
 

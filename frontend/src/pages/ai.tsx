@@ -10,7 +10,8 @@
  * 交互：
  *   - 选择数据集（可选，不选由后端启发式匹配）→ 提问 → 气泡展示解读 + 折叠 SQL + 结果表
  *   - 空态用 Welcome + Prompts 提供示例问题
- *   - 右侧「最近问数」可回看历史问答
+ *   - 「最近问数」桌面端常驻右侧折叠面板，移动端弹 Modal 回看历史问答
+ *   - 错误态用友好提示卡片 + 「前往系统设置」「重试」等行动指引，不做整页替换
  *   - 移动端：单列、发送框吸底、表格横向滚动
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -20,10 +21,9 @@ import {
   Button,
   Card,
   Collapse,
-  Drawer,
   Empty,
   Grid,
-  Input,
+  Modal,
   Select,
   Space,
   Spin,
@@ -39,16 +39,21 @@ import {
   ReloadOutlined,
   RobotOutlined,
   SendOutlined,
+  SettingOutlined,
   TableOutlined,
   ThunderboltOutlined,
   UserOutlined,
+  WarningOutlined,
 } from '@ant-design/icons';
 import { Bubble, Sender, Welcome, Prompts } from '@ant-design/x';
 import type { PromptsItemType } from '@ant-design/x';
+import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore } from '@/stores/app';
+import { PALETTE, NEUTRAL } from '@/theme';
 import { fmtNum, fmtTime } from '@/utils';
-import { askAi, listAiChats, type AiChatRecord } from '@/api/ai';
+import { askAi, listAiChats, classifyAiError, type AiChatRecord, type AiFailure } from '@/api/ai';
 import { listDatasets, pickTableColumns, type DatasetColumn, type DatasetItem, type RowData } from '@/api/reports';
 
 const { useBreakpoint } = Grid;
@@ -91,12 +96,23 @@ function newSessionKey(): string {
   return `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
 }
 
+/** 是否今天（按浏览器本地时区比较年月日） */
+function isToday(s?: string): boolean {
+  if (!s) return false;
+  const d = new Date(s);
+  const n = new Date();
+  return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth() && d.getDate() === n.getDate();
+}
+
 export default function AiPage() {
   const { message } = AntApp.useApp();
   const { can } = useAppStore();
+  const navigate = useNavigate();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const canUse = can('ai:use');
+  /** 是否有权修改系统设置（决定错误态是否给「前往设置」按钮） */
+  const canConfig = can('setting:write');
 
   const [datasets, setDatasets] = useState<DatasetItem[]>([]);
   const [datasetId, setDatasetId] = useState<number | undefined>(undefined);
@@ -107,8 +123,10 @@ export default function AiPage() {
   const [history, setHistory] = useState<AiChatRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [lastError, setLastError] = useState('');
+  const [lastFailure, setLastFailure] = useState<AiFailure | null>(null);
   const abortedRef = useRef(false);
+  /** 最近一次失败的问题文本，供「重试」原地重发 */
+  const lastFailedRef = useRef('');
 
   const loadDatasets = useCallback(async () => {
     try {
@@ -137,6 +155,23 @@ export default function AiPage() {
     loadHistory();
   }, [canUse, loadDatasets, loadHistory]);
 
+  /** 刷新：清空错误并重新拉取数据集与历史 */
+  const refresh = useCallback(async () => {
+    setLastFailure(null);
+    await Promise.all([loadDatasets(), loadHistory()]);
+  }, [loadDatasets, loadHistory]);
+
+  /** 重试：优先重发上次失败的提问，否则刷新数据 */
+  const retry = () => {
+    const q = lastFailedRef.current.trim();
+    if (q) {
+      send(q);
+    } else {
+      setLastFailure(null);
+      void refresh();
+    }
+  };
+
   /** 有数据集时用其字段生成更贴合的示例问题 */
   const prompts = useMemo<PromptsItemType[]>(() => {
     const ds = datasets.find((d) => d.id === datasetId);
@@ -164,8 +199,9 @@ export default function AiPage() {
       return;
     }
     setInput('');
-    setLastError('');
+    setLastFailure(null);
     abortedRef.current = false;
+    lastFailedRef.current = q;
 
     const userMsg: ChatMessage = { key: uid(), role: 'user', content: q };
     const pendingKey = uid();
@@ -185,6 +221,7 @@ export default function AiPage() {
         setMessages((prev) => prev.filter((m) => m.key !== pendingKey));
         return;
       }
+      lastFailedRef.current = '';
       setMessages((prev) =>
         prev.map((m) =>
           m.key === pendingKey
@@ -209,14 +246,14 @@ export default function AiPage() {
       // 后台刷新历史
       loadHistory();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'AI 问数失败';
       if (abortedRef.current) {
         setMessages((prev) => prev.filter((m) => m.key !== pendingKey));
         return;
       }
-      setLastError(msg);
+      const failure = classifyAiError(e);
+      setLastFailure(failure);
       setMessages((prev) =>
-        prev.map((m) => (m.key === pendingKey ? { ...m, loading: false, failed: true, content: msg } : m))
+        prev.map((m) => (m.key === pendingKey ? { ...m, loading: false, failed: true, content: failure.title } : m))
       );
     } finally {
       setSending(false);
@@ -232,7 +269,8 @@ export default function AiPage() {
   const reset = () => {
     setMessages([]);
     setSessionKey(newSessionKey());
-    setLastError('');
+    setLastFailure(null);
+    lastFailedRef.current = '';
   };
 
   /** 从历史记录回放到对话中（不重新请求） */
@@ -256,6 +294,26 @@ export default function AiPage() {
     if (rec.session_key) setSessionKey(rec.session_key);
   };
 
+  /* ── 数据卡片（就地统计，不新增接口） ── */
+  const stats = useMemo<StatCardItem[]>(() => {
+    const okHist = history.filter((h) => (h.success === undefined ? true : !!h.success) && (h.duration_ms || 0) > 0);
+    const avgMs = okHist.length
+      ? Math.round(okHist.reduce((s, h) => s + (h.duration_ms || 0), 0) / okHist.length)
+      : 0;
+    return [
+      { key: 'history', label: '历史问答', value: history.length, suffix: '次', color: PALETTE.primary },
+      { key: 'datasets', label: '可选数据集', value: datasets.length, suffix: '个', color: PALETTE.cyan },
+      { key: 'today', label: '今日提问', value: history.filter((h) => isToday(h.created_at)).length, suffix: '次', color: PALETTE.green },
+      {
+        key: 'avg',
+        label: '平均耗时',
+        value: avgMs >= 1000 ? (avgMs / 1000).toFixed(1) : avgMs,
+        suffix: avgMs >= 1000 ? 's' : 'ms',
+        color: PALETTE.orange,
+      },
+    ];
+  }, [history, datasets]);
+
   /* ── 气泡列表 ── */
   const bubbleItems = useMemo(() => {
     return messages.map((m) => {
@@ -272,8 +330,8 @@ export default function AiPage() {
                 width: 30,
                 height: 30,
                 borderRadius: 9,
-                background: '#2D6FE4',
-                color: '#FFFFFF',
+                background: PALETTE.primary,
+                color: NEUTRAL.textInverse,
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -284,7 +342,7 @@ export default function AiPage() {
             </div>
           ),
           footer: (
-            <span style={{ fontSize: 11, color: '#B5B5B6' }}>{fmtTime(new Date(), 'HH:mm')}</span>
+            <span style={{ fontSize: 11, color: NEUTRAL.textTertiary }}>{fmtTime(new Date(), 'HH:mm')}</span>
           ),
         };
       }
@@ -298,7 +356,7 @@ export default function AiPage() {
             ellipsis: true,
             width: 130,
             render: (v: unknown) => {
-              if (v === null || v === undefined) return <span style={{ color: '#B5B5B6' }}>-</span>;
+              if (v === null || v === undefined) return <span style={{ color: NEUTRAL.textQuaternary }}>-</span>;
               const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
               return <span title={s}>{s}</span>;
             },
@@ -310,22 +368,22 @@ export default function AiPage() {
           <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <Space size={6} wrap>
               {meta.datasetName && (
-                <Tag bordered={false} style={{ background: 'rgba(54,135,255,.1)', color: '#2D6FE4' }}>
+                <Tag bordered={false} style={{ background: PALETTE.primarySoft, color: PALETTE.primaryDeep }}>
                   <DatabaseOutlined /> {meta.datasetName}
                 </Tag>
               )}
               {meta.rowCount !== undefined && (
-                <Tag bordered={false} style={{ background: 'rgba(162,215,60,.16)', color: '#003378' }}>
+                <Tag bordered={false} style={{ background: `${PALETTE.green}26`, color: PALETTE.green }}>
                   <TableOutlined /> {fmtNum(meta.rowCount)} 行
                 </Tag>
               )}
               {meta.duration !== undefined && (
-                <Tag bordered={false} style={{ background: 'rgba(255,192,0,.16)', color: '#003378' }}>
+                <Tag bordered={false} style={{ background: `${PALETTE.yellow}26`, color: PALETTE.orange }}>
                   <ThunderboltOutlined /> {(meta.duration / 1000).toFixed(1)}s
                 </Tag>
               )}
               {meta.model && (
-                <Tag bordered={false} style={{ background: 'rgba(115,219,255,.2)', color: '#2D6FE4' }}>
+                <Tag bordered={false} style={{ background: `${PALETTE.cyan}26`, color: PALETTE.cyan }}>
                   {meta.model}
                 </Tag>
               )}
@@ -338,18 +396,18 @@ export default function AiPage() {
                 items={[
                   {
                     key: 'sql',
-                    label: <span style={{ fontSize: 12, color: 'rgba(0,51,120,.6)' }}>查看执行的 SQL</span>,
+                    label: <span style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>查看执行的 SQL</span>,
                     children: (
                       <pre
                         style={{
                           margin: 0,
                           padding: 10,
                           borderRadius: 8,
-                          background: 'rgba(0,51,120,.04)',
-                          border: '1px solid #DCDDDD',
+                          background: NEUTRAL.surfaceSunken,
+                          border: `1px solid ${NEUTRAL.border}`,
                           fontSize: 11.5,
                           lineHeight: 1.6,
-                          color: '#003378',
+                          color: NEUTRAL.text,
                           whiteSpace: 'pre-wrap',
                           wordBreak: 'break-all',
                           maxHeight: 220,
@@ -366,7 +424,7 @@ export default function AiPage() {
             )}
 
             {!!meta.rows?.length && (
-              <div style={{ border: '1px solid #DCDDDD', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 8, overflow: 'hidden' }}>
                 <Table
                   size="small"
                   rowKey={(_, i) => String(i)}
@@ -377,7 +435,7 @@ export default function AiPage() {
                   bordered
                 />
                 {(meta.rows.length || 0) > 30 && (
-                  <div style={{ padding: '4px 8px', fontSize: 11.5, color: '#B5B5B6' }}>
+                  <div style={{ padding: '4px 8px', fontSize: 11.5, color: NEUTRAL.textTertiary }}>
                     仅展示前 30 行，共 {fmtNum(meta.rows.length)} 行
                   </div>
                 )}
@@ -399,8 +457,8 @@ export default function AiPage() {
               width: 30,
               height: 30,
               borderRadius: 9,
-              background: 'linear-gradient(135deg, #2D6FE4, #45B4FF)',
-              color: '#FFFFFF',
+              background: `linear-gradient(135deg, ${PALETTE.primary}, ${PALETTE.cyan})`,
+              color: NEUTRAL.textInverse,
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -425,12 +483,12 @@ export default function AiPage() {
 
   if (!canUse) {
     return (
-      <Page title="AI 问数" subTitle="用自然语言查询数据">
+      <Page title="AI 问数">
         <Alert
           type="warning"
           showIcon
           message="当前账号没有 AI 问数权限"
-          description="AI 问数需要 ai:use 权限点，请联系管理员在角色权限中开通。"
+          description="AI 问数需要 ai:use 权限点，请联系管理员在「用户管理 → 角色权限」中开通。"
         />
       </Page>
     );
@@ -450,7 +508,7 @@ export default function AiPage() {
         </Tooltip>
       }
       styles={{ body: { padding: history.length ? 8 : 16, maxHeight: isMobile ? '60vh' : 560, overflow: 'auto' } }}
-      style={{ border: '1px solid #DCDDDD', borderRadius: 12 }}
+      style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12 }}
     >
       {historyLoading ? (
         <div style={{ padding: 24, textAlign: 'center' }}>
@@ -470,15 +528,15 @@ export default function AiPage() {
                   cursor: 'pointer',
                   padding: '8px 10px',
                   borderRadius: 8,
-                  border: '1px solid #DCDDDD',
-                  background: '#FFFFFF',
+                  border: `1px solid ${NEUTRAL.borderSubtle}`,
+                  background: NEUTRAL.surface,
                   minHeight: 44,
                 }}
               >
                 <div
                   style={{
                     fontSize: 12.5,
-                    color: '#003378',
+                    color: NEUTRAL.text,
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
@@ -486,8 +544,8 @@ export default function AiPage() {
                 >
                   {rec.question}
                 </div>
-                <div style={{ marginTop: 4, display: 'flex', gap: 8, fontSize: 11, color: '#B5B5B6', flexWrap: 'wrap' }}>
-                  <Tag bordered={false} color={ok ? '#A2D73C' : '#E86161'} style={{ color: '#FFFFFF', marginInlineEnd: 0 }}>
+                <div style={{ marginTop: 4, display: 'flex', gap: 8, fontSize: 11, color: NEUTRAL.textTertiary, flexWrap: 'wrap' }}>
+                  <Tag bordered={false} color={ok ? PALETTE.green : PALETTE.red} style={{ color: NEUTRAL.textInverse, marginInlineEnd: 0 }}>
                     {ok ? '成功' : '失败'}
                   </Tag>
                   <span>{rec.result_rows ? `${rec.result_rows} 行` : ''}</span>
@@ -501,24 +559,61 @@ export default function AiPage() {
     </Card>
   );
 
+  /* ── 错误态：友好提示卡片 + 行动指引（不做整页替换） ── */
+  const errorCard = lastFailure ? (
+    <Card
+      style={{ marginBottom: 12, border: `1px solid ${PALETTE.yellow}` }}
+      styles={{ body: { padding: 14 } }}
+    >
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        <WarningOutlined style={{ color: PALETTE.yellow, fontSize: 18, marginTop: 1 }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: NEUTRAL.text }}>{lastFailure.title}</div>
+          {lastFailure.detail ? (
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginTop: 2, wordBreak: 'break-word' }}>
+              {lastFailure.detail}
+            </div>
+          ) : null}
+          <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, marginTop: 4 }}>{lastFailure.hint}</div>
+        </div>
+      </div>
+      <Space size={8} wrap style={{ marginTop: 12 }}>
+        {lastFailure.config && canConfig ? (
+          <Button type="primary" size="small" icon={<SettingOutlined />} onClick={() => navigate('/settings')}>
+            前往系统设置
+          </Button>
+        ) : null}
+        {lastFailure.dataset ? (
+          <Button size="small" icon={<DatabaseOutlined />} onClick={() => navigate('/datasets')}>
+            前往数据集
+          </Button>
+        ) : null}
+        <Button size="small" icon={<ReloadOutlined />} onClick={retry}>
+          重试
+        </Button>
+      </Space>
+    </Card>
+  ) : null;
+
   return (
     <Page
       title="AI 问数"
-      subTitle="用自然语言提问，自动生成并执行只读 SQL，返回解读与结果"
+      search={
+        <Select
+          allowClear
+          value={datasetId}
+          onChange={setDatasetId}
+          placeholder="全部数据集（自动匹配）"
+          style={{ width: isMobile ? '100%' : 240 }}
+          size={isMobile ? 'large' : 'middle'}
+          showSearch
+          optionFilterProp="label"
+          suffixIcon={<DatabaseOutlined />}
+          options={datasets.map((d) => ({ value: d.id, label: d.name }))}
+        />
+      }
       extra={
-        <Space wrap size={8}>
-          <Select
-            allowClear
-            value={datasetId}
-            onChange={setDatasetId}
-            placeholder="自动匹配数据集"
-            style={{ width: isMobile ? '100%' : 220 }}
-            size={isMobile ? 'large' : 'middle'}
-            showSearch
-            optionFilterProp="label"
-            suffixIcon={<DatabaseOutlined />}
-            options={datasets.map((d) => ({ value: d.id, label: d.name }))}
-          />
+        <Space size={8} wrap>
           <Button icon={<ClearOutlined />} onClick={reset} disabled={!messages.length}>
             新会话
           </Button>
@@ -529,24 +624,9 @@ export default function AiPage() {
           )}
         </Space>
       }
+      stats={stats}
     >
-      {lastError && (
-        <Alert
-          type="warning"
-          showIcon
-          closable
-          onClose={() => setLastError('')}
-          style={{ marginBottom: 12 }}
-          message="AI 问数暂不可用"
-          description={
-            <span>
-              {lastError}
-              <br />
-              常见原因：系统设置未启用 AI 问数、未配置模型接口地址/密钥，或尚无可用数据集。
-            </span>
-          }
-        />
-      )}
+      {errorCard}
 
       <div
         style={{
@@ -559,7 +639,7 @@ export default function AiPage() {
         {/* 对话区 */}
         <Card
           styles={{ body: { padding: 0, display: 'flex', flexDirection: 'column' } }}
-          style={{ border: '1px solid #DCDDDD', borderRadius: 12, overflow: 'hidden' }}
+          style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, overflow: 'hidden' }}
         >
           <div
             style={{
@@ -567,7 +647,7 @@ export default function AiPage() {
               minHeight: 320,
               overflow: 'auto',
               padding: isMobile ? 12 : 16,
-              background: '#FFFFFF',
+              background: NEUTRAL.surface,
             }}
           >
             {messages.length === 0 ? (
@@ -580,8 +660,8 @@ export default function AiPage() {
                         width: 54,
                         height: 54,
                         borderRadius: 15,
-                        background: 'linear-gradient(135deg, #003378, #3687FF)',
-                        color: '#FFFFFF',
+                        background: `linear-gradient(135deg, ${PALETTE.primaryDeep}, ${PALETTE.primaryLight})`,
+                        color: NEUTRAL.textInverse,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
@@ -597,7 +677,7 @@ export default function AiPage() {
                 />
                 <div style={{ marginTop: 16 }}>
                   <Prompts
-                    title={<span style={{ fontSize: 12.5, color: 'rgba(0,51,120,.55)' }}>试试这些问题：</span>}
+                    title={<span style={{ fontSize: 12.5, color: NEUTRAL.textTertiary }}>试试这些问题：</span>}
                     items={prompts}
                     vertical={isMobile}
                     wrap
@@ -626,13 +706,18 @@ export default function AiPage() {
           </div>
 
           {/* 输入区 */}
-          <div style={{ borderTop: '1px solid #DCDDDD', padding: isMobile ? 10 : 12, background: '#FFFFFF' }}>
+          <div style={{ borderTop: `1px solid ${NEUTRAL.borderSubtle}`, padding: isMobile ? 10 : 12, background: NEUTRAL.surface }}>
             {messages.length > 0 && (
-              <div style={{ marginBottom: 8, fontSize: 11.5, color: '#B5B5B6', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ marginBottom: 8, fontSize: 11.5, color: NEUTRAL.textTertiary, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <span>会话：{sessionKey.slice(0, 8)}</span>
                 <span>数据集：{datasets.find((d) => d.id === datasetId)?.name || '自动匹配'}</span>
               </div>
             )}
+            {sending ? (
+              <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, marginBottom: 8 }}>
+                正在生成只读 SQL 并执行，单次通常需要 3~20 秒，请稍候…
+              </div>
+            ) : null}
             <Sender
               value={input}
               onChange={setInput}
@@ -642,7 +727,7 @@ export default function AiPage() {
               placeholder="例如：按地区统计客户数量，取前 10 名"
               autoSize={{ minRows: 1, maxRows: 4 }}
               prefix={
-                <Tag bordered={false} style={{ background: 'rgba(54,135,255,.1)', color: '#2D6FE4', marginInlineEnd: 0 }}>
+                <Tag bordered={false} style={{ background: PALETTE.primarySoft, color: PALETTE.primaryDeep, marginInlineEnd: 0 }}>
                   <DatabaseOutlined /> {datasets.find((d) => d.id === datasetId)?.name || '自动'}
                 </Tag>
               }
@@ -658,31 +743,32 @@ export default function AiPage() {
               }}
               style={{ borderRadius: 12 }}
             />
-            <div style={{ marginTop: 8, fontSize: 11.5, color: '#B5B5B6', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ marginTop: 8, fontSize: 11.5, color: NEUTRAL.textTertiary, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <span>Enter 发送 · 服务端仅执行只读 SQL</span>
               {isMobile && <span>结果较多时表格可左右滑动</span>}
             </div>
           </div>
         </Card>
 
-        {/* 历史（桌面常驻 / 移动端抽屉） */}
+        {/* 历史（桌面常驻 / 移动端 Modal） */}
         {!isMobile && historyPanel}
       </div>
 
       {isMobile && (
-        <Drawer
+        <Modal
           title="最近问数"
-          placement="right"
-          width="86vw"
           open={historyOpen}
-          onClose={() => setHistoryOpen(false)}
-          styles={{ body: { padding: 12, background: '#FFFFFF' } }}
+          onCancel={() => setHistoryOpen(false)}
+          footer={null}
+          width="100%"
+          style={{ top: 24, maxWidth: 'calc(100vw - 24px)' }}
+          destroyOnHidden
         >
           {historyPanel}
-        </Drawer>
+        </Modal>
       )}
 
-      <Paragraph style={{ marginTop: 12, marginBottom: 0, fontSize: 11.5, color: '#B5B5B6' }}>
+      <Paragraph style={{ marginTop: 12, marginBottom: 0, fontSize: 11.5, color: NEUTRAL.textTertiary }}>
         <Text type="secondary" style={{ fontSize: 11.5 }}>
           提示：AI 生成的 SQL 会经过后端只读校验（仅允许单条 SELECT / WITH），不会修改任何数据。
         </Text>

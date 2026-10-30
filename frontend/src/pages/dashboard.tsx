@@ -9,46 +9,40 @@ import {
 } from 'antd';
 import {
   ApiOutlined, BarChartOutlined, CloudDownloadOutlined, DashboardOutlined, DatabaseOutlined,
-  FieldStringOutlined, ProjectOutlined, ReloadOutlined, ShareAltOutlined, TableOutlined,
-  TeamOutlined, ThunderboltOutlined, RobotOutlined, FileTextOutlined,
+  ReloadOutlined, ShareAltOutlined, TableOutlined, RobotOutlined, FileTextOutlined,
 } from '@ant-design/icons';
-import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore } from '@/stores/app';
 import { fetchDashboard, normalizeTrend } from '@/api/dashboard';
 import type { DashboardData, RecentLogItem } from '@/api/dashboard';
+import { PALETTE, NEUTRAL } from '@/theme';
 import { fmtAgo, fmtNum, fmtTime } from '@/utils';
 import EChart from './dashboard/EChart';
 
 const { useBreakpoint } = Grid;
 const { Text } = Typography;
 
-/** 契约规定的 KPI 六色：brand / green / cyan / orange / purple / pink */
-const KPI_COLORS: [string, string, string, string, string, string] = [
-  '#2D6FE4', '#A2D73C', '#45B4FF', '#FFC000', '#EC673C', '#E86161',
-];
-
-interface KpiItem {
-  key: string;
-  title: string;
-  value: number;
-  color: string;
-  icon: ReactNode;
-  hint?: string;
+/** 把主题色十六进制转成带透明度的 rgba（仅派生自令牌，不写死旧色值） */
+function tint(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
 }
 
-/** 结果标签配色（仅用调色板） */
+/** 结果标签配色（仅用主题语义色） */
 function resultTag(result: string) {
-  if (result === 'success') return <Tag color="#A2D73C">成功</Tag>;
-  return <Tag color="#E86161">{result === 'failed' ? '失败' : result || '异常'}</Tag>;
+  if (result === 'success') return <Tag color={PALETTE.green}>成功</Tag>;
+  return <Tag color={PALETTE.red}>{result === 'failed' ? '失败' : result || '异常'}</Tag>;
 }
 
 export default function DashboardPage() {
   const navigate = useNavigate();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
-  const user = useAppStore((s) => s.user);
 
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,33 +67,15 @@ export default function DashboardPage() {
 
   const stats = data?.stats;
 
-  const kpis = useMemo<KpiItem[]>(() => {
+  const kpis = useMemo<StatCardItem[]>(() => {
     const s = stats;
     return [
-      {
-        key: 'projects', title: '数据项目', value: s?.projects ?? 0, color: KPI_COLORS[0],
-        icon: <ProjectOutlined />, hint: `活跃 ${s?.activeProjects ?? 0}`,
-      },
-      {
-        key: 'data', title: '数据总量', value: s?.dataTotal ?? 0, color: KPI_COLORS[1],
-        icon: <DatabaseOutlined />, hint: '累计接收记录',
-      },
-      {
-        key: 'logs', title: '接收日志', value: s?.logTotal ?? 0, color: KPI_COLORS[2],
-        icon: <ThunderboltOutlined />, hint: '全部推送次数',
-      },
-      {
-        key: 'fields', title: '字段总数', value: s?.fields ?? 0, color: KPI_COLORS[3],
-        icon: <FieldStringOutlined />, hint: '已配置字段定义',
-      },
-      {
-        key: 'datasets', title: '数据集', value: s?.datasets ?? 0, color: KPI_COLORS[4],
-        icon: <TableOutlined />, hint: `报表 ${s?.reports ?? 0} 张`,
-      },
-      {
-        key: 'users', title: '平台用户', value: s?.users ?? 0, color: KPI_COLORS[5],
-        icon: <TeamOutlined />, hint: `活跃 ${s?.activeUsers ?? 0}`,
-      },
+      { key: 'projects', label: '数据项目', value: s?.projects ?? 0, suffix: '个', color: PALETTE.primary, hint: `活跃 ${s?.activeProjects ?? 0}` },
+      { key: 'data', label: '数据总量', value: fmtNum(s?.dataTotal ?? 0), color: PALETTE.green, hint: '累计接收记录' },
+      { key: 'logs', label: '接收日志', value: fmtNum(s?.logTotal ?? 0), color: PALETTE.cyan, hint: '全部推送次数' },
+      { key: 'fields', label: '字段总数', value: s?.fields ?? 0, color: PALETTE.yellow, hint: '已配置字段定义' },
+      { key: 'datasets', label: '数据集', value: s?.datasets ?? 0, suffix: '个', color: PALETTE.violet, hint: `报表 ${s?.reports ?? 0} 张` },
+      { key: 'users', label: '平台用户', value: s?.users ?? 0, suffix: '人', color: PALETTE.orange, hint: `活跃 ${s?.activeUsers ?? 0}` },
     ];
   }, [stats]);
 
@@ -108,27 +84,27 @@ export default function DashboardPage() {
   const trendTotal = useMemo(() => trend.reduce((n, p) => n + p.count, 0), [trend]);
 
   const trendOption = useMemo(() => ({
-    color: ['#3687FF'],
+    color: [PALETTE.primary],
     grid: { left: 8, right: 16, top: 24, bottom: 8, containLabel: true },
     tooltip: {
       trigger: 'axis' as const,
-      backgroundColor: '#FFFFFF',
-      borderColor: '#DCDDDD',
-      textStyle: { color: '#003378', fontSize: 12 },
+      backgroundColor: NEUTRAL.surface,
+      borderColor: NEUTRAL.border,
+      textStyle: { color: NEUTRAL.text, fontSize: 12 },
     },
     xAxis: {
       type: 'category' as const,
       data: trend.map((p) => p.date),
       boundaryGap: false,
-      axisLine: { lineStyle: { color: '#DCDDDD' } },
+      axisLine: { lineStyle: { color: NEUTRAL.borderSubtle } },
       axisTick: { show: false },
-      axisLabel: { color: '#B5B5B6', fontSize: isMobile ? 10 : 11 },
+      axisLabel: { color: NEUTRAL.textTertiary, fontSize: isMobile ? 10 : 11 },
     },
     yAxis: {
       type: 'value' as const,
       minInterval: 1,
-      splitLine: { lineStyle: { color: '#DCDDDD', type: 'dashed' as const } },
-      axisLabel: { color: '#B5B5B6', fontSize: 11 },
+      splitLine: { lineStyle: { color: NEUTRAL.borderSubtle, type: 'dashed' as const } },
+      axisLabel: { color: NEUTRAL.textTertiary, fontSize: 11 },
     },
     series: [
       {
@@ -143,8 +119,8 @@ export default function DashboardPage() {
             type: 'linear' as const,
             x: 0, y: 0, x2: 0, y2: 1,
             colorStops: [
-              { offset: 0, color: 'rgba(54,135,255,.26)' },
-              { offset: 1, color: 'rgba(54,135,255,.02)' },
+              { offset: 0, color: tint(PALETTE.primary, 0.26) },
+              { offset: 1, color: tint(PALETTE.primary, 0.02) },
             ],
           },
         },
@@ -167,7 +143,7 @@ export default function DashboardPage() {
 
   if (failed) {
     return (
-      <Page title="数据概览" subTitle="平台运行状态与最近动态">
+      <Page title="数据概览">
         <Result
           status="warning"
           title="概览数据加载失败"
@@ -181,7 +157,7 @@ export default function DashboardPage() {
   return (
     <Page
       title="数据概览"
-      subTitle={`${user?.displayName || user?.username || '你好'}，欢迎回来 · 平台运行状态与最近动态`}
+      stats={kpis}
       extra={
         <Space size={8}>
           <Button icon={<DashboardOutlined />} onClick={() => navigate('/dashboard/crm')}>
@@ -193,58 +169,18 @@ export default function DashboardPage() {
         </Space>
       }
     >
-      {/* ── KPI 卡片：移动端单列 ── */}
       <Row gutter={[12, 12]}>
-        {kpis.map((k) => (
-          <Col key={k.key} xs={24} sm={12} md={8} xxl={4}>
-            <Card
-              variant="outlined"
-              style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
-              styles={{ body: { padding: isMobile ? 14 : 16 } }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div
-                  style={{
-                    width: 44, height: 44, borderRadius: 12, flex: '0 0 44px',
-                    background: `${k.color}1A`, color: k.color,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20,
-                  }}
-                >
-                  {k.icon}
-                </div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 12.5, color: 'rgba(0,51,120,.55)', whiteSpace: 'nowrap' }}>
-                    {k.title}
-                  </div>
-                  {loading && !data ? (
-                    <Skeleton.Input active size="small" style={{ width: 80, height: 26, marginTop: 4 }} />
-                  ) : (
-                    <div style={{ fontSize: isMobile ? 22 : 24, fontWeight: 700, color: k.color, lineHeight: 1.3 }}>
-                      {fmtNum(k.value)}
-                    </div>
-                  )}
-                  {k.hint && (
-                    <div style={{ fontSize: 11.5, color: '#B5B5B6', marginTop: 1 }}>{k.hint}</div>
-                  )}
-                </div>
-              </div>
-            </Card>
-          </Col>
-        ))}
-      </Row>
-
-      <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
         {/* ── 趋势图 ── */}
         <Col xs={24} lg={15}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: NEUTRAL.border, borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
-            title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>近 7 天数据接收趋势</span>}
+            title={<span style={{ fontSize: 14, fontWeight: 600, color: NEUTRAL.text }}>近 7 天数据接收趋势</span>}
             extra={
               <Space size={6}>
                 <Text type="secondary" style={{ fontSize: 12 }}>合计</Text>
-                <Text strong style={{ color: '#2D6FE4', fontSize: 14 }}>{fmtNum(trendTotal)}</Text>
+                <Text strong style={{ color: PALETTE.primaryDeep, fontSize: 14 }}>{fmtNum(trendTotal)}</Text>
               </Space>
             }
           >
@@ -260,9 +196,9 @@ export default function DashboardPage() {
         <Col xs={24} lg={9}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: NEUTRAL.border, borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
-            title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>资源速览</span>}
+            title={<span style={{ fontSize: 14, fontWeight: 600, color: NEUTRAL.text }}>资源速览</span>}
           >
             <Row gutter={[8, 8]}>
               {resources.map((r) => (
@@ -273,25 +209,25 @@ export default function DashboardPage() {
                     onClick={() => navigate(r.path)}
                     onKeyDown={(e) => { if (e.key === 'Enter') navigate(r.path); }}
                     style={{
-                      border: '1px solid #DCDDDD', borderRadius: 10, padding: '10px 12px',
+                      border: `1px solid ${NEUTRAL.border}`, borderRadius: 10, padding: '10px 12px',
                       cursor: 'pointer', minHeight: 44, display: 'flex',
                       alignItems: 'center', justifyContent: 'space-between', gap: 8,
                     }}
                   >
-                    <Space size={6} style={{ color: 'rgba(0,51,120,.72)', fontSize: 12.5, minWidth: 0 }}>
-                      <span style={{ color: '#45B4FF' }}>{r.icon}</span>
+                    <Space size={6} style={{ color: NEUTRAL.textSecondary, fontSize: 12.5, minWidth: 0 }}>
+                      <span style={{ color: PALETTE.cyan }}>{r.icon}</span>
                       <span style={{ whiteSpace: 'nowrap' }}>{r.name}</span>
                     </Space>
-                    <span style={{ fontSize: 15, fontWeight: 700, color: '#2D6FE4' }}>{fmtNum(r.value)}</span>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: PALETTE.primaryDeep }}>{fmtNum(r.value)}</span>
                   </div>
                 </Col>
               ))}
             </Row>
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid #DCDDDD' }}>
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${NEUTRAL.borderSubtle}` }}>
               <Space size={6} wrap>
-                <Tag color="#45B4FF">共有 {fmtNum(stats?.projects ?? 0)} 个项目</Tag>
-                <Tag color="#A2D73C">活跃 {fmtNum(stats?.activeProjects ?? 0)} 个</Tag>
-                <Tag color="#B5B5B6">未分组 {fmtNum(Math.max((stats?.projects ?? 0) - (stats?.activeProjects ?? 0), 0))} 个</Tag>
+                <Tag color={PALETTE.cyan}>共有 {fmtNum(stats?.projects ?? 0)} 个项目</Tag>
+                <Tag color={PALETTE.green}>活跃 {fmtNum(stats?.activeProjects ?? 0)} 个</Tag>
+                <Tag color={NEUTRAL.textTertiary}>未分组 {fmtNum(Math.max((stats?.projects ?? 0) - (stats?.activeProjects ?? 0), 0))} 个</Tag>
               </Space>
             </div>
           </Card>
@@ -303,9 +239,9 @@ export default function DashboardPage() {
         <Col xs={24} lg={15}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: NEUTRAL.border, borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
-            title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>最近推送日志</span>}
+            title={<span style={{ fontSize: 14, fontWeight: 600, color: NEUTRAL.text }}>最近推送日志</span>}
             extra={<Button type="link" size="small" onClick={() => navigate('/projects')}>全部项目</Button>}
           >
             {loading && !data ? (
@@ -321,7 +257,7 @@ export default function DashboardPage() {
                     onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/projects/${item.projectId}`); }}
                     style={{
                       padding: isMobile ? '9px 0' : '8px 0',
-                      borderTop: i === 0 ? 'none' : '1px solid #DCDDDD',
+                      borderTop: i === 0 ? 'none' : `1px solid ${NEUTRAL.borderSubtle}`,
                       cursor: 'pointer',
                       display: 'flex',
                       alignItems: isMobile ? 'flex-start' : 'center',
@@ -332,7 +268,7 @@ export default function DashboardPage() {
                   >
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <Text strong style={{ color: '#003378', fontSize: 13 }}>
+                        <Text strong style={{ color: NEUTRAL.text, fontSize: 13 }}>
                           {item.op_label || item.op}
                         </Text>
                         {resultTag(item.result)}
@@ -340,7 +276,7 @@ export default function DashboardPage() {
                       </div>
                       <div
                         style={{
-                          fontSize: 12, color: 'rgba(0,51,120,.6)', marginTop: 2,
+                          fontSize: 12, color: NEUTRAL.textSecondary, marginTop: 2,
                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                         }}
                       >
@@ -361,9 +297,9 @@ export default function DashboardPage() {
         <Col xs={24} lg={9}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: NEUTRAL.border, borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
-            title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>项目快照</span>}
+            title={<span style={{ fontSize: 14, fontWeight: 600, color: NEUTRAL.text }}>项目快照</span>}
             extra={<Button type="link" size="small" onClick={() => navigate('/projects')}>管理</Button>}
           >
             {loading && !data ? (
@@ -380,23 +316,23 @@ export default function DashboardPage() {
                     style={{
                       display: 'flex', alignItems: 'center', gap: 10,
                       padding: isMobile ? '9px 0' : '8px 0',
-                      borderTop: i === 0 ? 'none' : '1px solid #DCDDDD',
+                      borderTop: i === 0 ? 'none' : `1px solid ${NEUTRAL.borderSubtle}`,
                       cursor: 'pointer', minHeight: 44,
                     }}
                   >
                     <div
                       style={{
                         width: 34, height: 34, borderRadius: 9, flex: '0 0 34px',
-                        background: 'rgba(54,135,255,.12)', color: '#2D6FE4',
+                        background: PALETTE.primarySoft, color: PALETTE.primaryDeep,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                       }}
                     >
                       <FileTextOutlined />
                     </div>
                     <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ fontSize: 13, color: '#003378', fontWeight: 500 }}>{p.name}</div>
+                      <div style={{ fontSize: 13, color: NEUTRAL.text, fontWeight: 500 }}>{p.name}</div>
                       <Tooltip title={p.lastPushAt ? `最后推送：${fmtTime(p.lastPushAt)}` : '暂无推送'}>
-                        <div style={{ fontSize: 11.5, color: '#B5B5B6' }}>
+                        <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary }}>
                           {p.code ? `${p.code} · ` : ''}
                           {p.lastPushAt ? fmtAgo(p.lastPushAt) : '未接收数据'}
                         </div>
@@ -412,7 +348,7 @@ export default function DashboardPage() {
         </Col>
       </Row>
 
-      <div style={{ marginTop: 10, fontSize: 11.5, color: '#B5B5B6' }}>
+      <div style={{ marginTop: 10, fontSize: 11.5, color: NEUTRAL.textTertiary }}>
         <CloudDownloadOutlined /> 概览数据为实时查询，下拉或点击「刷新」可获取最新状态
       </div>
     </Page>

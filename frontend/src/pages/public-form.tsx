@@ -9,20 +9,21 @@ import { formsApi } from '@/api/forms';
 import type {
   ExamResult, FormField, FormFlowInfo, PublicFormSchema, PublicSubmitResult,
 } from '@/api/forms';
+import { PALETTE, NEUTRAL } from '@/theme';
 
-/** 调色板（契约唯一允许的 13 色） */
+/** 调色板（唯一来源：@/theme 令牌） */
 const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  deep: '#003378',
-  cyan: '#45B4FF',
-  green: '#A2D73C',
-  orange: '#EC673C',
-  red: '#E86161',
-  yellow: '#FFC000',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
+  primary: PALETTE.primary,
+  blue: PALETTE.primary,
+  deep: NEUTRAL.text,
+  cyan: PALETTE.cyan,
+  green: PALETTE.green,
+  orange: PALETTE.orange,
+  red: PALETTE.red,
+  yellow: PALETTE.yellow,
+  gray: NEUTRAL.textTertiary,
+  line: NEUTRAL.border,
+} as const;
 
 type Phase = 'loading' | 'ready' | 'error' | 'done';
 
@@ -378,7 +379,7 @@ export default function PublicFormPage() {
           {result.writeInfo && result.writeInfo.error && (
             <div
               style={{
-                marginTop: 12, padding: 12, borderRadius: 10, background: '#FFFFFF',
+                marginTop: 12, padding: 12, borderRadius: 10, background: NEUTRAL.surface,
                 border: `1px solid ${C.yellow}`, color: C.orange, fontSize: 13,
               }}
             >
@@ -406,8 +407,8 @@ export default function PublicFormPage() {
         {/* 头部 */}
         <div
           style={{
-            background: 'linear-gradient(135deg, #003378, #2D6FE4 55%, #3687FF)',
-            color: '#FFFFFF',
+            background: `linear-gradient(135deg, ${NEUTRAL.text} 0%, ${PALETTE.primary} 55%, ${PALETTE.primaryLight} 100%)`,
+            color: NEUTRAL.textInverse,
             padding: '26px 18px 22px',
             borderBottomLeftRadius: 18,
             borderBottomRightRadius: 18,
@@ -441,7 +442,7 @@ export default function PublicFormPage() {
           {submitErrors.length > 0 && (
             <div
               style={{
-                marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: '#FFFFFF',
+                marginBottom: 12, padding: '10px 12px', borderRadius: 10, background: NEUTRAL.surface,
                 border: `1px solid ${C.red}`, color: C.red, fontSize: 13,
               }}
             >
@@ -519,7 +520,7 @@ function ExamResultCard({ exam }: { exam: ExamResult }) {
   return (
     <div
       style={{
-        marginTop: 12, background: '#FFFFFF', border: `1px solid ${C.line}`,
+        marginTop: 12, background: NEUTRAL.surface, border: `1px solid ${C.line}`,
         borderRadius: 12, padding: 14,
       }}
     >
@@ -568,7 +569,7 @@ function FlowInfoCard({ flow }: { flow: FormFlowInfo }) {
   return (
     <div
       style={{
-        marginTop: 12, background: '#FFFFFF', border: `1px solid ${C.line}`,
+        marginTop: 12, background: NEUTRAL.surface, border: `1px solid ${C.line}`,
         borderRadius: 12, padding: 14,
       }}
     >
@@ -589,7 +590,7 @@ function FlowInfoCard({ flow }: { flow: FormFlowInfo }) {
               style={{
                 width: 20, height: 20, borderRadius: 10, flexShrink: 0, fontSize: 11,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#FFFFFF',
+                color: NEUTRAL.textInverse,
                 background: n.status === 'pending' ? C.primary : n.status === 'approved' ? C.green : C.gray,
               }}
             >
@@ -606,7 +607,7 @@ function FlowInfoCard({ flow }: { flow: FormFlowInfo }) {
 
 const pageStyle: React.CSSProperties = {
   minHeight: '100vh',
-  background: '#FFFFFF',
+  background: NEUTRAL.pageBg,
   fontFamily:
     "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
 };

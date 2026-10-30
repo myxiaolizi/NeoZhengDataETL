@@ -1,21 +1,28 @@
 /**
  * 邮箱推送
- *   5 个页签：概览 / 邮箱账户 / 邮件浏览 / 导入日志 / 运行设置
+ *   6 个页签：概览 / 数据项目 / 邮箱账户 / 邮件浏览 / 导入日志 / 运行设置
  *   真实接口：/api/mail-push/*（见 src/routes/api.js 与 src/mail-inbox.js）
+ *
+ *   「数据项目」= 邮件 Excel 附件入库后的数据管理（V3.6 已有能力，V4 重构时丢失，
+ *   2026-10-30 补回）：项目卡片 → 抽屉内查看/搜索/排序/分页/导出 CSV/改名/清空/删除。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { NEUTRAL, PALETTE, SHADOW } from '@/theme';
+import type { StatCardItem } from '@/components/StatCards';
 import {
   Button, Space, Tag, App, Typography, Tabs, Card, Statistic, Alert, Descriptions,
-  Drawer, Empty, Spin, Badge, Tooltip, Progress, Switch, Input, Table, Segmented, Divider,
-  Form, InputNumber,
+  Empty, Spin, Badge, Tooltip, Progress, Switch, Input, Table, Segmented, Divider,
+  Form, InputNumber, Select, Modal,
 } from 'antd';
+import type { TableColumnsType } from 'antd';
 import {
   PlusOutlined, ReloadOutlined, PlayCircleOutlined, MailOutlined, EditOutlined, DeleteOutlined,
   ThunderboltOutlined, EyeOutlined, PaperClipOutlined, CheckCircleFilled, CloseCircleFilled,
-  InboxOutlined, SearchOutlined, ClockCircleOutlined, SyncOutlined,
+  InboxOutlined, SearchOutlined, ClockCircleOutlined, SyncOutlined, DownloadOutlined,
 } from '@ant-design/icons';
 import {
-  ProTable, DrawerForm, ProFormText, ProFormDigit, ProFormSwitch,
+  ProTable, ModalForm, ProFormText, ProFormDigit, ProFormSwitch,
 } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import Page from '@/components/Page';
@@ -25,10 +32,12 @@ import {
   listMailAccounts, createMailAccount, updateMailAccount, deleteMailAccount, toggleMailAccount,
   listMailPresets, testMailAccount, listMailMessages, getMailMessage, runMailPush,
   getMailPushStatus, getMailPushOverview, listMailLogs, getMailPushSettings, saveMailPushSettings,
+  listMailProjects,
+  mailProjectExportUrl,
 } from '@/api/mail-push';
 import type {
   MailAccount, MailAccountPayload, MailLogRow, MailMessageDetail, MailMessageSummary,
-  MailPreset, MailPushOverview, MailPushStatus,
+  MailPreset, MailProject, MailPushOverview, MailPushStatus,
 } from '@/api/mail-push';
 
 const { Text, Paragraph } = Typography;
@@ -56,9 +65,9 @@ type SettingsFormValues = {
 };
 
 const RESULT_META: Record<string, { label: string; color: string }> = {
-  success: { label: '成功', color: '#A2D73C' },
-  skipped: { label: '跳过', color: '#FFC000' },
-  failed: { label: '失败', color: '#E86161' },
+  success: { label: '成功', color: PALETTE.green },
+  skipped: { label: '跳过', color: PALETTE.yellow },
+  failed: { label: '失败', color: PALETTE.red },
 };
 
 export default function MailPushPage() {
@@ -66,6 +75,10 @@ export default function MailPushPage() {
   const can = usePermission();
   const canSettings = can('settings:write');
   const canRun = can('project:write');
+  /** 读取数据表行 / 导出 CSV 需要 data:read；改名/清空/删除项目需要 project:write */
+  const canData = can('data:read');
+  const canProjectWrite = can('project:write');
+  const canLogRead = can('log:read');
 
   const [tab, setTab] = useState('overview');
 
@@ -102,6 +115,15 @@ export default function MailPushPage() {
   const [logLoading, setLogLoading] = useState(false);
   const [logKeyword, setLogKeyword] = useState('');
   const [logResult, setLogResult] = useState<string>('');
+  const [logProjectId, setLogProjectId] = useState<number | undefined>(undefined);
+
+  /* 数据项目（邮件附件导入后的数据管理） */
+  const [projects, setProjects] = useState<MailProject[]>([]);
+  const [projLoading, setProjLoading] = useState(false);
+  const [projKeyword, setProjKeyword] = useState('');
+
+  /** 抽屉：当前项目 */
+  const navigate = useNavigate();
 
   /* 设置 */
   const settingsFormRef = useRef<any>(null);
@@ -113,20 +135,22 @@ export default function MailPushPage() {
   const accountActionRef = useRef<ActionType>(null);
   const logActionRef = useRef<ActionType>(null);
 
-  /** 顶部概览 + 状态 + 账户 + 预置 */
+  /** 顶部概览 + 状态 + 账户 + 预置 + 数据项目 */
   const loadTop = useCallback(async () => {
     setLoadingTop(true);
     try {
-      const [ov, st, acc, pre] = await Promise.all([
+      const [ov, st, acc, pre, prj] = await Promise.all([
         getMailPushOverview().catch(() => null),
         getMailPushStatus().catch(() => null),
         listMailAccounts().catch(() => [] as MailAccount[]),
         listMailPresets().catch(() => [] as MailPreset[]),
+        listMailProjects().catch(() => [] as MailProject[]),
       ]);
       if (ov) setOverview(ov);
       if (st) setStatus(st);
       setAccounts(acc || []);
       setPresets(pre || []);
+      setProjects(prj || []);
       if (!browseAccountId && acc && acc.length) setBrowseAccountId(acc[0].id);
     } finally {
       setLoadingTop(false);
@@ -298,7 +322,7 @@ export default function MailPushPage() {
   const handleDeleteAccount = (row: MailAccount) => {
     modal.confirm({
       title: `删除邮箱账户「${row.email}」`,
-      icon: <CloseCircleFilled style={{ color: '#E86161' }} />,
+      icon: <CloseCircleFilled style={{ color: 'PALETTE.red' }} />,
       content: '删除后该账户不再自动拉取邮件，已导入的项目数据不受影响。',
       okText: '删除',
       okButtonProps: { danger: true },
@@ -358,13 +382,14 @@ export default function MailPushPage() {
   };
 
   /* ---------- 日志 ---------- */
-  const loadLogs = useCallback(async (keyword: string, result: string) => {
+  const loadLogs = useCallback(async (keyword: string, result: string, projectId?: number) => {
     setLogLoading(true);
     try {
       const rows = await listMailLogs({
         limit: 200,
         keyword: keyword || undefined,
         result: result || undefined,
+        projectId: projectId || undefined,
       });
       setLogs(rows || []);
     } finally {
@@ -373,8 +398,52 @@ export default function MailPushPage() {
   }, []);
 
   useEffect(() => {
-    if (tab === 'logs') loadLogs('', '');
+    if (tab === 'logs') loadLogs('', '', undefined);
   }, [tab, loadLogs]);
+
+  /* ---------- 数据项目：列表 / 抽屉数据 ---------- */
+  const loadProjects = useCallback(async () => {
+    setProjLoading(true);
+    try {
+      const list = await listMailProjects();
+      setProjects(list || []);
+    } catch {
+      setProjects([]);
+    } finally {
+      setProjLoading(false);
+    }
+  }, []);
+
+  const visibleProjects = useMemo(() => {
+    const kw = projKeyword.trim().toLowerCase();
+    if (!kw) return projects;
+    return projects.filter((p) =>
+      `${p.name} ${p.code || ''} ${p.data_table} ${p.source_mail || ''}`.toLowerCase().includes(kw)
+    );
+  }, [projects, projKeyword]);
+
+  /** 按项目名反查 id（导入日志 / 最近导入里只有名称时用） */
+  const projectIdByName = useCallback(
+    (name?: string, id?: number | null): number | null => {
+      if (id) return Number(id);
+      if (!name) return null;
+      const hit = projects.find((p) => p.name === name);
+      return hit ? hit.id : null;
+    },
+    [projects]
+  );
+
+  const openProject = useCallback((id: number) => navigate(`/mail-push/projects/${id}`), [navigate]);
+
+  const exportProject = useCallback((id: number) => {
+    const a = document.createElement('a');
+    a.href = mailProjectExportUrl(id);
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    message.info('已发起 CSV 导出，请留意浏览器下载');
+  }, [message]);
 
   /* ---------- 设置保存 ---------- */
   const handleSaveSettings = async () => {
@@ -410,12 +479,12 @@ export default function MailPushPage() {
       render: (_, row) => (
         <Space size={6} direction="vertical">
           <Space size={6} wrap>
-            <MailOutlined style={{ color: '#3687FF' }} />
-            <Text strong style={{ color: '#003378' }}>{row.email}</Text>
+            <MailOutlined style={{ color: PALETTE.primary }} />
+            <Text strong style={{ color: NEUTRAL.text }}>{row.email}</Text>
             {Number(row.enabled) === 1
-              ? <Tag color="#A2D73C">启用</Tag>
-              : <Tag color="#B5B5B6">停用</Tag>}
-            {row.hasPassword === false && <Tag color="#E86161">未设密码</Tag>}
+              ? <Tag color="PALETTE.green">启用</Tag>
+              : <Tag color={NEUTRAL.textTertiary}>停用</Tag>}
+            {row.hasPassword === false && <Tag color="PALETTE.red">未设密码</Tag>}
           </Space>
           <Text type="secondary" style={{ fontSize: 12 }}>{row.name}</Text>
         </Space>
@@ -452,16 +521,16 @@ export default function MailPushPage() {
       dataIndex: 'last_check_at',
       width: 190,
       render: (_, row) => {
-        if (!row.last_check_at) return <Tag color="#B5B5B6">未检查</Tag>;
+        if (!row.last_check_at) return <Tag color={NEUTRAL.textTertiary}>未检查</Tag>;
         return (
           <Space size={2} direction="vertical" style={{ fontSize: 12.5 }}>
             <Space size={4}>
               {row.last_status === 'ok' ? (
-                <Tag icon={<CheckCircleFilled />} color="#A2D73C" style={{ marginInlineEnd: 0 }}>正常</Tag>
+                <Tag icon={<CheckCircleFilled />} color="PALETTE.green" style={{ marginInlineEnd: 0 }}>正常</Tag>
               ) : row.last_status === 'fail' ? (
-                <Tag icon={<CloseCircleFilled />} color="#E86161" style={{ marginInlineEnd: 0 }}>失败</Tag>
+                <Tag icon={<CloseCircleFilled />} color="PALETTE.red" style={{ marginInlineEnd: 0 }}>失败</Tag>
               ) : (
-                <Tag color="#B5B5B6" style={{ marginInlineEnd: 0 }}>-</Tag>
+                <Tag color={NEUTRAL.textTertiary} style={{ marginInlineEnd: 0 }}>-</Tag>
               )}
               <Text type="secondary" style={{ fontSize: 11.5 }}>{fmtAgo(row.last_check_at)}</Text>
             </Space>
@@ -479,7 +548,7 @@ export default function MailPushPage() {
       dataIndex: 'auto_import',
       width: 110,
       render: (_, row) =>
-        Number(row.auto_import) ? <Tag color="#45B4FF">已开启</Tag> : <Text type="secondary">关闭</Text>,
+        Number(row.auto_import) ? <Tag color="PALETTE.cyan">已开启</Tag> : <Text type="secondary">关闭</Text>,
     },
     {
       title: '启用',
@@ -513,7 +582,7 @@ export default function MailPushPage() {
           {canRun && <a onClick={() => handleRun(row.id)}><SyncOutlined /> 拉取</a>}
           {canSettings && <a onClick={() => openEditAccount(row)}><EditOutlined /> 编辑</a>}
           {canSettings && (
-            <a style={{ color: '#E86161' }} onClick={() => handleDeleteAccount(row)}>
+            <a style={{ color: 'PALETTE.red' }} onClick={() => handleDeleteAccount(row)}>
               <DeleteOutlined /> 删除
             </a>
           )}
@@ -531,11 +600,11 @@ export default function MailPushPage() {
       render: (_, row) => (
         <Space size={6} wrap>
           {!row.seen && <Badge status="processing" />}
-          <Text strong={!row.seen} style={{ color: '#003378', fontSize: 13 }}>
+          <Text strong={!row.seen} style={{ color: 'NEUTRAL.text', fontSize: 13 }}>
             {row.subject || '(无主题)'}
           </Text>
-          {row.hasExcel && <Tag color="#A2D73C" style={{ marginInlineEnd: 0 }}><PaperClipOutlined /> Excel</Tag>}
-          {!row.hasExcel && row.hasAttachment && <Tag color="#FFC000" style={{ marginInlineEnd: 0 }}><PaperClipOutlined /> 附件</Tag>}
+          {row.hasExcel && <Tag color="PALETTE.green" style={{ marginInlineEnd: 0 }}><PaperClipOutlined /> Excel</Tag>}
+          {!row.hasExcel && row.hasAttachment && <Tag color="PALETTE.yellow" style={{ marginInlineEnd: 0 }}><PaperClipOutlined /> 附件</Tag>}
         </Space>
       ),
     },
@@ -587,7 +656,7 @@ export default function MailPushPage() {
       dataIndex: 'result',
       width: 90,
       render: (_, row) => {
-        const m = RESULT_META[row.result] || { label: row.result, color: '#B5B5B6' };
+        const m = RESULT_META[row.result] || { label: row.result, color: NEUTRAL.textTertiary };
         return <Tag color={m.color}>{m.label}</Tag>;
       },
     },
@@ -596,11 +665,16 @@ export default function MailPushPage() {
       dataIndex: 'project_name',
       width: 230,
       ellipsis: true,
-      render: (_, row) => (
-        <Text style={{ fontSize: 12.5 }}>
-          {row.project_name || (row.project_id ? `#${row.project_id}` : '-')}
-        </Text>
-      ),
+      render: (_, row) => {
+        const id = projectIdByName(row.project_name, row.project_id);
+        const label = row.project_name || (row.project_id ? `#${row.project_id}` : '-');
+        if (!id) return <Text style={{ fontSize: 12.5 }}>{label}</Text>;
+        return (
+          <Tooltip title="查看该数据项目">
+            <a style={{ fontSize: 12.5 }} onClick={() => openProject(id)}>{label}</a>
+          </Tooltip>
+        );
+      },
     },
     {
       title: '附件文件',
@@ -677,13 +751,13 @@ export default function MailPushPage() {
             }}
           >
             {[
-              { title: '导入项目', value: overview?.projects.total ?? 0, color: '#3687FF', unit: '个' },
-              { title: '累计数据行', value: overview?.projects.rows ?? 0, color: '#2D6FE4', unit: '行' },
-              { title: '导入日志', value: overview?.logs.total ?? 0, color: '#45B4FF', unit: '次' },
-              { title: '成功导入', value: overview?.logs.success ?? 0, color: '#A2D73C', unit: '次' },
-              { title: '跳过', value: overview?.logs.skipped ?? 0, color: '#FFC000', unit: '次' },
-              { title: '失败', value: overview?.logs.failed ?? 0, color: '#E86161', unit: '次' },
-              { title: '今日导入', value: overview?.logs.today ?? 0, color: '#EC673C', unit: '次' },
+              { title: '导入项目', value: overview?.projects.total ?? 0, color: PALETTE.primary, unit: '个' },
+              { title: '累计数据行', value: overview?.projects.rows ?? 0, color: 'PALETTE.primaryDeep', unit: '行' },
+              { title: '导入日志', value: overview?.logs.total ?? 0, color: 'PALETTE.cyan', unit: '次' },
+              { title: '成功导入', value: overview?.logs.success ?? 0, color: 'PALETTE.green', unit: '次' },
+              { title: '跳过', value: overview?.logs.skipped ?? 0, color: 'PALETTE.yellow', unit: '次' },
+              { title: '失败', value: overview?.logs.failed ?? 0, color: 'PALETTE.red', unit: '次' },
+              { title: '今日导入', value: overview?.logs.today ?? 0, color: 'PALETTE.orange', unit: '次' },
             ].map((s) => (
               <Card key={s.title} size="small" styles={{ body: { padding: '12px 14px' } }}>
                 <Statistic
@@ -711,20 +785,20 @@ export default function MailPushPage() {
                   {
                     key: 'enabled',
                     label: '自动拉取',
-                    children: status?.enabled ? <Tag color="#A2D73C">已启用</Tag> : <Tag color="#B5B5B6">未启用</Tag>,
+                    children: status?.enabled ? <Tag color="PALETTE.green">已启用</Tag> : <Tag color={NEUTRAL.textTertiary}>未启用</Tag>,
                   },
                   {
                     key: 'scheduled',
                     label: '轮询调度',
                     children: status?.scheduled
-                      ? <Tag icon={<ClockCircleOutlined />} color="#45B4FF">运行中（每 {status.interval} 分钟）</Tag>
-                      : <Tag color="#B5B5B6">未调度</Tag>,
+                      ? <Tag icon={<ClockCircleOutlined />} color="PALETTE.cyan">运行中（每 {status.interval} 分钟）</Tag>
+                      : <Tag color={NEUTRAL.textTertiary}>未调度</Tag>,
                   },
                   {
                     key: 'running',
                     label: '当前任务',
                     children: status?.running
-                      ? <Tag icon={<SyncOutlined spin />} color="#FFC000">拉取中</Tag>
+                      ? <Tag icon={<SyncOutlined spin />} color="PALETTE.yellow">拉取中</Tag>
                       : <Text type="secondary">空闲</Text>,
                   },
                   {
@@ -770,8 +844,8 @@ export default function MailPushPage() {
                       <Progress
                         percent={Math.round((Number(t.count) / trendMax) * 100)}
                         showInfo={false}
-                        strokeColor="#3687FF"
-                        trailColor="rgba(54,135,255,.10)"
+                        strokeColor="PALETTE.primary"
+                        trailColor={NEUTRAL.surfaceSunken}
                         style={{ maxWidth: 420 }}
                       />
                       <Text type="secondary" style={{ fontSize: 12.5 }}>{t.count} 次</Text>
@@ -781,7 +855,15 @@ export default function MailPushPage() {
               )}
             </Card>
 
-            <Card size="small" title="最近导入">
+            <Card
+              size="small"
+              title="最近导入"
+              extra={
+                <Button size="small" type="link" onClick={() => setTab('projects')}>
+                  数据项目管理
+                </Button>
+              }
+            >
               {(overview?.recentImports || []).length === 0 ? (
                 <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无导入记录" />
               ) : (
@@ -789,6 +871,8 @@ export default function MailPushPage() {
                   size="small"
                   rowKey="id"
                   pagination={false}
+                  /* 列宽合计约 650px，移动端（390px）必须允许横向滚动，否则整页被撑宽 */
+                  scroll={{ x: 'max-content' }}
                   dataSource={overview?.recentImports || []}
                   columns={[
                     {
@@ -802,7 +886,11 @@ export default function MailPushPage() {
                       dataIndex: 'project_name',
                       width: 220,
                       ellipsis: true,
-                      render: (v?: string) => v || '-',
+                      render: (v?: string, row?: NonNullable<MailPushOverview['recentImports']>[number]) => {
+                        const id = projectIdByName(v, row?.project_id);
+                        if (!id) return v || '-';
+                        return <a onClick={() => openProject(id)}>{v}</a>;
+                      },
                     },
                     {
                       title: '文件',
@@ -827,7 +915,7 @@ export default function MailPushPage() {
                       dataIndex: 'result',
                       width: 90,
                       render: (v?: string) => {
-                        const m = RESULT_META[v || ''] || { label: v || '-', color: '#B5B5B6' };
+                        const m = RESULT_META[v || ''] || { label: v || '-', color: NEUTRAL.textTertiary };
                         return <Tag color={m.color}>{m.label}</Tag>;
                       },
                     },
@@ -938,6 +1026,21 @@ export default function MailPushPage() {
     </>
   );
 
+  const projectsTab = (
+    <>
+      {projLoading && !projects.length ? <div style={{ padding: 48, textAlign: 'center' }}><Spin tip="加载中…" /></div> : !visibleProjects.length ? <Empty description={projects.length ? `没有匹配「${projKeyword}」的数据项目` : '还没有数据项目'} /> : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))', gap: 12 }}>
+          {visibleProjects.map((p) => <Card key={p.id} size="small" hoverable onClick={() => openProject(p.id)} styles={{ body: { padding: 14 } }} style={{ borderColor: NEUTRAL.border, boxShadow: SHADOW.card }}>
+            <Space wrap style={{ marginBottom: 8 }}><Text strong style={{ color: NEUTRAL.text }}>{p.name}</Text><Tag color={Number(p.status) === 1 ? PALETTE.green : NEUTRAL.textTertiary}>{Number(p.status) === 1 ? '启用' : '停用'}</Tag>{p.code && <Tag color={PALETTE.cyan}>{p.code}</Tag>}</Space>
+            <Space direction="vertical" size={3} style={{ width: '100%' }}><Text type="secondary">数据表：<Text code>{p.data_table}</Text></Text><Text type="secondary">累计行数：{fmtNum(p.row_count || 0)}</Text><Text type="secondary">最近导入：{p.last_import_at ? fmtAgo(p.last_import_at) : '-'}</Text>{p.source_mail && <Text type="secondary">来源邮箱：{truncate(p.source_mail, 28)}</Text>}</Space>
+            <Divider style={{ margin: '10px 0 8px' }} />
+            <Space wrap onClick={(e) => e.stopPropagation()}><Button type="link" icon={<EyeOutlined />} onClick={() => openProject(p.id)}>查看数据</Button>{canData && <Button type="link" icon={<DownloadOutlined />} onClick={() => exportProject(p.id)}>导出 CSV</Button>}</Space>
+          </Card>)}
+        </div>
+      )}
+    </>
+  );
+
   const logsTab = (
     <ProTable<MailLogRow, Record<string, unknown>>
       rowKey="id"
@@ -951,20 +1054,33 @@ export default function MailPushPage() {
       pagination={{ pageSize: 20, showSizeChanger: true, showTotal: (t) => `共 ${t} 条记录` }}
       headerTitle="导入日志"
       toolBarRender={() => [
+        <Select
+          key="proj"
+          allowClear
+          placeholder="全部数据项目"
+          value={logProjectId}
+          onChange={(v) => {
+            const next = v === undefined || v === null ? undefined : Number(v);
+            setLogProjectId(next);
+            loadLogs(logKeyword, logResult, next);
+          }}
+          options={projects.map((p) => ({ label: p.name, value: p.id }))}
+          style={{ width: 200 }}
+        />,
         <Input
           key="kw"
           allowClear
-          prefix={<SearchOutlined style={{ color: '#B5B5B6' }} />}
+          prefix={<SearchOutlined style={{ color: NEUTRAL.textTertiary }} />}
           placeholder="文件名 / 主题 / 项目 / 说明"
           value={logKeyword}
           onChange={(e) => setLogKeyword(e.target.value)}
-          onPressEnter={() => loadLogs(logKeyword, logResult)}
+          onPressEnter={() => loadLogs(logKeyword, logResult, logProjectId)}
           style={{ width: 260 }}
         />,
         <Segmented
           key="result"
           value={logResult}
-          onChange={(v) => { setLogResult(String(v)); loadLogs(logKeyword, String(v)); }}
+          onChange={(v) => { setLogResult(String(v)); loadLogs(logKeyword, String(v), logProjectId); }}
           options={[
             { label: '全部', value: '' },
             { label: '成功', value: 'success' },
@@ -972,10 +1088,19 @@ export default function MailPushPage() {
             { label: '失败', value: 'failed' },
           ]}
         />,
-        <Button key="q" icon={<SearchOutlined />} onClick={() => loadLogs(logKeyword, logResult)}>
+        <Button key="q" icon={<SearchOutlined />} onClick={() => loadLogs(logKeyword, logResult, logProjectId)}>
           查询
         </Button>,
-        <Button key="r" icon={<ReloadOutlined />} onClick={() => { setLogKeyword(''); setLogResult(''); loadLogs('', ''); }}>
+        <Button
+          key="r"
+          icon={<ReloadOutlined />}
+          onClick={() => {
+            setLogKeyword('');
+            setLogResult('');
+            setLogProjectId(undefined);
+            loadLogs('', '', undefined);
+          }}
+        >
           重置
         </Button>,
       ]}
@@ -1040,49 +1165,36 @@ export default function MailPushPage() {
   return (
     <Page
       title="邮箱推送"
-      subTitle="定时收取邮箱中的 Excel 附件，按文件名规则自动导入对应项目数据表"
-      extra={
+      search={tab === 'projects' ? <Input allowClear prefix={<SearchOutlined />} placeholder="搜索项目名称 / 编码 / 数据表 / 邮箱" value={projKeyword} onChange={(e) => setProjKeyword(e.target.value)} style={{ width: 300, maxWidth: '100%' }} /> : <Input allowClear prefix={<SearchOutlined />} placeholder="按关键字筛选导入日志" value={logKeyword} onChange={(e) => setLogKeyword(e.target.value)} style={{ width: 260, maxWidth: '100%' }} />}
+      actions={
         <>
+          {tab === 'projects' && canProjectWrite ? <Button type="primary" icon={<PlusOutlined />} onClick={() => message.info('数据项目由邮件附件自动创建')}>新建项目</Button> : null}
+          {tab === 'accounts' && canSettings ? <Button type="primary" icon={<PlusOutlined />} onClick={openCreateAccount}>添加账户</Button> : null}
           <Button icon={<ReloadOutlined />} onClick={loadTop}>刷新</Button>
-          {canRun && (
-            <Button type="primary" icon={<PlayCircleOutlined />} loading={running} onClick={() => handleRun()}>
-              立即拉取
-            </Button>
-          )}
+          {canRun && <Button type="primary" icon={<PlayCircleOutlined />} loading={running} onClick={() => handleRun()}>立即拉取</Button>}
         </>
       }
+      subTabs={<Tabs activeKey={tab} onChange={(k) => { setTab(k); if (k === 'overview' || k === 'accounts') loadTop(); if (k === 'projects') loadProjects(); if (k === 'logs') loadLogs(logKeyword, logResult, logProjectId); }} items={[
+        { key: 'overview', label: '概览' }, { key: 'projects', label: <>数据项目 <Tag color={PALETTE.primary}>{projects.length}</Tag></> }, { key: 'accounts', label: <>邮箱账户 <Tag color={PALETTE.cyan}>{accounts.length}</Tag></> }, { key: 'messages', label: '邮件浏览' }, { key: 'logs', label: '导入日志' }, { key: 'settings', label: '运行设置' },
+      ]} />}
+      stats={[
+        { label: '数据项目数', value: overview?.projects.total ?? projects.length, suffix: '个', color: PALETTE.primary },
+        { label: '邮箱账户数', value: overview?.accounts?.total ?? accounts.length, suffix: '个', color: PALETTE.cyan },
+        { label: '今日导入', value: overview?.logs.today ?? 0, suffix: '次', color: PALETTE.green },
+        { label: '累计记录数', value: overview?.projects.rows ?? 0, suffix: '行', color: PALETTE.violet },
+        { label: '导入失败数', value: overview?.logs.failed ?? 0, suffix: '次', color: PALETTE.red },
+      ] as StatCardItem[]}
+      extra={tab === 'projects' ? <Text type="secondary">共 {fmtNum(visibleProjects.length)} 个项目</Text> : undefined}
     >
-      <Tabs
-        activeKey={tab}
-        onChange={(k) => {
-          setTab(k);
-          if (k === 'overview' || k === 'accounts') loadTop();
-        }}
-        items={[
-          { key: 'overview', label: '概览', children: overviewTab },
-          {
-            key: 'accounts',
-            label: (
-              <Space size={6}>
-                <span>邮箱账户</span>
-                <Tag color="#45B4FF" style={{ marginInlineEnd: 0 }}>{accounts.length}</Tag>
-              </Space>
-            ),
-            children: accountsTab,
-          },
-          { key: 'messages', label: '邮件浏览', children: messagesTab },
-          { key: 'logs', label: '导入日志', children: logsTab },
-          { key: 'settings', label: '运行设置', children: settingsTab },
-        ]}
-      />
+      {tab === 'overview' ? overviewTab : tab === 'projects' ? projectsTab : tab === 'accounts' ? accountsTab : tab === 'messages' ? messagesTab : tab === 'logs' ? logsTab : settingsTab}
 
       {/* ---------- 账户新建 / 编辑 ---------- */}
-      <DrawerForm<AccountFormValues>
+      <ModalForm<AccountFormValues>
         title={editingAccount ? `编辑邮箱账户 · ${editingAccount.email}` : '添加邮箱账户'}
         open={accountOpen}
         onOpenChange={(o) => { setAccountOpen(o); if (!o) setAccountTestMsg(null); }}
         formRef={accountFormRef}
-        size={560}
+        modalProps={{ width: 560, destroyOnHidden: true }}
         initialValues={accountInitial}
         onFinish={handleAccountSubmit}
         submitter={{
@@ -1111,7 +1223,6 @@ export default function MailPushPage() {
             }
           }
         }}
-        drawerProps={{ destroyOnHidden: true }}
       >
         <Alert
           type="info"
@@ -1150,7 +1261,7 @@ export default function MailPushPage() {
             {presets.filter((p) => p.host).map((p) => (
               <Tag
                 key={p.key}
-                color="#45B4FF"
+                color="PALETTE.cyan"
                 style={{ cursor: 'pointer', marginInlineEnd: 0 }}
                 onClick={() => {
                   accountFormRef.current?.setFieldsValue({
@@ -1215,15 +1326,16 @@ export default function MailPushPage() {
             title={accountTestMsg.text}
           />
         )}
-      </DrawerForm>
+      </ModalForm>
 
       {/* ---------- 邮件详情 ---------- */}
-      <Drawer
+      <Modal
         title={detail?.subject || (detailLoading ? '加载中…' : '邮件详情')}
         open={detailOpen}
-        onClose={() => { setDetailOpen(false); setDetail(null); }}
-        size={780}
+        onCancel={() => { setDetailOpen(false); setDetail(null); }}
+        width={780}
         destroyOnHidden
+        footer={null}
       >
         {detailLoading ? (
           <div style={{ padding: 60, textAlign: 'center' }}><Spin size="large" tip="读取邮件…" /></div>
@@ -1252,7 +1364,7 @@ export default function MailPushPage() {
                       {(detail.attachments || []).map((a, i) => (
                         <Tag
                           key={`${a.filename}-${i}`}
-                          color={a.isExcel ? '#A2D73C' : '#B5B5B6'}
+                          color={a.isExcel ? 'PALETTE.green' : 'NEUTRAL.textTertiary'}
                           style={{ marginInlineEnd: 0 }}
                         >
                           <PaperClipOutlined /> {a.filename || '未命名'}（{fmtSize(a.size)}）
@@ -1272,8 +1384,8 @@ export default function MailPushPage() {
             {detail.html ? (
               <div
                 style={{
-                  border: '1px solid #DCDDDD', borderRadius: 8, padding: 14,
-                  maxHeight: 460, overflow: 'auto', background: '#FFFFFF',
+                  border: `1px solid ${NEUTRAL.border}`, borderRadius: 8, padding: 14,
+                  maxHeight: 460, overflow: 'auto', background: NEUTRAL.surface,
                 }}
                 // 邮件正文来自用户自己的邮箱，按邮件客户端常规方式渲染
                 dangerouslySetInnerHTML={{ __html: detail.html }}
@@ -1281,7 +1393,7 @@ export default function MailPushPage() {
             ) : detail.text ? (
               <Paragraph
                 style={{
-                  background: 'rgba(54,135,255,.06)', borderRadius: 8, padding: 12,
+                  background: NEUTRAL.surfaceAlt, borderRadius: 8, padding: 12,
                   maxHeight: 460, overflow: 'auto', marginBottom: 0,
                 }}
               >
@@ -1294,7 +1406,7 @@ export default function MailPushPage() {
             )}
           </>
         )}
-      </Drawer>
+      </Modal>
     </Page>
   );
 }

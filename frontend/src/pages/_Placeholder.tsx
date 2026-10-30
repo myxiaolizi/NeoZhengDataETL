@@ -9,7 +9,7 @@ import Page from '@/components/Page';
 export default function Placeholder({ name }: { name: string }) {
   const navigate = useNavigate();
   return (
-    <Page title={name} subTitle="页面开发中">
+    <Page title={name}>
       <Empty description={<span>{name} 正在开发中</span>}>
         <Button type="primary" onClick={() => navigate('/dashboard')}>返回概览</Button>
       </Empty>

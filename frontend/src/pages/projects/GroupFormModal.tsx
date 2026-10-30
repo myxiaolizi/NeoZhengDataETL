@@ -3,12 +3,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { App, Col, Form, Input, Modal, Row, Select } from 'antd';
 import { createProjectGroup, updateProjectGroup } from '@/api/projects';
 import type { ProjectGroupNode } from '@/api/projects';
+import { NEUTRAL, PALETTE } from '@/theme';
 
-/** 可用分组色（仅契约调色板） */
+/** 可用分组色（取自 @/theme 令牌，禁止写死旧色值） */
 const GROUP_COLORS = [
-  '#3687FF', '#45B4FF', '#003378', '#2D6FE4',
-  '#EC673C', '#E86161', '#FFC000', '#A2D73C',
-  '#73DBFF', '#B5B5B6',
+  PALETTE.primary, PALETTE.cyan, PALETTE.primaryDeep, PALETTE.violet,
+  PALETTE.orange, PALETTE.red, PALETTE.yellow, PALETTE.green,
+  PALETTE.teal, PALETTE.gray,
 ];
 
 export interface GroupFormModalProps {
@@ -166,7 +167,7 @@ export default function GroupFormModal({
                   label: (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ width: 12, height: 12, borderRadius: 3, background: c, display: 'inline-block' }} />
-                      <span style={{ fontSize: 12, color: '#003378' }}>{c}</span>
+                      <span style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>{c}</span>
                     </span>
                   ),
                 }))}

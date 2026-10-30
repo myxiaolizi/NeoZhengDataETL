@@ -1,35 +1,48 @@
-/** 数据项目列表：左侧分组树 + 右侧 ProTable（搜索 / 分页 / 增删改 / 令牌管理） */
+/**
+ * 数据项目列表（V4.1 页面规范）
+ *
+ * 结构：本页名称 + 搜索区（分组筛选 / 关键字）+ 新建 → 数据卡片（5 个）→ 分组快筛条 + 项目卡片网格
+ * 交互：新建/编辑/删除项目、分组管理、令牌、启停、搜索、分页；统计一律用页面已有数据就地算。
+ */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  App, Badge, Button, Card, Col, Dropdown, Empty, Grid, Input, Popconfirm, Row, Select,
-  Space, Switch, Tag, Tooltip, Tree, Typography,
+  Alert, App, Button, Col, Empty, Grid, Input, Pagination, Row, Select, Space,
+  Spin, Tag, Tooltip,
 } from 'antd';
-import type { DataNode } from 'antd/es/tree';
-import { ProTable } from '@ant-design/pro-components';
-import type { ProColumns } from '@ant-design/pro-components';
 import {
-  DeleteOutlined, EditOutlined, EllipsisOutlined, FolderOpenOutlined, KeyOutlined,
-  PlusOutlined, ReloadOutlined, SettingOutlined, TableOutlined,
+  AppstoreOutlined, DeleteOutlined, EditOutlined, FolderOutlined, PlusOutlined,
+  ReloadOutlined, UnorderedListOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
-import { useAppStore, usePermission } from '@/stores/app';
+import type { StatCardItem } from '@/components/StatCards';
+import { usePermission } from '@/stores/app';
+import { NEUTRAL, PALETTE } from '@/theme';
 import {
-  deleteProject, deleteProjectGroup, fetchProjectGroups, fetchProjects, regenerateToken,
-  updateProject,
+  deleteProject, deleteProjectGroup, fetchProjectGroups, fetchProjects,
+  regenerateToken, updateProject,
 } from '@/api/projects';
 import type { ProjectGroupData, ProjectGroupNode, ProjectRow } from '@/api/projects';
-import { fmtAgo, fmtNum, fmtTime } from '@/utils';
+import { fmtNum } from '@/utils';
+import ProjectCard from './projects/ProjectCard';
 import ProjectFormModal from './projects/ProjectFormModal';
 import GroupFormModal from './projects/GroupFormModal';
 
 const { useBreakpoint } = Grid;
-const { Text } = Typography;
 
 type GroupKey = 'all' | string;
 
 const ALL_KEY: GroupKey = 'all';
 const UNGROUPED_KEY: GroupKey = '0';
+
+/** 是否本月创建 */
+function isThisMonth(v?: string | null): boolean {
+  if (!v) return false;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+}
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
@@ -41,13 +54,14 @@ export default function ProjectsPage() {
   const [groups, setGroups] = useState<ProjectGroupData | null>(null);
   const [rows, setRows] = useState<ProjectRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const [groupKey, setGroupKey] = useState<GroupKey>(ALL_KEY);
   const [includeSub, setIncludeSub] = useState(true);
   const [keywordInput, setKeywordInput] = useState('');
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(12);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<ProjectRow | null>(null);
@@ -57,9 +71,10 @@ export default function ProjectsPage() {
 
   const canWrite = can('project:write');
 
-  /** 加载分组 + 项目（并行） */
+  /** 加载分组 + 项目 */
   const load = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const query = {
         keyword,
@@ -72,87 +87,81 @@ export default function ProjectsPage() {
       ]);
       setGroups(g);
       setRows(list);
-    } catch {
-      // 错误已由 api client 统一 toast
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '数据项目加载失败');
     } finally {
       setLoading(false);
     }
-    // groupKey/includeSub/keyword 变化时重新请求
   }, [groupKey, includeSub, keyword]);
 
   useEffect(() => { void load(); }, [load]);
 
-  const flatGroups = groups?.list || [];
+  // 切换分组/搜索时回到第一页
+  useEffect(() => { setPage(1); }, [groupKey, keyword, pageSize]);
 
-  /** 当前选中的分组对象 */
+  const flatGroups = groups?.list || [];
+  const groupStats = groups?.stats;
+
+  /** 分组快筛条：全部 / 未分组 / 各分组 */
+  const groupFilters = useMemo(() => {
+    const items: { key: GroupKey; label: string; count: number; icon?: React.ReactNode }[] = [
+      { key: ALL_KEY, label: '全部', count: groupStats?.projects ?? rows.length, icon: <AppstoreOutlined /> },
+      { key: UNGROUPED_KEY, label: '未分组', count: groupStats?.ungrouped ?? 0, icon: <FolderOutlined /> },
+    ];
+    for (const g of flatGroups) {
+      items.push({
+        key: String(g.id),
+        label: g.name,
+        count: g.totalProjectCount ?? g.projectCount ?? 0,
+        icon: <UnorderedListOutlined />,
+      });
+    }
+    return items;
+  }, [flatGroups, groupStats, rows.length]);
+
+  /** 搜索区的分组下拉（与快筛条共用同一状态） */
+  const groupSelectOptions = useMemo(
+    () => groupFilters.map((f) => ({ label: `${f.label}（${f.count}）`, value: f.key })),
+    [groupFilters],
+  );
+
   const currentGroup = useMemo(() => {
     if (groupKey === ALL_KEY || groupKey === UNGROUPED_KEY) return null;
     return flatGroups.find((g) => String(g.id) === String(groupKey)) || null;
   }, [groupKey, flatGroups]);
 
-  /** 分组树节点 */
-  const treeData = useMemo<DataNode[]>(() => {
-    const stats = groups?.stats;
-    const build = (nodes: ProjectGroupNode[]): DataNode[] =>
-      nodes.map((n) => ({
-        key: String(n.id),
-        title: (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
-            <span style={{ color: n.color || '#3687FF' }}>{n.icon || '▦'}</span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.name}</span>
-            <Tag
-              color="#B5B5B6"
-              style={{ marginInlineStart: 4, fontSize: 11, lineHeight: '16px', paddingInline: 5 }}
-            >
-              {n.totalProjectCount ?? n.projectCount ?? 0}
-            </Tag>
-          </span>
-        ),
-        children: n.children?.length ? build(n.children) : undefined,
-      }));
-
-    const root: DataNode[] = [
+  /** 数据卡片：全部用当前列表数据就地统计，不新增后端接口 */
+  const statItems = useMemo<StatCardItem[]>(() => {
+    const total = rows.length;
+    const enabled = rows.filter((r) => Number(r.status) === 1).length;
+    const disabled = total - enabled;
+    const monthNew = rows.filter((r) => isThisMonth(r.created_at)).length;
+    const failed = rows.reduce((s, r) => s + Number(r.failedLogs || 0), 0);
+    return [
+      { key: 'total', label: '数据项目', value: fmtNum(total), suffix: '个', color: PALETTE.primary, hint: `分组 ${groupStats?.groups ?? 0} 个` },
+      { key: 'enabled', label: '已启用', value: fmtNum(enabled), suffix: '个', color: PALETTE.green, hint: total ? `占比 ${Math.round((enabled / total) * 100)}%` : '暂无项目' },
+      { key: 'disabled', label: '已停用', value: fmtNum(disabled), suffix: '个', color: PALETTE.gray, hint: '停止接收推送' },
+      { key: 'month', label: '本月新增', value: fmtNum(monthNew), suffix: '个', color: PALETTE.cyan, hint: '按创建时间统计' },
       {
-        key: ALL_KEY,
-        title: (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <FolderOpenOutlined style={{ color: '#2D6FE4' }} />
-            <span>全部项目</span>
-            <Tag color="#3687FF" style={{ fontSize: 11, lineHeight: '16px', paddingInline: 5 }}>
-              {stats?.projects ?? rows.length}
-            </Tag>
-          </span>
-        ),
-      },
-      {
-        key: UNGROUPED_KEY,
-        title: (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <FolderOpenOutlined style={{ color: '#B5B5B6' }} />
-            <span>未分组</span>
-            <Tag color="#B5B5B6" style={{ fontSize: 11, lineHeight: '16px', paddingInline: 5 }}>
-              {stats?.ungrouped ?? 0}
-            </Tag>
-          </span>
-        ),
+        key: 'failed',
+        label: '推送失败',
+        value: fmtNum(failed),
+        suffix: '条',
+        color: failed > 0 ? PALETTE.red : PALETTE.teal,
+        hint: failed > 0 ? '需排查失败日志' : '暂无失败记录',
       },
     ];
-    return [...root, ...build(groups?.tree || [])];
-  }, [groups, rows.length]);
+  }, [rows, groupStats]);
 
-  const reloadKeepPage = async () => {
-    await load();
-  };
+  /** 分页后的项目 */
+  const pagedRows = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [rows, page, pageSize]);
 
-  /** 打开新建 / 编辑项目 */
-  const openCreate = () => {
-    setEditingProject(null);
-    setFormOpen(true);
-  };
-  const openEdit = (p: ProjectRow) => {
-    setEditingProject(p);
-    setFormOpen(true);
-  };
+  const openCreate = () => { setEditingProject(null); setFormOpen(true); };
+  const openEdit = (p: ProjectRow) => { setEditingProject(p); setFormOpen(true); };
+  const openCreateGroup = () => { setEditingGroup(null); setGroupFormOpen(true); };
 
   /** 删除项目 */
   const onDeleteProject = (p: ProjectRow) => {
@@ -166,13 +175,13 @@ export default function ProjectsPage() {
         try {
           await deleteProject(p.id);
           message.success('项目已删除');
-          await reloadKeepPage();
+          await load();
         } catch { /* 已 toast */ }
       },
     });
   };
 
-  /** 重新生成推送令牌 */
+  /** 重新生成令牌 */
   const onRegenerateToken = (p: ProjectRow) => {
     modal.confirm({
       title: `重新生成「${p.name}」的推送令牌？`,
@@ -183,7 +192,7 @@ export default function ProjectsPage() {
         try {
           await regenerateToken(p.id);
           message.success('推送令牌已重新生成，请到项目详情复制新的推送地址');
-          await reloadKeepPage();
+          await load();
         } catch { /* 已 toast */ }
       },
     });
@@ -216,388 +225,213 @@ export default function ProjectsPage() {
           const r = await deleteProjectGroup(g.id);
           message.success(r.movedProjects ? `分组已删除，${r.movedProjects} 个项目已移动` : '分组已删除');
           setGroupKey(ALL_KEY);
-          await reloadKeepPage();
+          await load();
         } catch { /* 已 toast */ }
       },
     });
   };
 
-  const columns = useMemo<ProColumns<ProjectRow>[]>(() => {
-    const cols: ProColumns<ProjectRow>[] = [
-      {
-        title: '项目',
-        dataIndex: 'name',
-        key: 'name',
-        width: 280,
-        fixed: isMobile ? undefined : 'left',
-        render: (_dom, row) => (
-          <div style={{ minWidth: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <a
-                onClick={() => navigate(`/projects/${row.id}`)}
-                style={{ fontWeight: 600, color: '#003378', fontSize: 13.5 }}
-              >
-                {row.name}
-              </a>
-              {row.code && <Tag color="#73DBFF" style={{ fontSize: 11 }}>{row.code}</Tag>}
-              {Number(row.parse_enabled ?? 1) === 0 && <Tag color="#B5B5B6" style={{ fontSize: 11 }}>未解析</Tag>}
-            </div>
-            {row.description && (
-              <Tooltip title={row.description}>
-                <div
-                  style={{
-                    fontSize: 12, color: 'rgba(0,51,120,.5)', marginTop: 2,
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 240,
-                  }}
-                >
-                  {row.description}
-                </div>
-              </Tooltip>
-            )}
-          </div>
-        ),
-      },
-      {
-        title: '分组',
-        dataIndex: 'group_name',
-        key: 'group_name',
-        width: 130,
-        hideInTable: isMobile,
-        render: (_d, row) => (row.group_name
-          ? <Tag color="#45B4FF">{row.group_name}</Tag>
-          : <Text type="secondary" style={{ fontSize: 12 }}>未分组</Text>),
-      },
-      {
-        title: '数据量',
-        dataIndex: 'dataCount',
-        key: 'dataCount',
-        width: 100,
-        align: 'right',
-        sorter: (a, b) => Number(a.dataCount || 0) - Number(b.dataCount || 0),
-        render: (_d, row) => <span style={{ fontWeight: 600, color: '#2D6FE4' }}>{fmtNum(row.dataCount || 0)}</span>,
-      },
-      {
-        title: '字段',
-        dataIndex: 'fieldCount',
-        key: 'fieldCount',
-        width: 84,
-        align: 'right',
-        hideInTable: isMobile,
-        render: (_d, row) => <span style={{ color: 'rgba(0,51,120,.72)' }}>{fmtNum(row.fieldCount || row.field_count || 0)}</span>,
-      },
-      {
-        title: '失败日志',
-        dataIndex: 'failedLogs',
-        key: 'failedLogs',
-        width: 96,
-        align: 'right',
-        hideInTable: isMobile,
-        render: (_d, row) => {
-          const n = Number(row.failedLogs || 0);
-          return n > 0
-            ? <Badge count={n} color="#E86161" overflowCount={999} />
-            : <span style={{ color: '#A2D73C' }}>0</span>;
-        },
-      },
-      {
-        title: '最后推送',
-        dataIndex: 'last_push_at',
-        key: 'last_push_at',
-        width: 130,
-        hideInTable: isMobile,
-        render: (_d, row) => (
-          <Tooltip title={row.last_push_at ? fmtTime(row.last_push_at) : '从未推送'}>
-            <span style={{ fontSize: 12, color: row.last_push_at ? 'rgba(0,51,120,.72)' : '#B5B5B6' }}>
-              {row.last_push_at ? fmtAgo(row.last_push_at) : '未接收'}
-            </span>
-          </Tooltip>
-        ),
-      },
-      {
-        title: '状态',
-        dataIndex: 'status',
-        key: 'status',
-        width: 84,
-        render: (_d, row) => (
-          <Switch
-            size="small"
-            checked={Number(row.status) === 1}
-            loading={togglingId === row.id}
-            disabled={!canWrite}
-            checkedChildren="启用"
-            unCheckedChildren="停用"
-            onChange={(v) => void onToggleStatus(row, v)}
-          />
-        ),
-      },
-      {
-        title: '操作',
-        key: 'action',
-        width: isMobile ? 120 : 190,
-        fixed: isMobile ? undefined : 'right',
-        render: (_d, row) => {
-          const moreItems = [
-            {
-              key: 'fields',
-              icon: <SettingOutlined />,
-              label: '字段配置',
-              disabled: !can('field:write'),
-              onClick: () => navigate(`/projects/${row.id}/fields`),
-            },
-            {
-              key: 'token',
-              icon: <KeyOutlined />,
-              label: '重新生成令牌',
-              disabled: !canWrite,
-              onClick: () => onRegenerateToken(row),
-            },
-            { type: 'divider' as const },
-            {
-              key: 'delete',
-              icon: <DeleteOutlined />,
-              label: '删除项目',
-              danger: true,
-              disabled: !canWrite,
-              onClick: () => onDeleteProject(row),
-            },
-          ];
-          return (
-            <Space size={2} wrap>
-              <Button type="link" size="small" icon={<TableOutlined />} onClick={() => navigate(`/projects/${row.id}`)}>
-                详情
-              </Button>
-              {canWrite && (
-                <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(row)}>
-                  编辑
-                </Button>
-              )}
-              <Dropdown menu={{ items: moreItems }} trigger={['click']}>
-                <Button type="text" size="small" icon={<EllipsisOutlined />} />
-              </Dropdown>
-            </Space>
-          );
-        },
-      },
-    ];
-    return cols;
-  }, [isMobile, canWrite, togglingId, navigate]);
+  /* ---------------- 渲染 ---------------- */
 
-  const groupSelectOptions = useMemo(() => {
-    const out: { label: string; value: string }[] = [
-      { label: `全部项目（${groups?.stats?.projects ?? rows.length}）`, value: ALL_KEY },
-      { label: `未分组（${groups?.stats?.ungrouped ?? 0}）`, value: UNGROUPED_KEY },
-    ];
-    const walk = (nodes: ProjectGroupNode[], depth: number) => {
-      nodes.forEach((n) => {
-        out.push({
-          label: `${'　'.repeat(depth)}${depth ? '└ ' : ''}${n.name}（${n.totalProjectCount ?? n.projectCount ?? 0}）`,
-          value: String(n.id),
-        });
-        if (n.children?.length) walk(n.children, depth + 1);
-      });
-    };
-    walk(groups?.tree || [], 0);
-    return out;
-  }, [groups, rows.length]);
+  const searchArea = (
+    <>
+      <Select
+        value={groupKey}
+        onChange={(v: GroupKey) => setGroupKey(v)}
+        options={groupSelectOptions}
+        style={{ width: isMobile ? '100%' : 168 }}
+        placeholder="分组筛选"
+      />
+      <Input.Search
+        allowClear
+        placeholder="项目名称 / 编码 / 描述"
+        style={{ width: isMobile ? '100%' : 230 }}
+        value={keywordInput}
+        onChange={(e) => setKeywordInput(e.target.value)}
+        onSearch={(v) => setKeyword(v.trim())}
+      />
+    </>
+  );
+
+  const actionsArea = canWrite ? (
+    <>
+      <Button icon={<FolderOutlined />} onClick={openCreateGroup}>
+        {isMobile ? '' : '新建分组'}
+      </Button>
+      <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+        新建项目
+      </Button>
+    </>
+  ) : null;
+
+  const extraArea = (
+    <Tooltip title="刷新">
+      <Button icon={<ReloadOutlined />} onClick={() => void load()} loading={loading} aria-label="刷新" />
+    </Tooltip>
+  );
 
   return (
     <Page
       title="数据项目"
-      subTitle="每个项目对应一张数据表与一套推送令牌，按分组归类管理"
-      extra={
-        <Space size={8} wrap>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void reloadKeepPage()}>
-            刷新
-          </Button>
-          {canWrite && (
-            <Button icon={<FolderOpenOutlined />} onClick={() => { setEditingGroup(null); setGroupFormOpen(true); }}>
-              新建分组
-            </Button>
+      search={searchArea}
+      actions={actionsArea}
+      extra={extraArea}
+      stats={statItems}
+    >
+      {/* 分组快筛条（保留 V4.0 的标签筛选交互，位于数据卡片下方） */}
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+          padding: '10px 14px', marginBottom: 14,
+          border: `1px solid ${NEUTRAL.border}`, borderRadius: 10, background: NEUTRAL.surface,
+        }}
+      >
+        <Space size={6} wrap>
+          {groupFilters.map((f) => {
+            const active = groupKey === f.key;
+            return (
+              <Tag.CheckableTag
+                key={f.key}
+                checked={active}
+                onChange={() => setGroupKey(f.key)}
+                style={{
+                  fontSize: 12.5, padding: '4px 12px', borderRadius: 14,
+                  border: `1px solid ${active ? PALETTE.primary : NEUTRAL.border}`,
+                  background: active ? PALETTE.primary : NEUTRAL.surfaceAlt,
+                  color: active ? NEUTRAL.textInverse : NEUTRAL.textSecondary,
+                  fontWeight: active ? 600 : 400,
+                  cursor: 'pointer',
+                }}
+              >
+                {f.icon} {f.label}
+                <span style={{ marginLeft: 5, opacity: 0.78 }}>{f.count}</span>
+              </Tag.CheckableTag>
+            );
+          })}
+        </Space>
+
+        <div style={{ flex: 1 }} />
+
+        <Space size={8}>
+          {currentGroup && canWrite && (
+            <>
+              <Tooltip title="编辑当前分组">
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<EditOutlined />}
+                  onClick={() => { setEditingGroup(currentGroup); setGroupFormOpen(true); }}
+                />
+              </Tooltip>
+              <Tooltip title="删除当前分组">
+                <Button
+                  size="small"
+                  type="text"
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={() => onDeleteGroup(currentGroup)}
+                />
+              </Tooltip>
+            </>
           )}
-          {canWrite && (
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={openCreate}
-            >
-              新建项目
-            </Button>
+          {groupKey !== ALL_KEY && groupKey !== UNGROUPED_KEY && (
+            <Tooltip title="包含子分组的项目">
+              <Tag.CheckableTag
+                checked={includeSub}
+                onChange={setIncludeSub}
+                style={{
+                  fontSize: 12, padding: '3px 10px', borderRadius: 12,
+                  border: `1px solid ${NEUTRAL.border}`,
+                  background: includeSub ? NEUTRAL.surfaceSunken : NEUTRAL.surface,
+                  color: NEUTRAL.textSecondary,
+                }}
+              >
+                含子分组
+              </Tag.CheckableTag>
+            </Tooltip>
           )}
         </Space>
-      }
-    >
-      <Row gutter={[12, 12]}>
-        {/* ── 左侧：分组树（移动端改为下拉） ── */}
-        {!isMobile && (
-          <Col flex="236px">
-            <Card
-              variant="outlined"
-              style={{ borderColor: '#DCDDDD', borderRadius: 12 }}
-              styles={{ body: { padding: 12 } }}
-              title={<span style={{ fontSize: 13.5, fontWeight: 600, color: '#003378' }}>项目分组</span>}
-              extra={
-                canWrite && currentGroup ? (
-                  <Space size={0}>
-                    <Tooltip title="编辑分组">
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EditOutlined />}
-                        onClick={() => { setEditingGroup(currentGroup); setGroupFormOpen(true); }}
-                      />
-                    </Tooltip>
-                    <Popconfirm
-                      title="删除该分组？"
-                      description="分组内项目会上移到上级分组"
-                      okText="删除"
-                      cancelText="取消"
-                      okButtonProps={{ danger: true }}
-                      onConfirm={() => onDeleteGroup(currentGroup)}
-                    >
-                      <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-                    </Popconfirm>
-                  </Space>
-                ) : null
-              }
-            >
-              {groups ? (
-                <Tree
-                  blockNode
-                  defaultExpandAll
-                  selectedKeys={[groupKey]}
-                  treeData={treeData}
-                  onSelect={(keys) => {
-                    const k = keys.length ? String(keys[0]) : ALL_KEY;
-                    setGroupKey(k);
-                    setPage(1);
-                  }}
-                  style={{ fontSize: 13 }}
-                />
-              ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="加载中" />
-              )}
-              <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid #DCDDDD', fontSize: 11.5, color: '#B5B5B6' }}>
-                共 {groups?.stats?.groups ?? 0} 个分组 · 最多 {groups?.maxDepth ?? 5} 级
-              </div>
-            </Card>
-          </Col>
-        )}
+      </div>
 
-        {/* ── 右侧：列表 ── */}
-        <Col flex="auto" style={{ minWidth: 0 }}>
-          <Card
-            variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12 }}
-            styles={{ body: { padding: isMobile ? 12 : 14 } }}
+      {/* 错误态 */}
+      {error && !loading ? (
+        <Alert
+          type="error"
+          showIcon
+          title="加载失败"
+          description={error}
+          action={<Button size="small" icon={<ReloadOutlined />} onClick={() => void load()}>重试</Button>}
+        />
+      ) : null}
+
+      {/* 项目卡片网格 */}
+      <Spin spinning={loading}>
+        {rows.length === 0 && !loading && !error ? (
+          <Empty
+            description={
+              <span style={{ color: NEUTRAL.textTertiary }}>
+                {keyword ? `没有匹配「${keyword}」的项目` : '暂无项目'}
+              </span>
+            }
+            style={{ padding: '60px 0' }}
           >
-            <Space size={8} wrap style={{ marginBottom: 10, width: '100%' }}>
-              {isMobile && (
-                <Select
-                  style={{ width: '100%' }}
-                  size="large"
-                  value={groupKey}
-                  options={groupSelectOptions}
-                  onChange={(v: string) => { setGroupKey(v); setPage(1); }}
-                />
-              )}
-              <Input.Search
-                allowClear
-                placeholder="搜索项目名称 / 编码 / 描述"
-                style={{ width: isMobile ? '100%' : 300 }}
-                size={isMobile ? 'large' : 'middle'}
-                value={keywordInput}
-                onChange={(e) => setKeywordInput(e.target.value)}
-                onSearch={(v) => { setKeyword(v.trim()); setPage(1); }}
-                enterButton
-              />
-              {groupKey !== ALL_KEY && groupKey !== UNGROUPED_KEY && (
-                <Space size={6}>
-                  <Text style={{ fontSize: 12, color: 'rgba(0,51,120,.6)' }}>含子分组</Text>
-                  <Switch size="small" checked={includeSub} onChange={setIncludeSub} />
-                </Space>
-              )}
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                共 {rows.length} 个项目
-              </Text>
-            </Space>
-
-            {isMobile ? (
-              /* 移动端：卡片列表（触控友好，避免横向滚动） */
-              <div>
-                {rows.length ? rows.map((row) => (
-                  <Card
-                    key={row.id}
-                    size="small"
-                    variant="outlined"
-                    style={{ borderColor: '#DCDDDD', borderRadius: 10, marginBottom: 8 }}
-                    styles={{ body: { padding: 12 } }}
-                    onClick={() => navigate(`/projects/${row.id}`)}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>{row.name}</div>
-                        <div style={{ fontSize: 12, color: 'rgba(0,51,120,.55)', marginTop: 2 }}>
-                          {row.group_name || '未分组'} · 数据 {fmtNum(row.dataCount || 0)} · 字段 {fmtNum(row.fieldCount || 0)}
-                        </div>
-                      </div>
-                      <Tag color={Number(row.status) === 1 ? '#A2D73C' : '#B5B5B6'}>
-                        {Number(row.status) === 1 ? '启用' : '停用'}
-                      </Tag>
-                    </div>
-                    <div style={{ marginTop: 6, fontSize: 12, color: '#B5B5B6' }}>
-                      最后推送：{row.last_push_at ? fmtAgo(row.last_push_at) : '未接收'}
-                      {Number(row.failedLogs || 0) > 0 && (
-                        <Tag color="#E86161" style={{ marginInlineStart: 8 }}>失败 {fmtNum(row.failedLogs || 0)}</Tag>
-                      )}
-                    </div>
-                  </Card>
-                )) : (
-                  <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={loading ? '加载中' : '暂无项目'} />
-                )}
-              </div>
-            ) : (
-              <ProTable<ProjectRow>
-                rowKey="id"
-                size="middle"
-                loading={loading}
-                search={false}
-                options={false}
-                cardProps={false}
-                ghost
-                columns={columns}
-                dataSource={rows}
-                scroll={{ x: 960 }}
-                pagination={{
-                  current: page,
-                  pageSize,
-                  total: rows.length,
-                  showSizeChanger: true,
-                  pageSizeOptions: [10, 20, 50, 100],
-                  showTotal: (t) => `共 ${t} 条`,
-                  onChange: (p, ps) => { setPage(p); setPageSize(ps); },
-                }}
-              />
+            {canWrite && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+                新建项目
+              </Button>
             )}
-          </Card>
-        </Col>
-      </Row>
+          </Empty>
+        ) : (
+          <>
+            <Row gutter={[14, 14]}>
+              {pagedRows.map((p) => (
+                <Col key={p.id} xs={24} sm={12} lg={8} xl={6}>
+                  <ProjectCard
+                    project={p}
+                    canWrite={canWrite}
+                    toggling={togglingId === p.id}
+                    onOpen={() => navigate(`/projects/${p.id}`)}
+                    onEdit={() => openEdit(p)}
+                    onDelete={() => onDeleteProject(p)}
+                    onRegenerateToken={() => onRegenerateToken(p)}
+                    onToggleStatus={(checked) => onToggleStatus(p, checked)}
+                  />
+                </Col>
+              ))}
+            </Row>
 
+            {rows.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+                <Pagination
+                  current={page}
+                  pageSize={pageSize}
+                  total={rows.length}
+                  showSizeChanger
+                  pageSizeOptions={[12, 24, 48]}
+                  showTotal={(t) => `共 ${t} 个项目`}
+                  onChange={(p, ps) => { setPage(p); setPageSize(ps); }}
+                  simple={isMobile}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </Spin>
+
+      {/* 弹窗：内容少一律用 Modal */}
       <ProjectFormModal
         open={formOpen}
         project={editingProject}
-        groups={groups?.tree || []}
-        defaultGroupId={groupKey !== ALL_KEY && groupKey !== UNGROUPED_KEY ? Number(groupKey) : null}
+        groups={flatGroups}
         onClose={() => setFormOpen(false)}
-        onSaved={() => { void load(); }}
+        onSaved={async () => { setFormOpen(false); await load(); }}
       />
-
       <GroupFormModal
         open={groupFormOpen}
         group={editingGroup}
         flat={flatGroups}
-        defaultParentId={groupKey !== ALL_KEY && groupKey !== UNGROUPED_KEY ? Number(groupKey) : null}
         onClose={() => setGroupFormOpen(false)}
-        onSaved={() => { void load(); }}
+        onSaved={async () => { setGroupFormOpen(false); await load(); }}
       />
     </Page>
   );

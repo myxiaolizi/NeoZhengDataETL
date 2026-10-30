@@ -1,26 +1,31 @@
-/** 数据集成：API 采集(pull) / API 推送(push) 任务管理 + 手动执行 + 运行统计 */
+/** 数据集成（V4.1 页面规范）：API 采集(pull) / API 推送(push) 任务管理 + 手动执行 + 运行统计
+ *
+ * 结构：本页名称 + 搜索区 + 新建 → 数据卡片 → 任务列表
+ * V4.1：新建/编辑由 DrawerForm 改为 ModalForm；执行结果由右侧 Drawer 改为 Modal。
+ */
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import {
-  Button, Space, Tag, Drawer, Typography, App, Tooltip, Alert, Divider, Card,
-  Statistic, Descriptions, Badge, Result, Table,
+  Button, Space, Tag, Typography, App, Tooltip, Alert, Divider, Descriptions,
+  Badge, Result, Modal, Input, Select,
 } from 'antd';
 import {
   PlusOutlined, ReloadOutlined, PlayCircleOutlined, DeleteOutlined, EditOutlined,
-  ImportOutlined, ExportOutlined, ApiOutlined, ExclamationCircleOutlined, LinkOutlined,
+  ImportOutlined, ExportOutlined, ExclamationCircleOutlined,
   CheckCircleFilled, CloseCircleFilled, EyeOutlined,
 } from '@ant-design/icons';
 import {
-  ProTable, DrawerForm, ProFormText, ProFormSelect, ProFormSwitch, ProFormTextArea,
-  ProFormRadio, ProFormDigit,
+  ProTable, ModalForm, ProFormText, ProFormSelect, ProFormSwitch, ProFormTextArea,
+  ProFormRadio,
 } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
-import { useAppStore, usePermission } from '@/stores/app';
+import type { StatCardItem } from '@/components/StatCards';
+import { usePermission } from '@/stores/app';
+import { NEUTRAL, PALETTE } from '@/theme';
 import { fmtTime, fmtNum, truncate } from '@/utils';
 import {
   listIntegrations, createIntegration, updateIntegration, deleteIntegration, runIntegration,
-  listAllIntegrationLogs,
 } from '@/api/integrations';
 import type {
   Integration, IntegrationPayload, IntegrationStats, IntegrationRunLog,
@@ -87,6 +92,9 @@ export default function IntegrationsPage() {
   const actionRef = useRef<ActionType>(null);
   const [stats, setStats] = useState<IntegrationStats | null>(null);
   const [projects, setProjects] = useState<ProjectOption[]>([]);
+  const [keywordInput, setKeywordInput] = useState('');
+  const [keyword, setKeyword] = useState('');
+  const [direction, setDirection] = useState<string | undefined>(undefined);
 
   /* 新建 / 编辑 */
   const [formOpen, setFormOpen] = useState(false);
@@ -246,7 +254,7 @@ export default function IntegrationsPage() {
   const handleDelete = (row: Integration) => {
     modal.confirm({
       title: `删除集成任务「${row.name}」`,
-      icon: <ExclamationCircleOutlined style={{ color: '#E86161' }} />,
+      icon: <ExclamationCircleOutlined style={{ color: PALETTE.red }} />,
       content: '任务与全部运行日志将一并删除，不可恢复。',
       okText: '删除',
       okButtonProps: { danger: true },
@@ -261,42 +269,36 @@ export default function IntegrationsPage() {
     });
   };
 
+  /* ---------- 数据卡片（就地统计，不新增接口） ---------- */
+  const statItems = useMemo<StatCardItem[]>(() => {
+    const failed = stats ? Math.max(0, (stats.runTotal || 0) - (stats.runOk || 0)) : 0;
+    return [
+      { key: 'total', label: '集成任务', value: fmtNum(stats?.total ?? 0), suffix: '个', color: PALETTE.primary, hint: `采集 ${fmtNum(stats?.pullCount ?? 0)} · 推送 ${fmtNum(stats?.pushCount ?? 0)}` },
+      { key: 'active', label: '启用中', value: fmtNum(stats?.active ?? 0), suffix: '个', color: PALETTE.green },
+      { key: 'run', label: '累计执行', value: fmtNum(stats?.runTotal ?? 0), suffix: '次', color: PALETTE.cyan, hint: `成功 ${fmtNum(stats?.runOk ?? 0)} 次` },
+      { key: 'failed', label: '累计失败', value: fmtNum(failed), suffix: '次', color: failed > 0 ? PALETTE.red : PALETTE.teal },
+      { key: 'rows', label: '累计处理行', value: fmtNum(stats?.rowsTotal ?? 0), suffix: '行', color: PALETTE.violet },
+    ];
+  }, [stats]);
+
   const columns: ProColumns<Integration>[] = [
-    {
-      title: '关键词',
-      dataIndex: 'keyword',
-      hideInTable: true,
-      fieldProps: { placeholder: '名称 / 编码 / 接口地址' },
-    },
-    {
-      title: '方向',
-      dataIndex: 'direction',
-      hideInTable: true,
-      valueType: 'select',
-      fieldProps: {
-        placeholder: '全部方向',
-        options: [
-          { label: '采集（pull）', value: 'pull' },
-          { label: '推送（push）', value: 'push' },
-        ],
-      },
-    },
     {
       title: '任务名称',
       dataIndex: 'name',
       width: 240,
+      sorter: (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
       render: (_, row) => (
-        <Space size={6} direction="vertical">
+        <Space size={6} orientation="vertical">
           <Space size={6} wrap>
             {row.direction === 'push'
-              ? <ExportOutlined style={{ color: '#EC673C' }} />
-              : <ImportOutlined style={{ color: '#3687FF' }} />}
-            <Text strong style={{ color: '#003378' }}>{row.name}</Text>
-            <Tag color={row.direction === 'push' ? '#EC673C' : '#3687FF'} style={{ marginInlineEnd: 0 }}>
+              ? <ExportOutlined style={{ color: PALETTE.orange }} />
+              : <ImportOutlined style={{ color: PALETTE.primary }} />}
+            <Text strong style={{ color: NEUTRAL.text }}>{row.name}</Text>
+            <Tag color={row.direction === 'push' ? PALETTE.orange : PALETTE.primary} style={{ marginInlineEnd: 0 }}>
               {row.direction === 'push' ? '推送' : '采集'}
             </Tag>
           </Space>
-          <Text type="secondary" style={{ fontSize: 12 }}>{row.code}</Text>
+          <Text style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>{row.code}</Text>
         </Space>
       ),
     },
@@ -306,10 +308,10 @@ export default function IntegrationsPage() {
       width: 300,
       ellipsis: true,
       render: (_, row) => (
-        <Space size={4} direction="vertical" style={{ fontSize: 12.5 }}>
+        <Space size={4} orientation="vertical" style={{ fontSize: 12.5 }}>
           <Space size={4}>
-            <Tag color="#45B4FF" style={{ marginInlineEnd: 0 }}>{row.method}</Tag>
-            <Tag color="#B5B5B6" style={{ marginInlineEnd: 0 }}>{row.protocol}</Tag>
+            <Tag color={PALETTE.cyan} style={{ marginInlineEnd: 0 }}>{row.method}</Tag>
+            <Tag color={PALETTE.gray} style={{ marginInlineEnd: 0 }}>{row.protocol}</Tag>
           </Space>
           <Tooltip title={row.url}>
             <Text code style={{ fontSize: 12 }}>{truncate(row.url || '-', 44)}</Text>
@@ -331,8 +333,8 @@ export default function IntegrationsPage() {
       dataIndex: 'triggerType',
       width: 130,
       render: (_, row) => (
-        <Space size={2} direction="vertical" style={{ fontSize: 12.5 }}>
-          <Tag color="#73DBFF" style={{ marginInlineEnd: 0 }}>
+        <Space size={2} orientation="vertical" style={{ fontSize: 12.5 }}>
+          <Tag color={PALETTE.cyan} style={{ marginInlineEnd: 0 }}>
             {TRIGGER_TYPES.find((t) => t.value === row.triggerType)?.label || row.triggerType}
           </Tag>
           {row.triggerType === 'schedule' && row.schedule && (
@@ -345,17 +347,18 @@ export default function IntegrationsPage() {
       title: '最近执行',
       dataIndex: 'lastRunOk',
       width: 200,
+      sorter: (a, b) => String(a.lastRunAt || '').localeCompare(String(b.lastRunAt || '')),
       render: (_, row) => {
         if (row.lastRunAt === null || row.lastRunAt === undefined) {
-          return <Tag color="#B5B5B6">未执行</Tag>;
+          return <Tag color={PALETTE.gray} style={{ margin: 0 }}>未执行</Tag>;
         }
         return (
-          <Space size={2} direction="vertical" style={{ fontSize: 12 }}>
+          <Space size={2} orientation="vertical" style={{ fontSize: 12 }}>
             <Space size={4}>
               {row.lastRunOk ? (
-                <Tag icon={<CheckCircleFilled />} color="#A2D73C" style={{ marginInlineEnd: 0 }}>成功</Tag>
+                <Tag icon={<CheckCircleFilled />} color={PALETTE.green} style={{ marginInlineEnd: 0 }}>成功</Tag>
               ) : (
-                <Tag icon={<CloseCircleFilled />} color="#E86161" style={{ marginInlineEnd: 0 }}>失败</Tag>
+                <Tag icon={<CloseCircleFilled />} color={PALETTE.red} style={{ marginInlineEnd: 0 }}>失败</Tag>
               )}
               <Text type="secondary" style={{ fontSize: 11.5 }}>{fmtTime(row.lastRunAt)}</Text>
             </Space>
@@ -372,8 +375,9 @@ export default function IntegrationsPage() {
       title: '执行统计',
       dataIndex: 'runCount',
       width: 140,
+      sorter: (a, b) => (a.runCount ?? 0) - (b.runCount ?? 0),
       render: (_, row) => (
-        <Space size={2} direction="vertical" style={{ fontSize: 12 }}>
+        <Space size={2} orientation="vertical" style={{ fontSize: 12 }}>
           <Text>执行 {fmtNum(row.runCount)} 次</Text>
           <Text type="secondary" style={{ fontSize: 11.5 }}>成功 {fmtNum(row.successCount)} 次</Text>
         </Space>
@@ -406,7 +410,7 @@ export default function IntegrationsPage() {
           </a>
           {canWrite && <a onClick={() => openEdit(row)}><EditOutlined /> 编辑</a>}
           {canWrite && (
-            <a style={{ color: '#E86161' }} onClick={() => handleDelete(row)}>
+            <a style={{ color: PALETTE.red }} onClick={() => handleDelete(row)}>
               <DeleteOutlined /> 删除
             </a>
           )}
@@ -418,82 +422,78 @@ export default function IntegrationsPage() {
   return (
     <Page
       title="数据集成"
-      subTitle="通过 HTTP 接口采集第三方数据入项目，或把项目数据推送到目标服务器"
-      extra={
+      search={
         <>
-          <Button icon={<ReloadOutlined />} onClick={() => { loadProjects(); actionRef.current?.reload(); }}>
-            刷新
-          </Button>
-          {canWrite && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建集成任务
-            </Button>
-          )}
+          <Input.Search
+            allowClear
+            placeholder="名称 / 编码 / 接口地址"
+            style={{ width: 220 }}
+            value={keywordInput}
+            onChange={(e) => setKeywordInput(e.target.value)}
+            onSearch={(v) => { setKeyword(v.trim()); actionRef.current?.reload(); }}
+          />
+          <Select
+            allowClear
+            placeholder="全部方向"
+            style={{ width: 130 }}
+            value={direction}
+            onChange={(v) => { setDirection(v); actionRef.current?.reload(); }}
+            options={[
+              { label: '采集（pull）', value: 'pull' },
+              { label: '推送（push）', value: 'push' },
+            ]}
+          />
         </>
       }
+      actions={
+        canWrite ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新建集成任务
+          </Button>
+        ) : null
+      }
+      extra={
+        <Button icon={<ReloadOutlined />} onClick={() => { loadProjects(); actionRef.current?.reload(); }}>
+          刷新
+        </Button>
+      }
+      stats={statItems}
     >
-      {/* 统计卡片 */}
-      {stats && (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-            gap: 12,
-            marginBottom: 16,
-          }}
-        >
-          <Card size="small" styles={{ body: { padding: '10px 14px' } }}>
-            <Statistic title="任务总数" value={stats.total} valueStyle={{ fontSize: 20, color: '#3687FF' }} />
-          </Card>
-          <Card size="small" styles={{ body: { padding: '10px 14px' } }}>
-            <Statistic title="采集任务" value={stats.pullCount} valueStyle={{ fontSize: 20, color: '#2D6FE4' }} />
-          </Card>
-          <Card size="small" styles={{ body: { padding: '10px 14px' } }}>
-            <Statistic title="推送任务" value={stats.pushCount} valueStyle={{ fontSize: 20, color: '#EC673C' }} />
-          </Card>
-          <Card size="small" styles={{ body: { padding: '10px 14px' } }}>
-            <Statistic title="启用中" value={stats.active} valueStyle={{ fontSize: 20, color: '#A2D73C' }} />
-          </Card>
-          <Card size="small" styles={{ body: { padding: '10px 14px' } }}>
-            <Statistic title="累计执行" value={stats.runTotal} valueStyle={{ fontSize: 20, color: '#45B4FF' }} />
-          </Card>
-          <Card size="small" styles={{ body: { padding: '10px 14px' } }}>
-            <Statistic title="累计处理行" value={stats.rowsTotal} valueStyle={{ fontSize: 20, color: '#FFC000' }} />
-          </Card>
-        </div>
-      )}
-
-      <ProTable<Integration, { keyword?: string; direction?: string }>
+      <ProTable<Integration, Record<string, unknown>>
         rowKey="id"
         actionRef={actionRef}
         columns={columns}
         scroll={{ x: 1400 }}
-        search={{ labelWidth: 'auto', defaultCollapsed: false }}
+        search={false}
         options={{ density: false, fullScreen: true, setting: true, reload: false }}
         pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
         headerTitle="集成任务列表"
-        request={async (params) => {
-          const r = await listIntegrations({ direction: params.direction, keyword: params.keyword });
+        params={{ keyword, direction }}
+        request={async () => {
+          const r = await listIntegrations({ direction, keyword });
           if (r.stats) setStats(r.stats);
           const list = r.list || [];
           return { data: list, total: list.length, success: true };
         }}
       />
 
-      {/* ---------- 新建 / 编辑 ---------- */}
-      <DrawerForm<IntegrationFormValues>
+      {/* ---------- 新建 / 编辑：ModalForm（V4.1 禁止 Drawer） ---------- */}
+      <ModalForm<IntegrationFormValues>
         title={editing ? `编辑集成任务 · ${editing.name}` : '新建集成任务'}
         open={formOpen}
         onOpenChange={setFormOpen}
         formRef={formRef}
-        size={680}
+        width={760}
         initialValues={initialValues}
         onFinish={handleSubmit}
         onValuesChange={(changed: Partial<IntegrationFormValues>) => {
           if (changed.direction !== undefined) setCurDirection(changed.direction);
         }}
         submitter={{ searchConfig: { submitText: editing ? '保存' : '创建', resetText: '取消' } }}
-        drawerProps={{ destroyOnHidden: true }}
+        modalProps={{
+          destroyOnHidden: true,
+          styles: { body: { maxHeight: '64vh', overflowY: 'auto', paddingRight: 6 } },
+        }}
       >
         <Alert
           type="info"
@@ -586,9 +586,6 @@ export default function IntegrationsPage() {
           label="Bearer Token"
           placeholder="Authorization: Bearer <token>"
           dependencies={['authType']}
-          fieldProps={{
-            disabled: false,
-          }}
         />
         <ProFormText
           name="authUsername"
@@ -640,15 +637,17 @@ export default function IntegrationsPage() {
           placeholder="0 */5 * * *（Cron 表达式，定时触发时填写）"
         />
         <ProFormSwitch name="status" label="启用该任务" />
-      </DrawerForm>
+      </ModalForm>
 
-      {/* ---------- 单次执行结果 ---------- */}
-      <Drawer
+      {/* ---------- 单次执行结果：Modal（V4.1 禁止 Drawer） ---------- */}
+      <Modal
         title={`执行结果 · ${runResult?.row.name || ''}`}
         open={!!runResult}
-        onClose={() => setRunResult(null)}
-        size={720}
+        onCancel={() => setRunResult(null)}
+        footer={<Button onClick={() => setRunResult(null)}>关闭</Button>}
+        width={720}
         destroyOnHidden
+        styles={{ body: { maxHeight: '68vh', overflowY: 'auto', paddingRight: 4 } }}
       >
         {runResult && (
           <>
@@ -685,7 +684,7 @@ export default function IntegrationsPage() {
                 </Divider>
                 <Paragraph
                   style={{
-                    background: 'rgba(54,135,255,.06)', borderRadius: 8, padding: 12,
+                    background: NEUTRAL.surfaceSunken, borderRadius: 8, padding: 12,
                     fontSize: 12, maxHeight: 220, overflow: 'auto', marginBottom: 0,
                   }}
                 >
@@ -702,7 +701,7 @@ export default function IntegrationsPage() {
                 </Divider>
                 <Paragraph
                   style={{
-                    background: 'rgba(162,215,60,.10)', borderRadius: 8, padding: 12,
+                    background: NEUTRAL.surfaceAlt, borderRadius: 8, padding: 12,
                     fontSize: 12, maxHeight: 260, overflow: 'auto', marginBottom: 0,
                   }}
                 >
@@ -714,7 +713,7 @@ export default function IntegrationsPage() {
             )}
           </>
         )}
-      </Drawer>
+      </Modal>
     </Page>
   );
 }

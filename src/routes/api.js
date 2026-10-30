@@ -1749,13 +1749,33 @@ router.get('/datasets/:id', auth.requirePerm('dataset:read'), async (req, res, n
   } catch (err) { next(err); }
 });
 
+/**
+ * 把数据集 / SQL 相关的异常整理成结构化响应。
+ *
+ * message 是中文可读提示；同时保留 code / sqlMessage / hint /
+ * originalSql / normalizedSql，前端与日志都能直接定位问题。
+ */
+function datasetErrorBody(err) {
+  const body = { ok: false, message: (err && err.message) || '操作失败' };
+  if (err && err.isDbError) {
+    body.code = err.code || null;
+    body.errno = err.errno === undefined ? null : err.errno;
+    body.sqlMessage = err.sqlMessage || null;
+    body.hint = err.hint || null;
+    body.originalSql = err.originalSql || null;
+    body.normalizedSql = err.normalizedSql || null;
+    body.dialect = err.dialect || null;
+  }
+  return body;
+}
+
 router.post('/datasets', auth.requirePerm('dataset:write'), async (req, res, next) => {
   try {
     const dataset = await reports.createDataset(req.body || {}, req.user.id);
     await audit.log(req, 'dataset.create', { targetType: 'dataset', targetId: dataset.id, detail: { name: dataset.name } });
     res.json({ ok: true, data: dataset, message: '数据集创建成功' });
   } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
+    res.status(400).json(datasetErrorBody(err));
   }
 });
 
@@ -1765,7 +1785,7 @@ router.put('/datasets/:id', auth.requirePerm('dataset:write'), async (req, res, 
     await audit.log(req, 'dataset.update', { targetType: 'dataset', targetId: dataset.id });
     res.json({ ok: true, data: dataset, message: '数据集已更新' });
   } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
+    res.status(400).json(datasetErrorBody(err));
   }
 });
 
@@ -1786,33 +1806,27 @@ router.post('/datasets/:id/preview', auth.requirePerm('dataset:read'), async (re
     const r = await reports.previewDataset(req.params.id, limit);
     res.json({ ok: true, data: r });
   } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
+    res.status(400).json(datasetErrorBody(err));
   }
 });
 
-/** 临时执行 SQL（数据集设计器用） */
+/**
+ * 临时执行 SQL（数据集设计器用）
+ *
+ * 统一走 reports.testSql：去尾分号 → 只读校验 → 表名自动补引号 → 分页 → 执行。
+ * 失败时返回中文可读错误，并保留原始 SQL 与 DB 错误码便于排查。
+ */
 router.post('/datasets/test-sql', auth.requirePerm('dataset:write'), async (req, res) => {
   try {
     const body = req.body || {};
-    reports.assertReadOnly(String(body.sql || ''));
-    const source = await datasources.getById(body.datasourceId || 0);
-    if (!source) return res.status(400).json({ ok: false, message: '数据源不存在' });
-
-    const limit = Math.min(Number(body.limit) || 50, 1000);
-    const sql = dsDriver.paginate(source, String(body.sql).replace(/;+\s*$/, ''), limit, 0);
-    const started = Date.now();
-    const rows = await dsDriver.query(source, sql, []);
-    res.json({
-      ok: true,
-      data: {
-        rows,
-        columns: rows.length ? Object.keys(rows[0]).map((k) => ({ name: k, type: typeof rows[0][k] })) : [],
-        rowCount: rows.length,
-        elapsed: Date.now() - started,
-      },
+    const r = await reports.testSql({
+      datasourceId: body.datasourceId || 0,
+      sql: body.sql,
+      limit: body.limit,
     });
+    res.json({ ok: true, data: r });
   } catch (err) {
-    res.status(400).json({ ok: false, message: err.message });
+    res.status(400).json(datasetErrorBody(err));
   }
 });
 
@@ -2660,6 +2674,38 @@ router.get('/crm/dashboard', auth.requirePerm('report:read'), async (req, res, n
     res.json({ ok: true, data });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/**
+ * V5.0 中康智能体客户看板 · 全量数据
+ *
+ * 数据源：parsed_16（CRM表单推送）/ parsed_102（CRM流程推送）
+ *        / mail_30（运行汇总）/ mail_31（运行明细）/ zkcrm-ry（人员对应表）
+ * 口径见 _work/V5-CONTRACT.md §3.2，聚合实现见 src/crmboard.js。
+ */
+router.get('/crm/board', auth.requirePerm('report:read'), async (req, res) => {
+  try {
+    const crmboard = require('../crmboard');
+    const data = await crmboard.buildBoard(req.query);
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error('[crm/board]', err);
+    res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+/** V5.0 看板 · 明细服务端分页（「更多」弹窗、需要服务端分页时使用） */
+router.get('/crm/board/detail', auth.requirePerm('report:read'), async (req, res) => {
+  try {
+    const crmboard = require('../crmboard');
+    const page = Number(req.query.page) || 1;
+    const pageSize = Number(req.query.pageSize) || 20;
+    const data = await crmboard.buildDetailPage(req.query, page, pageSize);
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error('[crm/board/detail]', err);
+    res.status(500).json({ ok: false, message: err.message });
   }
 });
 

@@ -1,5 +1,6 @@
-/** 项目详情：概览 / 字段配置 / 推送日志 / 数据明细（Tabs）
+/** 项目详情：概览 / 字段配置 / 推送日志 / 数据明细（V4.1 页面规范）
  *
+ * 结构：本页名称 + 操作 → 子标签页 → 数据卡片 → 本页内容
  * 数据来源：
  *   GET /api/projects/:id                项目详情（project/columns/parsedColumns/stats/fieldDefs/subTables）
  *   GET /api/projects/:id/fields         字段定义（由 FieldsPanel 负责）
@@ -8,16 +9,19 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, App, Button, Card, Col, Descriptions, Drawer, Empty, Grid, Input, Row, Select,
-  Space, Statistic, Table, Tabs, Tag, Tooltip, Typography,
+  Alert, App, Button, Card, Col, Descriptions, Empty, Grid, Input, Modal, Row, Select,
+  Space, Table, Tabs, Tag, Tooltip, Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  CopyOutlined, DatabaseOutlined, KeyOutlined, ReloadOutlined, TableOutlined,
+  ArrowLeftOutlined, CopyOutlined, DatabaseOutlined, KeyOutlined, ReloadOutlined,
+  TableOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import Page from '@/components/Page';
-import { useAppStore, usePermission } from '@/stores/app';
+import type { StatCardItem } from '@/components/StatCards';
+import { usePermission } from '@/stores/app';
+import { NEUTRAL, PALETTE, SHADOW } from '@/theme';
 import {
   cellText, clearProjectLogs, fetchParsedRecords, fetchProject, fetchProjectLogs,
   pushUrlOf, regenerateToken,
@@ -36,6 +40,18 @@ const INTERNAL_COLS = new Set([
   'id', 'raw_json', 'jdy_op', 'jdy_op_time', 'received_at', 'updated_at',
 ]);
 
+/** 统一的卡片外框（V4.1：白底 + 可见边框 + 卡片阴影） */
+const cardStyle: React.CSSProperties = {
+  background: NEUTRAL.surface,
+  borderColor: NEUTRAL.border,
+  borderRadius: 10,
+  boxShadow: SHADOW.card,
+};
+
+const cardTitleStyle: React.CSSProperties = {
+  fontSize: 14, fontWeight: 600, color: NEUTRAL.text,
+};
+
 /* ══════════════ 概览 Tab ══════════════ */
 
 function OverviewTab({
@@ -49,7 +65,6 @@ function OverviewTab({
   const can = usePermission();
   const [regenerating, setRegenerating] = useState(false);
   const project = detail.project;
-  const stats = detail.stats;
   const pushUrl = pushUrlOf(project);
 
   const copy = async (text: string, label: string) => {
@@ -72,39 +87,19 @@ function OverviewTab({
   return (
     <div>
       <Row gutter={[12, 12]}>
-        {[
-          { title: '数据记录', value: stats.dataTotal, color: '#2D6FE4', hint: `今日 +${fmtNum(stats.dataToday)}` },
-          { title: '接收日志', value: stats.logTotal, color: '#45B4FF', hint: `失败 ${fmtNum(stats.logFailed)}` },
-          { title: '字段定义', value: detail.fieldDefs.length, color: '#A2D73C', hint: `数据列 ${detail.columns.length}` },
-          { title: '子表', value: detail.subTables.length, color: '#EC673C', hint: `解析列 ${detail.parsedColumns.length}` },
-        ].map((k) => (
-          <Col key={k.title} xs={12} md={6}>
-            <Card variant="outlined" style={{ borderColor: '#DCDDDD', borderRadius: 12 }} styles={{ body: { padding: isMobile ? 12 : 16 } }}>
-              <Statistic
-                title={<span style={{ fontSize: 12.5, color: 'rgba(0,51,120,.55)' }}>{k.title}</span>}
-                value={k.value}
-                styles={{ content: { color: k.color, fontSize: isMobile ? 20 : 24, fontWeight: 700 } }}
-              />
-              <div style={{ fontSize: 11.5, color: '#B5B5B6', marginTop: 2 }}>{k.hint}</div>
-            </Card>
-          </Col>
-        ))}
-      </Row>
-
-      <Row gutter={[12, 12]} style={{ marginTop: 12 }}>
         <Col xs={24} lg={14}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ ...cardStyle, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
-            title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>项目信息</span>}
+            title={<span style={cardTitleStyle}>项目信息</span>}
           >
             <Descriptions
               column={isMobile ? 1 : 2}
               size="small"
               styles={{
-                label: { color: 'rgba(0,51,120,.55)', fontSize: 12.5 },
-                content: { color: '#003378', fontSize: 12.5 },
+                label: { color: NEUTRAL.textTertiary, fontSize: 12.5 },
+                content: { color: NEUTRAL.text, fontSize: 12.5 },
               }}
               items={[
                 { key: 'name', label: '项目名称', children: project.name },
@@ -126,8 +121,8 @@ function OverviewTab({
                   key: 'status',
                   label: '状态',
                   children: Number(project.status) === 1
-                    ? <Tag color="#A2D73C">启用</Tag>
-                    : <Tag color="#B5B5B6">停用</Tag>,
+                    ? <Tag color={PALETTE.green}>启用</Tag>
+                    : <Tag color={PALETTE.gray}>停用</Tag>,
                 },
                 { key: 'parse', label: '字段解析', children: Number(project.parse_enabled ?? 1) === 1 ? '已开启' : '已关闭' },
                 { key: 'creator', label: '创建人', children: project.creator_display || project.creator_name || '-' },
@@ -135,7 +130,9 @@ function OverviewTab({
                 {
                   key: 'last',
                   label: '最后接收',
-                  children: stats.lastReceived ? `${fmtTime(stats.lastReceived)}（${fmtAgo(stats.lastReceived)}）` : '从未接收',
+                  children: detail.stats.lastReceived
+                    ? `${fmtTime(detail.stats.lastReceived)}（${fmtAgo(detail.stats.lastReceived)}）`
+                    : '从未接收',
                 },
                 { key: 'tags', label: '标签', children: project.tags || '-' },
                 {
@@ -152,9 +149,9 @@ function OverviewTab({
         <Col xs={24} lg={10}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ ...cardStyle, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
-            title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>推送接入</span>}
+            title={<span style={cardTitleStyle}>推送接入</span>}
             extra={
               can('project:write') && (
                 <Button size="small" icon={<KeyOutlined />} loading={regenerating} onClick={() => void onRegenerate()}>
@@ -167,10 +164,10 @@ function OverviewTab({
               type="info"
               showIcon
               style={{ marginBottom: 12 }}
-              message="把下面的地址填到简道云「数据推送 → 自定义推送地址」"
+              title="把下面的地址填到简道云「数据推送 → 自定义推送地址」"
             />
             <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 12, color: 'rgba(0,51,120,.55)', marginBottom: 3 }}>推送地址</div>
+              <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, marginBottom: 3 }}>推送地址</div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <Input value={pushUrl} readOnly size="small" style={{ fontFamily: 'SF Mono, Consolas, monospace', fontSize: 11.5 }} />
                 <Tooltip title="复制">
@@ -179,7 +176,7 @@ function OverviewTab({
               </div>
             </div>
             <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 12, color: 'rgba(0,51,120,.55)', marginBottom: 3 }}>推送令牌</div>
+              <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, marginBottom: 3 }}>推送令牌</div>
               <div style={{ display: 'flex', gap: 6 }}>
                 <Input.Password
                   value={project.push_token || ''}
@@ -196,13 +193,13 @@ function OverviewTab({
               <Alert
                 type="success"
                 showIcon
-                message="已配置校验 Secret"
+                title="已配置校验 Secret"
                 description="推送报文需带 signature 签名，未签名请求会被拒绝。"
               />
             ) : (
-              <Alert type="warning" showIcon message="未配置校验 Secret（不校验签名）" />
+              <Alert type="warning" showIcon title="未配置校验 Secret（不校验签名）" />
             )}
-            <div style={{ marginTop: 10, fontSize: 11.5, color: '#B5B5B6' }}>
+            <div style={{ marginTop: 10, fontSize: 11.5, color: NEUTRAL.textQuaternary }}>
               数据列 {detail.columns.length} 个 · 解析列 {detail.parsedColumns.length} 个 · 字段映射{' '}
               {Object.keys(detail.fieldMap || {}).length} 条
             </div>
@@ -213,13 +210,21 @@ function OverviewTab({
       {detail.subTables.length > 0 && (
         <Card
           variant="outlined"
-          style={{ borderColor: '#DCDDDD', borderRadius: 12, marginTop: 12 }}
+          style={{ ...cardStyle, marginTop: 12 }}
           styles={{ body: { padding: isMobile ? 12 : 16 } }}
-          title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>展开子表（{detail.subTables.length}）</span>}
+          title={<span style={cardTitleStyle}>展开子表（{detail.subTables.length}）</span>}
         >
           <Space size={[8, 8]} wrap>
             {detail.subTables.map((s) => (
-              <Tag key={s.name} color="#73DBFF" style={{ fontSize: 12, padding: '2px 8px' }}>
+              <Tag
+                key={s.name}
+                style={{
+                  fontSize: 12, padding: '2px 8px', margin: 0,
+                  background: NEUTRAL.surfaceSunken,
+                  border: `1px solid ${NEUTRAL.border}`,
+                  color: NEUTRAL.textSecondary,
+                }}
+              >
                 {s.comment || s.name}
               </Tag>
             ))}
@@ -240,6 +245,7 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [ops, setOps] = useState<{ op: string; c: number }[]>([]);
   const [op, setOp] = useState('');
   const [result, setResult] = useState('');
@@ -249,12 +255,15 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const d = await fetchProjectLogs(projectId, { page, pageSize, op, result, keyword });
       setRows(d.list || []);
       setTotal(d.total || 0);
       setOps(d.ops || []);
-    } catch { /* 已 toast */ } finally {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '推送日志加载失败');
+    } finally {
       setLoading(false);
     }
   }, [projectId, page, pageSize, op, result, keyword]);
@@ -280,13 +289,29 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
   };
 
   const columns = useMemo<ColumnsType<ProjectLogRow>>(() => [
-    { title: '时间', dataIndex: 'created_at', key: 'created_at', width: 160, render: (v) => fmtTime(String(v)) },
+    {
+      title: '时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      width: 160,
+      sorter: (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')),
+      render: (v) => fmtTime(String(v)),
+    },
     {
       title: '操作',
       dataIndex: 'op_label',
       key: 'op',
       width: 130,
-      render: (_v, row) => <Tag color="#45B4FF">{row.op_label || row.op}</Tag>,
+      render: (_v, row) => (
+        <Tag
+          style={{
+            margin: 0, background: NEUTRAL.surfaceSunken,
+            border: `1px solid ${NEUTRAL.border}`, color: PALETTE.primaryDeep,
+          }}
+        >
+          {row.op_label || row.op}
+        </Tag>
+      ),
     },
     {
       title: '结果',
@@ -294,8 +319,8 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
       key: 'result',
       width: 90,
       render: (v) => (v === 'success'
-        ? <Tag color="#A2D73C">成功</Tag>
-        : <Tag color="#E86161">{String(v) || '异常'}</Tag>),
+        ? <Tag color={PALETTE.green} style={{ margin: 0 }}>成功</Tag>
+        : <Tag color={PALETTE.red} style={{ margin: 0 }}>{String(v) || '异常'}</Tag>),
     },
     {
       title: '数据 ID',
@@ -319,6 +344,7 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
       key: 'field_count',
       width: 82,
       align: 'right',
+      sorter: (a, b) => Number(a.field_count || 0) - Number(b.field_count || 0),
       render: (v) => fmtNum(Number(v || 0)),
     },
     {
@@ -326,7 +352,6 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
       dataIndex: 'source_ip',
       key: 'source_ip',
       width: 130,
-      hideInTable: isMobile,
       render: (v) => String(v || '-'),
     },
     {
@@ -334,12 +359,12 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
       dataIndex: 'message',
       key: 'message',
       ellipsis: true,
-      render: (v) => <span style={{ fontSize: 12, color: 'rgba(0,51,120,.65)' }}>{cellText(v, 60) || '-'}</span>,
+      render: (v) => <span style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>{cellText(v, 60) || '-'}</span>,
     },
-  ], [isMobile]);
+  ], []);
 
   return (
-    <Card variant="outlined" style={{ borderColor: '#DCDDDD', borderRadius: 12 }} styles={{ body: { padding: isMobile ? 12 : 14 } }}>
+    <Card variant="outlined" style={cardStyle} styles={{ body: { padding: isMobile ? 12 : 14 } }}>
       <Space size={8} wrap style={{ marginBottom: 10 }}>
         <Input.Search
           allowClear
@@ -379,55 +404,85 @@ function LogsTab({ projectId, isMobile }: { projectId: number; isMobile: boolean
         )}
       </Space>
 
-      <Table<ProjectLogRow>
-        rowKey="id"
-        size="small"
-        loading={loading}
-        columns={columns}
-        dataSource={rows}
-        scroll={{ x: 900 }}
-        onRow={(row) => ({ onClick: () => setDetailRow(row), style: { cursor: 'pointer' } })}
-        locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无推送日志" /> }}
-        pagination={{
-          current: page,
-          pageSize,
-          total,
-          showSizeChanger: true,
-          pageSizeOptions: [10, 20, 50, 100],
-          showTotal: (t) => `共 ${t} 条`,
-          onChange: (p, ps) => { setPage(p); setPageSize(ps); },
-        }}
-      />
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          title="日志加载失败"
+          description={error}
+          action={<Button size="small" icon={<ReloadOutlined />} onClick={() => void load()}>重试</Button>}
+        />
+      ) : (
+        <Table<ProjectLogRow>
+          rowKey="id"
+          size="small"
+          loading={loading}
+          columns={columns}
+          dataSource={rows}
+          scroll={{ x: 900 }}
+          onRow={(row) => ({ onClick: () => setDetailRow(row), style: { cursor: 'pointer' } })}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无推送日志" /> }}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50, 100],
+            showTotal: (t) => `共 ${t} 条`,
+            onChange: (p, ps) => { setPage(p); setPageSize(ps); },
+          }}
+        />
+      )}
 
-      <Drawer
+      {/* 日志详情：内容少 → Modal（V4.1 禁止右侧抽屉承载业务内容） */}
+      <Modal
         open={Boolean(detailRow)}
-        onClose={() => setDetailRow(null)}
-        size={isMobile ? '100%' : 560}
+        onCancel={() => setDetailRow(null)}
+        footer={<Button onClick={() => setDetailRow(null)}>关闭</Button>}
+        width={isMobile ? '94%' : 640}
         title="日志详情"
         destroyOnHidden
       >
         {detailRow && (
-          <Descriptions column={1} size="small" bordered styles={{ label: { width: 110, fontSize: 12.5 }, content: { fontSize: 12.5 } }}>
-            <Descriptions.Item label="时间">{fmtTime(detailRow.created_at)}</Descriptions.Item>
-            <Descriptions.Item label="操作">{detailRow.op_label || detailRow.op}</Descriptions.Item>
-            <Descriptions.Item label="结果">
-              {detailRow.result === 'success' ? <Tag color="#A2D73C">成功</Tag> : <Tag color="#E86161">{detailRow.result}</Tag>}
-            </Descriptions.Item>
-            <Descriptions.Item label="数据 ID">{detailRow.data_id || '-'}</Descriptions.Item>
-            <Descriptions.Item label="表单">{detailRow.form_name || '-'}</Descriptions.Item>
-            <Descriptions.Item label="推送 ID">{detailRow.deliver_id || '-'}</Descriptions.Item>
-            <Descriptions.Item label="签名">{Number(detailRow.signature_ok) === 1 ? '通过' : (detailRow.signature_msg || '-')}</Descriptions.Item>
-            <Descriptions.Item label="来源 IP">{detailRow.source_ip || '-'}</Descriptions.Item>
-            <Descriptions.Item label="字段数">{fmtNum(Number(detailRow.field_count || 0))}</Descriptions.Item>
-            <Descriptions.Item label="说明">{detailRow.message || '-'}</Descriptions.Item>
-            <Descriptions.Item label="变更摘要">
-              <Paragraph style={{ margin: 0, fontSize: 12.5, whiteSpace: 'pre-wrap' }}>
-                {detailRow.change_summary || '（无）'}
-              </Paragraph>
-            </Descriptions.Item>
-          </Descriptions>
+          <Descriptions
+            column={1}
+            size="small"
+            bordered
+            styles={{ label: { width: 110, fontSize: 12.5 }, content: { fontSize: 12.5 } }}
+            items={[
+              { key: 't', label: '时间', children: fmtTime(detailRow.created_at) },
+              { key: 'op', label: '操作', children: detailRow.op_label || detailRow.op },
+              {
+                key: 'r',
+                label: '结果',
+                children: detailRow.result === 'success'
+                  ? <Tag color={PALETTE.green} style={{ margin: 0 }}>成功</Tag>
+                  : <Tag color={PALETTE.red} style={{ margin: 0 }}>{detailRow.result}</Tag>,
+              },
+              { key: 'd', label: '数据 ID', children: detailRow.data_id || '-' },
+              { key: 'f', label: '表单', children: detailRow.form_name || '-' },
+              { key: 'p', label: '推送 ID', children: detailRow.deliver_id || '-' },
+              {
+                key: 's',
+                label: '签名',
+                children: Number(detailRow.signature_ok) === 1 ? '通过' : (detailRow.signature_msg || '-'),
+              },
+              { key: 'ip', label: '来源 IP', children: detailRow.source_ip || '-' },
+              { key: 'fc', label: '字段数', children: fmtNum(Number(detailRow.field_count || 0)) },
+              { key: 'm', label: '说明', children: detailRow.message || '-' },
+              {
+                key: 'c',
+                label: '变更摘要',
+                children: (
+                  <Paragraph style={{ margin: 0, fontSize: 12.5, whiteSpace: 'pre-wrap' }}>
+                    {detailRow.change_summary || '（无）'}
+                  </Paragraph>
+                ),
+              },
+            ]}
+          />
         )}
-      </Drawer>
+      </Modal>
     </Card>
   );
 }
@@ -445,15 +500,19 @@ function DataTab({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [keywordInput, setKeywordInput] = useState('');
   const [keyword, setKeyword] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const d = await fetchParsedRecords(projectId, { page, pageSize, keyword });
       setData(d);
-    } catch { /* 已 toast */ } finally {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '解析数据加载失败');
+    } finally {
       setLoading(false);
     }
   }, [projectId, page, pageSize, keyword]);
@@ -502,9 +561,9 @@ function DataTab({
   return (
     <Card
       variant="outlined"
-      style={{ borderColor: '#DCDDDD', borderRadius: 12 }}
+      style={cardStyle}
       styles={{ body: { padding: isMobile ? 12 : 14 } }}
-      title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>解析后数据</span>}
+      title={<span style={cardTitleStyle}>解析后数据</span>}
       extra={<Text type="secondary" style={{ fontSize: 12 }}>共 {fmtNum(data?.total || 0)} 行</Text>}
     >
       <Space size={8} wrap style={{ marginBottom: 10 }}>
@@ -522,31 +581,41 @@ function DataTab({
         </Button>
       </Space>
 
-      <Table<DataRow>
-        rowKey={(row, i) => String(row.id ?? i)}
-        size="small"
-        loading={loading}
-        columns={columns}
-        dataSource={data?.list || []}
-        scroll={{ x: 'max-content' }}
-        locale={{
-          emptyText: (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="暂无解析数据（可先到「字段配置」执行同步结构回填）"
-            />
-          ),
-        }}
-        pagination={{
-          current: page,
-          pageSize,
-          total: data?.total || 0,
-          showSizeChanger: true,
-          pageSizeOptions: [10, 20, 50, 100],
-          showTotal: (t) => `共 ${t} 行`,
-          onChange: (p, ps) => { setPage(p); setPageSize(ps); },
-        }}
-      />
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          title="数据加载失败"
+          description={error}
+          action={<Button size="small" icon={<ReloadOutlined />} onClick={() => void load()}>重试</Button>}
+        />
+      ) : (
+        <Table<DataRow>
+          rowKey={(row, i) => String(row.id ?? i)}
+          size="small"
+          loading={loading}
+          columns={columns}
+          dataSource={data?.list || []}
+          scroll={{ x: 'max-content' }}
+          locale={{
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="暂无解析数据（可先到「字段配置」执行同步结构回填）"
+              />
+            ),
+          }}
+          pagination={{
+            current: page,
+            pageSize,
+            total: data?.total || 0,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50, 100],
+            showTotal: (t) => `共 ${t} 行`,
+            onChange: (p, ps) => { setPage(p); setPageSize(ps); },
+          }}
+        />
+      )}
     </Card>
   );
 }
@@ -582,6 +651,53 @@ export default function ProjectDetailPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  /** 数据卡片：全部来自 detail.stats / fieldDefs / columns / subTables，不新增接口 */
+  const statItems = useMemo<StatCardItem[]>(() => {
+    const s = detail?.stats;
+    return [
+      {
+        key: 'data',
+        label: '数据记录',
+        value: fmtNum(s?.dataTotal ?? 0),
+        suffix: '行',
+        color: PALETTE.primary,
+        hint: `今日 +${fmtNum(s?.dataToday ?? 0)}`,
+      },
+      {
+        key: 'log',
+        label: '接收日志',
+        value: fmtNum(s?.logTotal ?? 0),
+        suffix: '条',
+        color: PALETTE.cyan,
+        hint: `失败 ${fmtNum(s?.logFailed ?? 0)}`,
+      },
+      {
+        key: 'field',
+        label: '字段定义',
+        value: fmtNum(detail?.fieldDefs.length ?? 0),
+        suffix: '个',
+        color: PALETTE.green,
+        hint: `数据列 ${detail?.columns.length ?? 0}`,
+      },
+      {
+        key: 'parsed',
+        label: '解析列',
+        value: fmtNum(detail?.parsedColumns.length ?? 0),
+        suffix: '个',
+        color: PALETTE.violet,
+        hint: `字段映射 ${Object.keys(detail?.fieldMap || {}).length} 条`,
+      },
+      {
+        key: 'sub',
+        label: '展开子表',
+        value: fmtNum(detail?.subTables.length ?? 0),
+        suffix: '张',
+        color: PALETTE.orange,
+        hint: detail?.subTables.length ? '数组字段已展开' : '无数组字段',
+      },
+    ];
+  }, [detail]);
+
   if (!projectId) {
     return (
       <Page title="项目详情">
@@ -594,11 +710,14 @@ export default function ProjectDetailPage() {
 
   if (error && !loading) {
     return (
-      <Page title="项目详情" extra={<Button onClick={() => navigate('/projects')}>返回列表</Button>}>
+      <Page
+        title="项目详情"
+        actions={<Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/projects')}>返回列表</Button>}
+      >
         <Alert
           type="error"
           showIcon
-          message="加载失败"
+          title="加载失败"
           description={error}
           action={<Button size="small" icon={<ReloadOutlined />} onClick={() => void load()}>重试</Button>}
         />
@@ -608,68 +727,55 @@ export default function ProjectDetailPage() {
 
   const project = detail?.project;
 
-  const items = [
-    {
-      key: 'overview',
-      label: '概览',
-      icon: <DatabaseOutlined />,
-      children: detail ? (
-        <OverviewTab detail={detail} isMobile={isMobile} onRefresh={() => void load()} />
-      ) : (
-        <Card loading variant="borderless" />
-      ),
-    },
+  /** 子标签页：只放 Tab 条，内容由 Page.children 渲染（保证数据卡片位于子标签页下方） */
+  const tabItems = [
+    { key: 'overview', label: '概览', icon: <DatabaseOutlined /> },
     {
       key: 'fields',
       label: '字段配置',
       icon: <TableOutlined />,
       disabled: !can('field:write'),
-      children: detail ? (
-        <FieldsPanel projectId={projectId} onChanged={() => void load()} />
-      ) : (
-        <Card loading variant="borderless" />
-      ),
     },
-    {
-      key: 'logs',
-      label: '推送日志',
-      icon: <ReloadOutlined />,
-      disabled: !can('log:read'),
-      children: detail ? <LogsTab projectId={projectId} isMobile={isMobile} /> : <Card loading variant="borderless" />,
-    },
-    {
-      key: 'data',
-      label: '数据明细',
-      icon: <TableOutlined />,
-      disabled: !can('data:read'),
-      children: detail ? (
-        <DataTab projectId={projectId} parsedColumns={detail.parsedColumns} isMobile={isMobile} />
-      ) : (
-        <Card loading variant="borderless" />
-      ),
-    },
+    { key: 'logs', label: '推送日志', icon: <ReloadOutlined />, disabled: !can('log:read') },
+    { key: 'data', label: '数据明细', icon: <TableOutlined />, disabled: !can('data:read') },
   ];
+
+  const tabContent = !detail ? (
+    <Card loading variant="borderless" style={cardStyle} />
+  ) : tab === 'fields' ? (
+    <FieldsPanel projectId={projectId} onChanged={() => void load()} />
+  ) : tab === 'logs' ? (
+    <LogsTab projectId={projectId} isMobile={isMobile} />
+  ) : tab === 'data' ? (
+    <DataTab projectId={projectId} parsedColumns={detail.parsedColumns} isMobile={isMobile} />
+  ) : (
+    <OverviewTab detail={detail} isMobile={isMobile} onRefresh={() => void load()} />
+  );
 
   return (
     <Page
       title={project ? project.name : '项目详情'}
-      subTitle={project
-        ? `${project.code || ''} · ${project.group_name || '未分组'} · ${project.description || '暂无描述'}`
-        : '加载中'}
-      extra={
-        <Space size={8} wrap>
-          <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>刷新</Button>
-          <Button onClick={() => navigate('/projects')}>返回列表</Button>
-        </Space>
+      actions={
+        <>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/projects')}>
+            {isMobile ? '' : '返回列表'}
+          </Button>
+          <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>
+            {isMobile ? '' : '刷新'}
+          </Button>
+        </>
       }
+      subTabs={
+        <Tabs
+          activeKey={tab}
+          onChange={setTab}
+          items={tabItems}
+          size={isMobile ? 'small' : 'middle'}
+        />
+      }
+      stats={statItems}
     >
-      <Tabs
-        activeKey={tab}
-        onChange={setTab}
-        items={items}
-        size={isMobile ? 'small' : 'middle'}
-        destroyOnHidden={false}
-      />
+      {tabContent}
     </Page>
   );
 }

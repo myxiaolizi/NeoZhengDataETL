@@ -21,6 +21,7 @@ const PublicForm = lazyPage(() => import('@/pages/public-form'));
 
 // 业务页
 const Dashboard = lazyPage(() => import('@/pages/dashboard'));
+const Board = lazyPage(() => import('@/pages/dashboard/Board'));
 const CrmDashboard = lazyPage(() => import('@/pages/dashboard/CrmDashboard'));
 const Projects = lazyPage(() => import('@/pages/projects'));
 const ProjectDetail = lazyPage(() => import('@/pages/projects/Detail'));
@@ -31,6 +32,8 @@ const FormData = lazyPage(() => import('@/pages/forms/Data'));
 const Integrations = lazyPage(() => import('@/pages/integrations'));
 const IntegrationDetail = lazyPage(() => import('@/pages/integrations/Detail'));
 const MailPush = lazyPage(() => import('@/pages/mail-push'));
+/** V4.1：「邮件推送 · 数据项目」由右侧抽屉改为独立页面 */
+const MailPushProject = lazyPage(() => import('@/pages/mail-push/Project'));
 const Flows = lazyPage(() => import('@/pages/flows'));
 const FlowDesign = lazyPage(() => import('@/pages/flows/Design'));
 const FlowLogs = lazyPage(() => import('@/pages/flows/Logs'));
@@ -140,6 +143,7 @@ export default function App() {
               <BasicLayout>
                 <Routes>
                   <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/dashboard/board" element={<Board />} />
                   <Route path="/dashboard/crm" element={<CrmDashboard />} />
                   <Route path="/projects" element={<Projects />} />
                   <Route path="/projects/:id" element={<ProjectDetail />} />
@@ -150,6 +154,7 @@ export default function App() {
                   <Route path="/integrations" element={<Integrations />} />
                   <Route path="/integrations/:id" element={<IntegrationDetail />} />
                   <Route path="/mail-push" element={<MailPush />} />
+                  <Route path="/mail-push/projects/:id" element={<MailPushProject />} />
                   <Route path="/flows" element={<Flows />} />
                   <Route path="/flows/:id/design" element={<FlowDesign />} />
                   <Route path="/flows/:id/logs" element={<FlowLogs />} />

@@ -1,6 +1,19 @@
-/** 主布局：Ant Design Pro 风格侧边栏 + 顶部栏，响应式 */
+/**
+ * 主布局（V4.1）
+ *
+ * 本轮改动对应要求：
+ *  1. 顶部「标签栏」与「用户名」合并为一行 —— Header 左=标签页（可横向滚动/更多菜单），
+ *     右=头像+用户名下拉；**移除面包屑**，不再显示当前菜单名称与路径。
+ *  2. 菜单收起按钮从 Header 移到侧栏**底部**：品牌区（固定）→ 菜单区（可滚动）→ 底部工具区（固定）。
+ *     移动端仍是左侧抽屉导航（抽屉内同样蓝底白字）。
+ *  3. 侧栏品牌区显示「系统设置 → 平台名称」与版本号 V4.1；收起态只留 logo 方块。
+ *  4. 侧栏蓝底白字：Sider 深蓝竖直渐变（SIDER.bgFrom → SIDER.bgTo），Menu 用 dark 主题，
+ *     菜单文字/选中/hover/分组标题全部由 @/theme 的 SIDER.* 决定（令牌在 main.tsx 配好），
+ *     选中项左侧 3px 白色竖条由 global.css 的 .v41-sider 规则补。
+ *  5. 页面底色 NEUTRAL.pageBg，Content 内边距桌面 16 / 移动 10。
+ */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Layout, Menu, Avatar, Dropdown, Grid, Drawer, Button, Space, Tooltip, Breadcrumb } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Grid, Drawer, Button } from 'antd';
 import {
   DashboardOutlined, ProjectOutlined, FormOutlined, SwapOutlined, MailOutlined,
   NodeIndexOutlined, DatabaseOutlined, TableOutlined, BarChartOutlined, ShareAltOutlined,
@@ -9,11 +22,24 @@ import {
   LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, FundOutlined, MenuOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useAppStore } from '@/stores/app';
+import { APP_VERSION, useAppStore } from '@/stores/app';
+import { useTabsStore } from '@/stores/tabs';
+import TabsBar from './TabsBar';
 import { ROUTES, MENU_GROUPS } from '@/routes';
+import { NEUTRAL, PALETTE, SHADOW, SIDER } from '@/theme';
 
 const { Header, Sider, Content } = Layout;
 const { useBreakpoint } = Grid;
+
+/** 顶部栏高度，与 main.tsx 的 Layout.headerHeight 保持一致 */
+const HEADER_HEIGHT = 52;
+/** 侧栏展开宽度 */
+const SIDER_WIDTH = 232;
+/** 侧栏收起宽度 */
+const SIDER_COLLAPSED_WIDTH = 64;
+
+/** 侧栏竖直渐变：蓝底白字的底色 */
+const SIDER_GRADIENT = `linear-gradient(180deg, ${SIDER.bgFrom} 0%, ${SIDER.bgTo} 100%)`;
 
 const ICONS: Record<string, React.ReactNode> = {
   DashboardOutlined: <DashboardOutlined />,
@@ -41,44 +67,84 @@ const ICONS: Record<string, React.ReactNode> = {
 export default function BasicLayout({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, can, logout } = useAppStore();
+  const { user, can, logout, siteName, siteLogoText, fetchSite } = useAppStore();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  /** 构建菜单项：按分组 + 权限过滤 */
+  const { openTab, reset: resetTabs } = useTabsStore();
+
+  /** 侧栏品牌区是否显示文字（移动端抽屉里始终显示） */
+  const showBrandText = !(collapsed && !isMobile);
+
+  /** 站点名称兜底：store 里已兜底，这里再做一层防御，避免接口异常时品牌区空白 */
+  const brandName = (siteName || '').trim() || 'Neo Zheng DataETL';
+  const brandLogoText = (siteLogoText || '').trim().slice(0, 1) || 'N';
+
+  /** 站点名称：挂载时取一次（公开接口，无需登录） */
+  useEffect(() => {
+    fetchSite();
+  }, [fetchSite]);
+
+  /**
+   * 构建菜单项：按分组 + 权限过滤。
+   *
+   * 收起态（宽 64）不渲染分组标题 —— 否则只显示一条条空白的 group 分隔，
+   * 直接把可见路由平铺，antd 会自动为每个图标项显示 title 提示。
+   */
   const menuItems = useMemo(() => {
+    const visibleOf = (groupKey: string) =>
+      ROUTES.filter(
+        (r) => r.group === groupKey && !r.hideInMenu && (!r.permission || can(r.permission))
+      ).map((r) => ({
+        key: r.path,
+        icon: r.icon ? ICONS[r.icon] : undefined,
+        label: r.name,
+      }));
+
+    if (collapsed && !isMobile) {
+      return MENU_GROUPS.flatMap((g) => visibleOf(g.key));
+    }
+
     return MENU_GROUPS.map((g) => {
-      const children = ROUTES.filter((r) => r.group === g.key && !r.hideInMenu && (!r.permission || can(r.permission)));
+      const children = visibleOf(g.key);
       if (!children.length) return null;
       return {
         key: g.key,
         type: 'group' as const,
         label: g.title || undefined,
-        children: children.map((r) => ({
-          key: r.path,
-          icon: r.icon ? ICONS[r.icon] : undefined,
-          label: r.name,
-        })),
+        children,
       };
     }).filter(Boolean) as any[];
-  }, [user, can]);
+  }, [user, can, collapsed, isMobile]);
 
-  /** 当前选中项：最长前缀匹配，兼容 /projects/123 */
+  /**
+   * 当前选中项：最长前缀匹配，兼容 /projects/123
+   *
+   * 用**全量 ROUTES**（含 hideInMenu）匹配，保证 /dashboard/crm 这类不在菜单里的
+   * 页面也能让菜单高亮到语义最近的父级。
+   */
   const selectedKey = useMemo(() => {
     const path = location.pathname;
-    const visible = ROUTES.filter((r) => !r.hideInMenu && (!r.permission || can(r.permission)));
-    const hit = visible
+    const accessible = ROUTES.filter((r) => !r.permission || can(r.permission));
+    const hit = accessible
       .filter((r) => path === r.path || path.startsWith(r.path + '/'))
       .sort((a, b) => b.path.length - a.path.length)[0];
     return hit ? [hit.path] : [];
   }, [location.pathname, user, can]);
 
-  const currentRoute = useMemo(
-    () => ROUTES.find((r) => selectedKey.includes(r.path)),
-    [selectedKey]
-  );
+  /** 路由变化时同步标签页 */
+  useEffect(() => {
+    openTab(location.pathname);
+  }, [location.pathname, openTab]);
+
+  /** 退出登录时清空标签 */
+  const handleLogout = async () => {
+    resetTabs();
+    await logout();
+    navigate('/login');
+  };
 
   useEffect(() => {
     if (isMobile) setCollapsed(false);
@@ -88,13 +154,16 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
     setDrawerOpen(false);
   }, [location.pathname]);
 
-  const menu = (
+  const menuNode = (
     <Menu
+      theme="dark"
       mode="inline"
       selectedKeys={selectedKey}
       items={menuItems}
       onClick={({ key }) => navigate(key)}
-      style={{ border: 'none', fontSize: 13.5 }}
+      className="v41-sider-menu"
+      // dark 令牌已把背景设为 transparent，这里再显式兜底，保证渐变底色透出来
+      style={{ border: 'none', background: 'transparent', fontSize: 13.5 }}
     />
   );
 
@@ -104,122 +173,246 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
       { type: 'divider' as const },
       { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
     ],
-    onClick: async ({ key }: any) => {
+    onClick: async ({ key }: { key: string }) => {
       if (key === 'profile') navigate('/profile');
       if (key === 'logout') {
-        await logout();
-        navigate('/login');
+        await handleLogout();
       }
     },
   };
 
+  /** 品牌区：蓝底上的 logo 方块 + 站点名称 + 版本号（收起态只剩方块） */
   const brand = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 16px', height: 56 }}>
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexShrink: 0,
+        minHeight: HEADER_HEIGHT,
+        padding: showBrandText ? '10px 16px' : '10px 0',
+        justifyContent: showBrandText ? 'flex-start' : 'center',
+        borderBottom: `1px solid ${SIDER.divider}`,
+      }}
+    >
       <div
         style={{
-          width: 32, height: 32, borderRadius: 9, flex: '0 0 32px',
-          background: 'linear-gradient(135deg, #2D6FE4, #3687FF)',
-          color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontWeight: 700, fontSize: 16,
+          width: 32,
+          height: 32,
+          borderRadius: 9,
+          flex: '0 0 32px',
+          background: SIDER.itemSelectedBg,
+          color: NEUTRAL.textInverse,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontWeight: 700,
+          fontSize: 16,
+          boxShadow: '0 2px 8px rgba(0,0,0,.18)',
+          userSelect: 'none',
         }}
       >
-        N
+        {brandLogoText}
       </div>
-      {!collapsed && !isMobile && (
+      {showBrandText && (
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 700, color: '#003378', lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            Neo Zheng DataETL
+          <div
+            title={brandName}
+            style={{
+              fontSize: 13.5,
+              fontWeight: 700,
+              color: NEUTRAL.textInverse,
+              lineHeight: 1.3,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {brandName}
           </div>
-          <div style={{ fontSize: 10.5, color: '#B5B5B6', lineHeight: 1.2 }}>V4.0</div>
+          <div style={{ fontSize: 10.5, color: SIDER.groupTitleColor, lineHeight: 1.2 }}>
+            {APP_VERSION}
+          </div>
         </div>
       )}
     </div>
   );
 
+  /** 侧栏底部工具区：菜单收起/展开按钮（固定，不随菜单滚动） */
+  const siderFooter = (
+    <div
+      style={{
+        flexShrink: 0,
+        borderTop: `1px solid ${SIDER.divider}`,
+        padding: collapsed ? '8px 0' : '8px 10px',
+        display: 'flex',
+        justifyContent: collapsed ? 'center' : 'flex-start',
+      }}
+    >
+      <Button
+        type="text"
+        className="v41-sider-collapse"
+        icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
+        onClick={() => setCollapsed((v) => !v)}
+        title={collapsed ? '展开菜单' : '收起菜单'}
+        style={{
+          color: SIDER.itemColor,
+          height: 34,
+          width: collapsed ? 40 : '100%',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: collapsed ? 'center' : 'flex-start',
+          gap: 8,
+          borderRadius: 8,
+          paddingInline: collapsed ? 0 : 10,
+        }}
+      >
+        {!collapsed && '收起菜单'}
+      </Button>
+    </div>
+  );
+
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      {/* 桌面端侧边栏 */}
+    <Layout style={{ minHeight: '100vh', background: NEUTRAL.pageBg }}>
+      {/* 桌面端侧边栏：品牌区（固定）→ 菜单区（滚动）→ 底部工具区（固定） */}
       {!isMobile && (
         <Sider
-          width={232}
-          collapsedWidth={64}
+          theme="dark"
+          width={SIDER_WIDTH}
+          collapsedWidth={SIDER_COLLAPSED_WIDTH}
           collapsed={collapsed}
-          theme="light"
-          style={{ borderRight: '1px solid #DCDDDD', position: 'sticky', top: 0, height: '100vh', overflow: 'auto' }}
+          className="v41-sider"
+          style={{
+            background: SIDER_GRADIENT,
+            position: 'sticky',
+            top: 0,
+            height: '100vh',
+            overflow: 'hidden',
+            borderRight: `1px solid ${SIDER.divider}`,
+            boxShadow: SHADOW.card,
+          }}
         >
-          {brand}
-          <div style={{ padding: '8px 0 24px' }}>{menu}</div>
+          <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+            {brand}
+            <div
+              className="v41-sider-scroll"
+              style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: '8px 0' }}
+            >
+              {menuNode}
+            </div>
+            {siderFooter}
+          </div>
         </Sider>
       )}
 
-      {/* 移动端抽屉 */}
+      {/* 移动端抽屉导航：同样蓝底白字 */}
       {isMobile && (
         <Drawer
           placement="left"
-          width={248}
+          width={252}
           open={drawerOpen}
           onClose={() => setDrawerOpen(false)}
-          styles={{ body: { padding: 0 } }}
           closable={false}
+          styles={{
+            body: { padding: 0, background: SIDER_GRADIENT, display: 'flex', flexDirection: 'column' },
+            content: { background: SIDER_GRADIENT },
+            header: { display: 'none' },
+          }}
         >
           {brand}
-          <div style={{ padding: '8px 0 24px' }}>{menu}</div>
+          <div
+            className="v41-sider-scroll"
+            style={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', padding: '8px 0' }}
+          >
+            {menuNode}
+          </div>
         </Drawer>
       )}
 
-      <Layout>
+      <Layout style={{ background: NEUTRAL.pageBg }}>
+        {/* 顶部单栏：左=标签页，右=用户名。无面包屑。 */}
         <Header
+          className="v41-header"
           style={{
-            background: '#FFFFFF',
-            borderBottom: '1px solid #DCDDDD',
-            padding: isMobile ? '0 12px' : '0 20px',
+            height: HEADER_HEIGHT,
+            lineHeight: 'normal',
+            background: NEUTRAL.surface,
+            borderBottom: `1px solid ${NEUTRAL.border}`,
+            padding: isMobile ? '0 8px' : '0 12px',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-between',
+            gap: 8,
             position: 'sticky',
             top: 0,
             zIndex: 20,
           }}
         >
-          <Space size={8}>
-            {isMobile ? (
-              <Button type="text" icon={<MenuOutlined />} onClick={() => setDrawerOpen(true)} />
-            ) : (
-              <Button
-                type="text"
-                icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-                onClick={() => setCollapsed(!collapsed)}
-              />
-            )}
-            <Breadcrumb
-              items={[
-                ...(currentRoute?.group && currentRoute.group !== 'overview'
-                  ? [{ title: MENU_GROUPS.find((g) => g.key === currentRoute.group)?.title }]
-                  : []),
-                { title: currentRoute?.name || '数据概览' },
-              ]}
+          {isMobile && (
+            <Button
+              type="text"
+              aria-label="打开导航菜单"
+              icon={<MenuOutlined />}
+              onClick={() => setDrawerOpen(true)}
+              style={{ flexShrink: 0 }}
             />
-          </Space>
+          )}
+
+          {/* 标签页占据左侧全部可用宽度，溢出时由 antd Tabs 的「更多」下拉接管 */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
+            <TabsBar />
+          </div>
 
           <Dropdown menu={userMenu} placement="bottomRight" trigger={['click']}>
-            <Space style={{ cursor: 'pointer' }} size={8}>
+            <div
+              className="v41-header-user"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                flexShrink: 0,
+                height: 38,
+                padding: '0 6px',
+                borderRadius: 8,
+                cursor: 'pointer',
+              }}
+            >
               <Avatar
                 size={30}
-                style={{ background: user?.avatarColor || '#2D6FE4', fontSize: 13 }}
+                style={{
+                  background: user?.avatarColor || PALETTE.primary,
+                  fontSize: 13,
+                  flexShrink: 0,
+                }}
                 src={user?.avatar || undefined}
               >
                 {(user?.displayName || user?.username || '?').slice(0, 1)}
               </Avatar>
               {!isMobile && (
-                <span style={{ fontSize: 13, color: '#003378' }}>
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 500,
+                    color: NEUTRAL.text,
+                    maxWidth: 140,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
                   {user?.displayName || user?.username}
                 </span>
               )}
-            </Space>
+            </div>
           </Dropdown>
         </Header>
 
-        <Content style={{ padding: isMobile ? 12 : 20, background: '#FFFFFF' }}>
+        <Content
+          style={{
+            padding: isMobile ? 10 : 16,
+            background: NEUTRAL.pageBg,
+            minHeight: 0,
+          }}
+        >
           {children}
         </Content>
       </Layout>

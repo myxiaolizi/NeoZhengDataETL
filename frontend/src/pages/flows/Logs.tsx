@@ -1,34 +1,25 @@
-/** 流程日志：运行记录列表 + 节点执行明细（可展开） */
+/** 流程日志（V4.1 页面规范）：运行记录列表 + 节点执行明细（可展开）
+ *
+ * 结构：本页名称 + 操作 → 数据卡片 → 运行记录列表 → 流程配置
+ */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
-  Button, Card, Descriptions, Empty, Grid, Pagination, Space, Statistic, Tag, Tooltip,
+  Alert, Button, Card, Descriptions, Empty, Grid, Pagination, Space, Tag, Tooltip,
 } from 'antd';
 import {
   ArrowLeftOutlined, EditOutlined, PlayCircleOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
+import { NEUTRAL, PALETTE, SHADOW } from '@/theme';
 import { flowsApi } from '@/api/flows';
 import type { FlowDetail, FlowLog, FlowNodeLog } from '@/api/flows';
-import { fmtTime } from '@/utils';
+import { fmtNum, fmtTime } from '@/utils';
 
 const { useBreakpoint } = Grid;
-
-/** 调色板（契约唯一允许的 13 色） */
-const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  deep: '#003378',
-  cyan: '#45B4FF',
-  green: '#A2D73C',
-  orange: '#EC673C',
-  red: '#E86161',
-  yellow: '#FFC000',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
 
 const PAGE_SIZE = 20;
 
@@ -42,7 +33,7 @@ const TRIGGER_TEXT: Record<string, string> = {
 /** 节点日志展开区 */
 function NodeLogs({ logs }: { logs: FlowNodeLog[] }) {
   if (!logs.length) {
-    return <div style={{ fontSize: 12.5, color: C.gray, padding: '6px 0' }}>没有节点执行明细</div>;
+    return <div style={{ fontSize: 12.5, color: NEUTRAL.textTertiary, padding: '6px 0' }}>没有节点执行明细</div>;
   }
   return (
     <div style={{ padding: '4px 0' }}>
@@ -51,20 +42,20 @@ function NodeLogs({ logs }: { logs: FlowNodeLog[] }) {
           key={`${l.nodeId}-${i}`}
           style={{
             display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 12.5,
-            padding: '6px 0', borderBottom: i === logs.length - 1 ? 'none' : `1px solid ${C.line}`,
+            padding: '6px 0', borderBottom: i === logs.length - 1 ? 'none' : `1px solid ${NEUTRAL.borderSubtle}`,
           }}
         >
           <span
             style={{
               width: 20, height: 20, borderRadius: 10, flexShrink: 0, fontSize: 11,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF',
-              background: l.ok === false ? C.red : C.green,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', color: NEUTRAL.textInverse,
+              background: l.ok === false ? PALETTE.red : PALETTE.green,
             }}
           >
             {l.ok === false ? '✗' : '✓'}
           </span>
-          <span style={{ color: C.deep, width: 150, flexShrink: 0 }}>{l.name}</span>
-          <span style={{ flex: 1, color: C.gray, wordBreak: 'break-all' }}>
+          <span style={{ color: NEUTRAL.text, width: 150, flexShrink: 0 }}>{l.name}</span>
+          <span style={{ flex: 1, color: NEUTRAL.textTertiary, wordBreak: 'break-all' }}>
             {l.ok === false
               ? l.error || '执行失败'
               : `输入 ${l.inputRows ?? l.rows ?? 0} 行 → 输出 ${l.outputRows ?? l.rows ?? 0} 行`}
@@ -87,6 +78,7 @@ export default function FlowLogsPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [running, setRunning] = useState(false);
 
   useEffect(() => {
@@ -100,12 +92,13 @@ export default function FlowLogsPage() {
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
+    setError('');
     try {
       const res = await flowsApi.logs(id, { page, pageSize: PAGE_SIZE });
       setRows(res.list || []);
       setTotal(res.total || 0);
-    } catch {
-      /* client 已提示 */
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '运行日志加载失败');
     } finally {
       setLoading(false);
     }
@@ -121,10 +114,7 @@ export default function FlowLogsPage() {
     if (!id) return;
     setRunning(true);
     try {
-      const res = await flowsApi.run(id);
-      if (res.ok) {
-        // 成功提示由调用方 message 负责，这里保持静默，避免重复
-      }
+      await flowsApi.run(id);
       setPage(1);
       await load();
     } catch {
@@ -134,12 +124,27 @@ export default function FlowLogsPage() {
     }
   };
 
+  /* ---------- 数据卡片（就地统计，不新增接口） ---------- */
+  const statItems = useMemo<StatCardItem[]>(() => [
+    { key: 'total', label: '日志条数', value: fmtNum(total), suffix: '条', color: PALETTE.primary },
+    { key: 'pageOk', label: '本页成功', value: fmtNum(successCount), suffix: '条', color: PALETTE.green },
+    { key: 'ok', label: '累计成功', value: fmtNum(flow?.successCount ?? 0), suffix: '次', color: PALETTE.cyan, hint: `累计运行 ${fmtNum(flow?.runCount ?? 0)} 次` },
+    {
+      key: 'last',
+      label: '最近执行',
+      value: flow?.lastRunAt ? fmtTime(flow.lastRunAt, 'MM-DD HH:mm') : '未执行',
+      color: flow?.lastRunOk === false ? PALETTE.red : PALETTE.violet,
+      hint: flow?.lastRunAt ? (flow.lastRunOk ? '结果：成功' : '结果：失败') : undefined,
+    },
+  ], [total, successCount, flow]);
+
   const columns: ProColumns<FlowLog>[] = useMemo(
     () => [
       {
         title: '执行时间',
         dataIndex: 'created_at',
         width: 170,
+        sorter: (a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')),
         render: (_, record) => <span style={{ fontSize: 12.5 }}>{fmtTime(record.created_at)}</span>,
       },
       {
@@ -147,7 +152,7 @@ export default function FlowLogsPage() {
         dataIndex: 'trigger_source',
         width: 110,
         render: (_, record) => (
-          <Tag style={{ color: C.primary, background: '#FFFFFF', borderColor: C.primary }}>
+          <Tag style={{ color: PALETTE.primary, background: NEUTRAL.surface, borderColor: PALETTE.primary, margin: 0 }}>
             {TRIGGER_TEXT[record.trigger_source] || record.trigger_source}
           </Tag>
         ),
@@ -159,22 +164,24 @@ export default function FlowLogsPage() {
         render: (_, record) => (
           <Tag
             style={{
-              color: record.success === 1 ? C.green : C.red,
-              background: '#FFFFFF',
-              borderColor: record.success === 1 ? C.green : C.red,
+              color: record.success === 1 ? PALETTE.green : PALETTE.red,
+              background: NEUTRAL.surface,
+              borderColor: record.success === 1 ? PALETTE.green : PALETTE.red,
+              margin: 0,
             }}
           >
             {record.success === 1 ? '成功' : '失败'}
           </Tag>
         ),
       },
-      { title: '输入行', dataIndex: 'input_rows', width: 90, align: 'right' },
-      { title: '输出行', dataIndex: 'output_rows', width: 90, align: 'right' },
+      { title: '输入行', dataIndex: 'input_rows', width: 90, align: 'right', sorter: (a, b) => (a.input_rows ?? 0) - (b.input_rows ?? 0) },
+      { title: '输出行', dataIndex: 'output_rows', width: 90, align: 'right', sorter: (a, b) => (a.output_rows ?? 0) - (b.output_rows ?? 0) },
       {
         title: '耗时',
         dataIndex: 'duration_ms',
         width: 90,
         align: 'right',
+        sorter: (a, b) => (a.duration_ms ?? 0) - (b.duration_ms ?? 0),
         render: (_, record) => (record.duration_ms === null ? '-' : `${record.duration_ms}ms`),
       },
       {
@@ -183,7 +190,7 @@ export default function FlowLogsPage() {
         ellipsis: true,
         render: (_, record) => (
           <Tooltip title={record.message || ''}>
-            <span style={{ fontSize: 12.5, color: record.success === 1 ? C.deep : C.red }}>
+            <span style={{ fontSize: 12.5, color: record.success === 1 ? NEUTRAL.textSecondary : PALETTE.red }}>
               {record.message || '-'}
             </span>
           </Tooltip>
@@ -194,7 +201,7 @@ export default function FlowLogsPage() {
         valueType: 'option',
         width: 100,
         render: (_, record) => (
-          <span style={{ fontSize: 12.5, color: C.gray }}>{record.nodeLogs?.length || 0} 个节点</span>
+          <span style={{ fontSize: 12.5, color: NEUTRAL.textTertiary }}>{record.nodeLogs?.length || 0} 个节点</span>
         ),
       },
     ],
@@ -203,57 +210,46 @@ export default function FlowLogsPage() {
 
   return (
     <Page
-      title={`流程日志${flow ? ` · ${flow.name}` : ''}`}
-      subTitle={flow ? `${flow.code} · 累计运行 ${flow.runCount ?? 0} 次，成功 ${flow.successCount ?? 0} 次` : '加载中…'}
+      title={flow ? `流程日志 · ${flow.name}` : '流程日志'}
+      actions={
+        <Button type="primary" icon={<PlayCircleOutlined />} loading={running} onClick={runNow}>
+          立即执行
+        </Button>
+      }
       extra={
-        <Space wrap size={8}>
+        <>
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/flows')}>
-            返回流程
+            {isMobile ? '' : '返回流程'}
           </Button>
           <Button icon={<EditOutlined />} onClick={() => navigate(`/flows/${id}/design`)}>
-            流程设计
+            {isMobile ? '' : '流程设计'}
           </Button>
           <Button icon={<ReloadOutlined />} loading={loading} onClick={load}>
-            刷新
+            {isMobile ? '' : '刷新'}
           </Button>
-          <Button type="primary" icon={<PlayCircleOutlined />} loading={running} onClick={runNow}>
-            立即执行
-          </Button>
-        </Space>
+        </>
       }
+      stats={statItems}
     >
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
-        <Card size="small" style={{ flex: 1, minWidth: 150 }} styles={{ body: { padding: 14 } }}>
-          <Statistic title="日志条数" value={total} styles={{ content: { color: C.primary, fontWeight: 700 } }} />
-        </Card>
-        <Card size="small" style={{ flex: 1, minWidth: 150 }} styles={{ body: { padding: 14 } }}>
-          <Statistic title="本页成功" value={successCount} styles={{ content: { color: C.green, fontWeight: 700 } }} />
-        </Card>
-        <Card size="small" style={{ flex: 1, minWidth: 150 }} styles={{ body: { padding: 14 } }}>
-          <Statistic
-            title="累计成功"
-            value={flow?.successCount ?? 0}
-            styles={{ content: { color: C.cyan, fontWeight: 700 } }}
-          />
-        </Card>
-        <Card size="small" style={{ flex: 1, minWidth: 150 }} styles={{ body: { padding: 14 } }}>
-          <Statistic
-            title="最近执行"
-            value={flow?.lastRunAt ? fmtTime(flow.lastRunAt, 'MM-DD HH:mm') : '未执行'}
-            styles={{ content: { color: flow?.lastRunOk === false ? C.red : C.deep, fontSize: 18, fontWeight: 700 } }}
-          />
-        </Card>
-      </div>
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          title="加载失败"
+          description={error}
+          action={<Button size="small" icon={<ReloadOutlined />} onClick={load}>重试</Button>}
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
 
       {flow?.lastRunMsg && flow.lastRunOk === false && (
-        <div
-          style={{
-            marginBottom: 12, padding: '10px 12px', borderRadius: 10,
-            border: `1px solid ${C.red}`, color: C.red, fontSize: 13, background: '#FFFFFF',
-          }}
-        >
-          最近一次执行失败：{flow.lastRunMsg}
-        </div>
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title="最近一次执行失败"
+          description={flow.lastRunMsg}
+        />
       )}
 
       {isMobile ? (
@@ -264,24 +260,29 @@ export default function FlowLogsPage() {
             rows.map((record) => (
               <Card key={record.id} size="small" styles={{ body: { padding: 14 } }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 12.5, color: C.gray }}>{fmtTime(record.created_at)}</span>
+                  <span style={{ fontSize: 12.5, color: NEUTRAL.textTertiary }}>{fmtTime(record.created_at)}</span>
                   <Tag
                     style={{
-                      color: record.success === 1 ? C.green : C.red,
-                      background: '#FFFFFF',
-                      borderColor: record.success === 1 ? C.green : C.red,
+                      color: record.success === 1 ? PALETTE.green : PALETTE.red,
+                      background: NEUTRAL.surface,
+                      borderColor: record.success === 1 ? PALETTE.green : PALETTE.red,
                       marginInlineEnd: 0,
                     }}
                   >
                     {record.success === 1 ? '成功' : '失败'}
                   </Tag>
                 </div>
-                <div style={{ marginTop: 8, fontSize: 13, color: C.deep }}>
+                <div style={{ marginTop: 8, fontSize: 13, color: NEUTRAL.text }}>
                   {TRIGGER_TEXT[record.trigger_source] || record.trigger_source} · 输入 {record.input_rows} 行 → 输出{' '}
                   {record.output_rows} 行 · {record.duration_ms ?? 0}ms
                 </div>
                 {record.message && (
-                  <div style={{ marginTop: 6, fontSize: 12.5, color: record.success === 1 ? C.gray : C.red }}>
+                  <div
+                    style={{
+                      marginTop: 6, fontSize: 12.5,
+                      color: record.success === 1 ? NEUTRAL.textTertiary : PALETTE.red,
+                    }}
+                  >
                     {record.message}
                   </div>
                 )}
@@ -329,7 +330,11 @@ export default function FlowLogsPage() {
       )}
 
       {flow && (
-        <Card size="small" title="流程配置" style={{ marginTop: 12 }}>
+        <Card
+          size="small"
+          title="流程配置"
+          style={{ marginTop: 12, borderColor: NEUTRAL.border, borderRadius: 10, boxShadow: SHADOW.card }}
+        >
           <Descriptions
             size="small"
             column={isMobile ? 1 : 3}
@@ -347,6 +352,10 @@ export default function FlowLogsPage() {
           />
         </Card>
       )}
+
+      {!flow && !loading && !error ? (
+        <Empty description="流程不存在或无权限访问" style={{ padding: '40px 0' }} />
+      ) : null}
     </Page>
   );
 }

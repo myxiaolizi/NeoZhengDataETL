@@ -1,42 +1,34 @@
-/** 处理流程列表：流程编排入口 / 新建 / 启停 / 执行 / 日志（桌面优先，窄屏可用） */
+/** 处理流程列表（V4.1 页面规范）：流程编排入口 / 新建 / 启停 / 执行 / 日志
+ *
+ * 结构：本页名称 + 搜索区 + 新建 → 数据卡片 → 流程列表（桌面表格 / 移动端卡片）
+ */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import {
-  Button, Card, Col, Dropdown, Empty, Form, Grid, Input, Modal, Row, Select,
-  Space, Statistic, Switch, Tag, Tooltip, message,
+  Alert, Button, Card, Col, Dropdown, Empty, Form, Grid, Input, Modal, Row, Select,
+  Space, Switch, Tag, Tooltip, message,
 } from 'antd';
 import {
   CopyOutlined, DeleteOutlined, EditOutlined, FileSearchOutlined, MoreOutlined,
-  NodeIndexOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined,
+  PlayCircleOutlined, PlusOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
+import { usePermission } from '@/stores/app';
+import { NEUTRAL, PALETTE } from '@/theme';
 import { api } from '@/api/client';
 import { flowsApi } from '@/api/flows';
 import type { FlowListItem } from '@/api/flows';
-import { copyText, fmtTime } from '@/utils';
+import { copyText, fmtNum, fmtTime } from '@/utils';
 
 const { useBreakpoint } = Grid;
 
-/** 调色板（契约唯一允许的 13 色） */
-const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  deep: '#003378',
-  cyan: '#45B4FF',
-  green: '#A2D73C',
-  orange: '#EC673C',
-  red: '#E86161',
-  yellow: '#FFC000',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
-
 const RUN_MODE: Record<string, { text: string; color: string }> = {
-  manual: { text: '手动执行', color: C.primary },
-  trigger: { text: '触发执行', color: C.cyan },
-  cron: { text: '定时执行', color: C.orange },
+  manual: { text: '手动执行', color: PALETTE.primary },
+  trigger: { text: '触发执行', color: PALETTE.cyan },
+  cron: { text: '定时执行', color: PALETTE.orange },
 };
 
 const SOURCE_TYPE: Record<string, string> = {
@@ -56,14 +48,30 @@ interface FlowValues {
   status: boolean;
 }
 
+/** 是否今天运行过 */
+function isToday(v?: string | null): boolean {
+  if (!v) return false;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return false;
+  const now = new Date();
+  return (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+}
+
 export default function FlowsPage() {
   const navigate = useNavigate();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
+  const can = usePermission();
+  const canWrite = can('flow:write');
 
   const [rows, setRows] = useState<FlowListItem[]>([]);
   const [stats, setStats] = useState<{ flows: number; active: number; runs: number; oks: number } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [keyword, setKeyword] = useState('');
   const [runningId, setRunningId] = useState<number | null>(null);
 
@@ -76,12 +84,13 @@ export default function FlowsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError('');
     try {
       const res = await flowsApi.list(keyword);
       setRows(res.list || []);
       setStats(res.stats || null);
-    } catch {
-      /* client 已提示 */
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '流程列表加载失败');
     } finally {
       setLoading(false);
     }
@@ -205,6 +214,33 @@ export default function FlowsPage() {
     message[ok ? 'success' : 'error'](ok ? '流程编码已复制' : '复制失败');
   };
 
+  /* ---------- 数据卡片（就地统计，不新增接口） ---------- */
+  const statItems = useMemo<StatCardItem[]>(() => {
+    const todayRun = rows.filter((r) => isToday(r.lastRunAt)).length;
+    const failed = rows.filter((r) => r.lastRunAt && r.lastRunOk === false).length;
+    return [
+      { key: 'flows', label: '流程总数', value: fmtNum(stats?.flows ?? rows.length), suffix: '个', color: PALETTE.primary },
+      {
+        key: 'active',
+        label: '已启用',
+        value: fmtNum(stats?.active ?? 0),
+        suffix: '个',
+        color: PALETTE.green,
+        hint: stats?.flows ? `占比 ${Math.round(((stats.active || 0) / stats.flows) * 100)}%` : undefined,
+      },
+      { key: 'today', label: '今日运行', value: fmtNum(todayRun), suffix: '个', color: PALETTE.cyan, hint: '按最近执行时间统计' },
+      {
+        key: 'failed',
+        label: '最近失败',
+        value: fmtNum(failed),
+        suffix: '个',
+        color: failed > 0 ? PALETTE.red : PALETTE.teal,
+        hint: failed > 0 ? '需查看流程日志' : `累计成功 ${fmtNum(stats?.oks ?? 0)} 次`,
+      },
+      { key: 'runs', label: '累计运行', value: fmtNum(stats?.runs ?? 0), suffix: '次', color: PALETTE.violet },
+    ];
+  }, [stats, rows]);
+
   /* ---------- 列 ---------- */
   const columns: ProColumns<FlowListItem>[] = useMemo(
     () => [
@@ -213,15 +249,16 @@ export default function FlowsPage() {
         dataIndex: 'name',
         width: 230,
         fixed: 'left',
+        sorter: (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
         render: (_, record) => (
           <div style={{ minWidth: 0 }}>
             <a
               onClick={() => navigate(`/flows/${record.id}/design`)}
-              style={{ fontWeight: 600, color: C.deep }}
+              style={{ fontWeight: 600, color: NEUTRAL.text }}
             >
               {record.name}
             </a>
-            <div style={{ fontSize: 12, color: C.gray, marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, marginTop: 2 }}>
               {record.code}
               {record.description ? ` · ${record.description}` : ''}
             </div>
@@ -233,7 +270,7 @@ export default function FlowsPage() {
         dataIndex: 'sourceType',
         width: 120,
         render: (_, record) => (
-          <Tag style={{ color: C.primary, background: '#FFFFFF', borderColor: C.primary }}>
+          <Tag style={{ color: PALETTE.primary, background: NEUTRAL.surface, borderColor: PALETTE.primary, margin: 0 }}>
             {SOURCE_TYPE[record.sourceType || 'project'] || record.sourceType}
           </Tag>
         ),
@@ -243,7 +280,7 @@ export default function FlowsPage() {
         dataIndex: 'projectName',
         width: 150,
         ellipsis: true,
-        render: (_, record) => record.projectName || <span style={{ color: C.gray }}>—</span>,
+        render: (_, record) => record.projectName || <span style={{ color: NEUTRAL.textQuaternary }}>—</span>,
       },
       {
         title: '执行方式',
@@ -253,27 +290,28 @@ export default function FlowsPage() {
           const meta = RUN_MODE[record.runMode || 'manual'] || RUN_MODE.manual;
           return (
             <div>
-              <Tag style={{ color: meta.color, background: '#FFFFFF', borderColor: meta.color }}>
+              <Tag style={{ color: meta.color, background: NEUTRAL.surface, borderColor: meta.color, margin: 0 }}>
                 {meta.text}
               </Tag>
               {record.runMode === 'cron' && record.cronExpr && (
-                <div style={{ fontSize: 11.5, color: C.gray, marginTop: 2 }}>{record.cronExpr}</div>
+                <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, marginTop: 2 }}>{record.cronExpr}</div>
               )}
             </div>
           );
         },
       },
-      { title: '节点数', dataIndex: 'nodeCount', width: 80, align: 'right' },
+      { title: '节点数', dataIndex: 'nodeCount', width: 80, align: 'right', sorter: (a, b) => (a.nodeCount ?? 0) - (b.nodeCount ?? 0) },
       {
         title: '运行 / 成功',
         dataIndex: 'runCount',
         width: 110,
         align: 'right',
+        sorter: (a, b) => (a.runCount ?? 0) - (b.runCount ?? 0),
         render: (_, record) => (
           <span>
             {record.runCount ?? 0}
-            <span style={{ color: C.gray }}> / </span>
-            <span style={{ color: C.green }}>{record.successCount ?? 0}</span>
+            <span style={{ color: NEUTRAL.textQuaternary }}> / </span>
+            <span style={{ color: PALETTE.green }}>{record.successCount ?? 0}</span>
           </span>
         ),
       },
@@ -281,14 +319,15 @@ export default function FlowsPage() {
         title: '最近执行',
         dataIndex: 'lastRunAt',
         width: 190,
+        sorter: (a, b) => String(a.lastRunAt || '').localeCompare(String(b.lastRunAt || '')),
         render: (_, record) =>
           record.lastRunAt ? (
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12.5 }}>{fmtTime(record.lastRunAt, 'MM-DD HH:mm:ss')}</div>
+              <div style={{ fontSize: 12.5, color: NEUTRAL.textSecondary }}>{fmtTime(record.lastRunAt, 'MM-DD HH:mm:ss')}</div>
               <div
                 style={{
                   fontSize: 11.5,
-                  color: record.lastRunOk ? C.green : C.red,
+                  color: record.lastRunOk ? PALETTE.green : PALETTE.red,
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
@@ -301,7 +340,7 @@ export default function FlowsPage() {
               </div>
             </div>
           ) : (
-            <span style={{ color: C.gray }}>未执行</span>
+            <span style={{ color: NEUTRAL.textQuaternary }}>未执行</span>
           ),
       },
       {
@@ -315,9 +354,10 @@ export default function FlowsPage() {
               checked={record.status === 1}
               checkedChildren="启用"
               unCheckedChildren="停用"
+              disabled={!canWrite}
               onChange={(v) => toggleStatus(record, v)}
             />
-            <span style={{ fontSize: 12, color: record.status === 1 ? C.green : C.gray }}>
+            <span style={{ fontSize: 12, color: record.status === 1 ? PALETTE.green : NEUTRAL.textTertiary }}>
               {record.status === 1 ? '已启用' : '已停用'}
             </span>
           </Space>
@@ -335,29 +375,31 @@ export default function FlowsPage() {
           <a key="logs" onClick={() => navigate(`/flows/${record.id}/logs`)}>
             <FileSearchOutlined /> 日志
           </a>,
-          <a
-            key="run"
-            onClick={() => {
-              if (runningId === record.id) return;
-              Modal.confirm({
-                title: `执行流程「${record.name}」`,
-                content: '将立即按节点顺序执行一次，可能写入目标表。确定继续？',
-                okText: '立即执行',
-                onOk: () => runFlow(record),
-              });
-            }}
-          >
-            <PlayCircleOutlined /> 执行
-          </a>,
+          canWrite ? (
+            <a
+              key="run"
+              onClick={() => {
+                if (runningId === record.id) return;
+                Modal.confirm({
+                  title: `执行流程「${record.name}」`,
+                  content: '将立即按节点顺序执行一次，可能写入目标表。确定继续？',
+                  okText: '立即执行',
+                  onOk: () => runFlow(record),
+                });
+              }}
+            >
+              <PlayCircleOutlined /> 执行
+            </a>
+          ) : null,
           <Dropdown
             key="more"
             trigger={['click']}
             menu={{
               items: [
-                { key: 'edit', icon: <EditOutlined />, label: '编辑信息' },
+                { key: 'edit', icon: <EditOutlined />, label: '编辑信息', disabled: !canWrite },
                 { key: 'copy', icon: <CopyOutlined />, label: '复制编码' },
                 { type: 'divider' as const },
-                { key: 'delete', icon: <DeleteOutlined />, label: '删除流程', danger: true },
+                { key: 'delete', icon: <DeleteOutlined />, label: '删除流程', danger: true, disabled: !canWrite },
               ],
               onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
@@ -383,7 +425,7 @@ export default function FlowsPage() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [navigate, runningId]
+    [navigate, runningId, canWrite]
   );
 
   /* ---------- 移动端卡片 ---------- */
@@ -398,14 +440,14 @@ export default function FlowsPage() {
             <Card key={record.id} size="small" styles={{ body: { padding: 14 } }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, color: C.deep, fontSize: 15 }}>{record.name}</div>
-                  <div style={{ fontSize: 12, color: C.gray, marginTop: 2 }}>{record.code}</div>
+                  <div style={{ fontWeight: 600, color: NEUTRAL.text, fontSize: 15 }}>{record.name}</div>
+                  <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, marginTop: 2 }}>{record.code}</div>
                 </div>
                 <Tag
                   style={{
-                    color: record.status === 1 ? C.green : C.gray,
-                    background: '#FFFFFF',
-                    borderColor: record.status === 1 ? C.green : C.line,
+                    color: record.status === 1 ? PALETTE.green : NEUTRAL.textTertiary,
+                    background: NEUTRAL.surface,
+                    borderColor: record.status === 1 ? PALETTE.green : NEUTRAL.border,
                     marginInlineEnd: 0,
                     flexShrink: 0,
                   }}
@@ -414,9 +456,11 @@ export default function FlowsPage() {
                 </Tag>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
-                <Tag style={{ color: meta.color, background: '#FFFFFF', borderColor: meta.color }}>{meta.text}</Tag>
-                <Tag style={{ color: C.gray, background: '#FFFFFF', borderColor: C.line }}>{record.nodeCount ?? 0} 节点</Tag>
-                <Tag style={{ color: C.gray, background: '#FFFFFF', borderColor: C.line }}>
+                <Tag style={{ color: meta.color, background: NEUTRAL.surface, borderColor: meta.color, margin: 0 }}>{meta.text}</Tag>
+                <Tag style={{ color: NEUTRAL.textSecondary, background: NEUTRAL.surface, borderColor: NEUTRAL.border, margin: 0 }}>
+                  {record.nodeCount ?? 0} 节点
+                </Tag>
+                <Tag style={{ color: NEUTRAL.textSecondary, background: NEUTRAL.surface, borderColor: NEUTRAL.border, margin: 0 }}>
                   运行 {record.runCount ?? 0}
                 </Tag>
               </div>
@@ -427,15 +471,17 @@ export default function FlowsPage() {
                 <Button size="large" block onClick={() => navigate(`/flows/${record.id}/logs`)}>
                   日志
                 </Button>
-                <Button
-                  size="large"
-                  block
-                  type="primary"
-                  loading={runningId === record.id}
-                  onClick={() => runFlow(record)}
-                >
-                  执行
-                </Button>
+                {canWrite && (
+                  <Button
+                    size="large"
+                    block
+                    type="primary"
+                    loading={runningId === record.id}
+                    onClick={() => runFlow(record)}
+                  >
+                    执行
+                  </Button>
+                )}
               </div>
             </Card>
           );
@@ -444,48 +490,41 @@ export default function FlowsPage() {
     </div>
   );
 
-  const statCards = [
-    { title: '流程总数', value: stats?.flows ?? 0, color: C.primary },
-    { title: '已启用', value: stats?.active ?? 0, color: C.green },
-    { title: '累计运行', value: stats?.runs ?? 0, color: C.cyan },
-    { title: '成功次数', value: stats?.oks ?? 0, color: C.orange },
-  ];
-
   return (
     <Page
       title="处理流程"
-      subTitle="编排数据源 → 清洗加工 → 输出，形成可复用的数据流水线"
-      extra={
-        <Space wrap size={8}>
-          <Input.Search
-            allowClear
-            placeholder="搜索流程名称 / 编码"
-            onSearch={(v) => setKeyword(v.trim())}
-            style={{ width: isMobile ? 150 : 240 }}
-          />
-          <Tooltip title="刷新列表">
-            <Button icon={<ReloadOutlined />} onClick={load} loading={loading} />
-          </Tooltip>
+      search={
+        <Input.Search
+          allowClear
+          placeholder="搜索流程名称 / 编码"
+          onSearch={(v) => setKeyword(v.trim())}
+          style={{ width: isMobile ? '100%' : 240 }}
+        />
+      }
+      actions={
+        canWrite ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
             新建流程
           </Button>
-        </Space>
+        ) : null
       }
+      extra={
+        <Tooltip title="刷新列表">
+          <Button icon={<ReloadOutlined />} onClick={load} loading={loading} aria-label="刷新" />
+        </Tooltip>
+      }
+      stats={statItems}
     >
-      <Row gutter={[12, 12]} style={{ marginBottom: 12 }}>
-        {statCards.map((s) => (
-          <Col key={s.title} xs={12} sm={12} md={6}>
-            <Card size="small" styles={{ body: { padding: isMobile ? 12 : 16 } }}>
-              <Statistic
-                title={<span style={{ fontSize: 12.5, color: C.gray }}>{s.title}</span>}
-                value={s.value}
-                styles={{ content: { color: s.color, fontSize: isMobile ? 20 : 24, fontWeight: 700 } }}
-                prefix={<NodeIndexOutlined style={{ color: s.color, marginRight: 6 }} />}
-              />
-            </Card>
-          </Col>
-        ))}
-      </Row>
+      {error ? (
+        <Alert
+          type="error"
+          showIcon
+          title="加载失败"
+          description={error}
+          action={<Button size="small" icon={<ReloadOutlined />} onClick={load}>重试</Button>}
+          style={{ marginBottom: 12 }}
+        />
+      ) : null}
 
       {isMobile ? (
         mobileList
@@ -501,11 +540,12 @@ export default function FlowsPage() {
           headerTitle="流程列表"
           toolBarRender={false}
           scroll={{ x: 1400 }}
-          pagination={{ pageSize: 10, showSizeChanger: false, showTotal: (t) => `共 ${t} 个流程` }}
+          pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 个流程` }}
           locale={{ emptyText: <Empty description="还没有流程，点击右上角「新建流程」" /> }}
         />
       )}
 
+      {/* 新建 / 编辑：内容少 → Modal */}
       <Modal
         title={editing ? `编辑流程 · ${editing.name}` : '新建流程'}
         open={modalOpen}

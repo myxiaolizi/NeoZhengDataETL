@@ -1,5 +1,6 @@
 /** 客户签约看板（CRM）
  *
+ * 报表中心的内置看板（不进左侧菜单，入口在「报表中心 → 系统内置看板」）。
  * 数据来源：GET /api/crm/dashboard?projectId=（后端从项目解析数据表聚合）
  * 移动端（<768px）：KPI 两列、图表单列、明细改卡片列表
  */
@@ -9,7 +10,10 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { ReloadOutlined, SearchOutlined, ShopOutlined, TeamOutlined, TrophyOutlined } from '@ant-design/icons';
+import {
+  ArrowLeftOutlined, ReloadOutlined, SearchOutlined, ShopOutlined, TeamOutlined, TrophyOutlined,
+} from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
 import { CHART_COLORS, fetchCrmDashboard } from '@/api/dashboard';
 import type { CrmDashboardData, CrmDetailRow } from '@/api/dashboard';
@@ -34,6 +38,7 @@ type FilterKey = typeof FILTER_KEYS[number];
 export default function CrmDashboardPage() {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
+  const navigate = useNavigate();
 
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [projectId, setProjectId] = useState<number | null>(null);
@@ -112,7 +117,7 @@ export default function CrmDashboardPage() {
   const trendOption = useMemo(() => ({
     color: ['#3687FF', '#FFC000'],
     grid: { left: 8, right: 12, top: 30, bottom: 6, containLabel: true },
-    tooltip: { trigger: 'axis' as const, backgroundColor: '#FFFFFF', borderColor: '#DCDDDD', textStyle: { color: '#003378', fontSize: 12 } },
+    tooltip: { trigger: 'axis' as const, backgroundColor: '#FFFFFF', borderColor: 'rgba(54,135,255,.28)', textStyle: { color: '#003378', fontSize: 12 } },
     legend: { top: 0, right: 0, textStyle: { color: '#B5B5B6', fontSize: 11 }, itemWidth: 10, itemHeight: 8 },
     xAxis: {
       type: 'category' as const,
@@ -136,7 +141,7 @@ export default function CrmDashboardPage() {
   const regionOption = useMemo(() => ({
     color: CHART_COLORS as unknown as string[],
     grid: { left: 8, right: 12, top: 16, bottom: 6, containLabel: true },
-    tooltip: { trigger: 'axis' as const, backgroundColor: '#FFFFFF', borderColor: '#DCDDDD', textStyle: { color: '#003378', fontSize: 12 } },
+    tooltip: { trigger: 'axis' as const, backgroundColor: '#FFFFFF', borderColor: 'rgba(54,135,255,.28)', textStyle: { color: '#003378', fontSize: 12 } },
     xAxis: {
       type: 'category' as const,
       data: (data?.byRegion || []).map((r) => r.name),
@@ -160,7 +165,7 @@ export default function CrmDashboardPage() {
 
   const stateOption = useMemo(() => ({
     color: CHART_COLORS as unknown as string[],
-    tooltip: { trigger: 'item' as const, backgroundColor: '#FFFFFF', borderColor: '#DCDDDD', textStyle: { color: '#003378', fontSize: 12 } },
+    tooltip: { trigger: 'item' as const, backgroundColor: '#FFFFFF', borderColor: 'rgba(54,135,255,.28)', textStyle: { color: '#003378', fontSize: 12 } },
     legend: { bottom: 0, textStyle: { color: '#B5B5B6', fontSize: 11 }, itemWidth: 10, itemHeight: 8 },
     series: [{
       type: 'pie' as const,
@@ -177,7 +182,7 @@ export default function CrmDashboardPage() {
   const typeOption = useMemo(() => ({
     color: CHART_COLORS as unknown as string[],
     grid: { left: 8, right: 12, top: 16, bottom: 6, containLabel: true },
-    tooltip: { trigger: 'axis' as const, backgroundColor: '#FFFFFF', borderColor: '#DCDDDD', textStyle: { color: '#003378', fontSize: 12 } },
+    tooltip: { trigger: 'axis' as const, backgroundColor: '#FFFFFF', borderColor: 'rgba(54,135,255,.28)', textStyle: { color: '#003378', fontSize: 12 } },
     xAxis: {
       type: 'category' as const,
       data: (data?.byType || []).map((t) => t.name),
@@ -204,7 +209,7 @@ export default function CrmDashboardPage() {
     return {
       color: ['#2D6FE4'],
       grid: { left: 8, right: 30, top: 10, bottom: 6, containLabel: true },
-      tooltip: { trigger: 'axis' as const, backgroundColor: '#FFFFFF', borderColor: '#DCDDDD', textStyle: { color: '#003378', fontSize: 12 } },
+      tooltip: { trigger: 'axis' as const, backgroundColor: '#FFFFFF', borderColor: 'rgba(54,135,255,.28)', textStyle: { color: '#003378', fontSize: 12 } },
       xAxis: {
         type: 'value' as const,
         minInterval: 1,
@@ -269,7 +274,15 @@ export default function CrmDashboardPage() {
 
   if (error && !loading) {
     return (
-      <Page title="客户签约看板" subTitle="CRM 签约与门店数据聚合">
+      <Page
+        title="客户签约看板"
+        subTitle="报表中心 · 系统内置看板"
+        extra={
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/reports')}>
+            返回报表中心
+          </Button>
+        }
+      >
         <Result
           status="warning"
           title="看板数据加载失败"
@@ -288,9 +301,12 @@ export default function CrmDashboardPage() {
   return (
     <Page
       title="客户签约看板"
-      subTitle={`数据项目：${data?.project?.name || '-'} · 更新于 ${data?.updatedAt ? fmtTime(data.updatedAt) : '-'}`}
+      subTitle={`报表中心 · 数据项目：${data?.project?.name || '-'} · 更新于 ${data?.updatedAt ? fmtTime(data.updatedAt) : '-'}`}
       extra={
         <Space size={8} wrap>
+          <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/reports')}>
+            返回报表中心
+          </Button>
           <Select
             showSearch
             optionFilterProp="label"
@@ -314,7 +330,7 @@ export default function CrmDashboardPage() {
           <Col key={k.key} xs={12} md={6}>
             <Card
               variant="outlined"
-              style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+              style={{ borderColor: 'rgba(54,135,255,.28)', borderRadius: 12, height: '100%' }}
               styles={{ body: { padding: isMobile ? 12 : 16 } }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -346,7 +362,7 @@ export default function CrmDashboardPage() {
         <Col xs={24} lg={7}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: 'rgba(54,135,255,.28)', borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 14 : 16 } }}
             title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>年度目标进度</span>}
           >
@@ -377,7 +393,7 @@ export default function CrmDashboardPage() {
         <Col xs={24} lg={9}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: 'rgba(54,135,255,.28)', borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
             title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>流程状态分布</span>}
           >
@@ -391,7 +407,7 @@ export default function CrmDashboardPage() {
         <Col xs={24} lg={8}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: 'rgba(54,135,255,.28)', borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
             title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>区域签约分布</span>}
           >
@@ -409,7 +425,7 @@ export default function CrmDashboardPage() {
         <Col xs={24} lg={10}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: 'rgba(54,135,255,.28)', borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
             title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>签约趋势（按月）</span>}
           >
@@ -423,7 +439,7 @@ export default function CrmDashboardPage() {
         <Col xs={24} lg={7}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: 'rgba(54,135,255,.28)', borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
             title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>销售排行 Top10</span>}
           >
@@ -437,7 +453,7 @@ export default function CrmDashboardPage() {
         <Col xs={24} lg={7}>
           <Card
             variant="outlined"
-            style={{ borderColor: '#DCDDDD', borderRadius: 12, height: '100%' }}
+            style={{ borderColor: 'rgba(54,135,255,.28)', borderRadius: 12, height: '100%' }}
             styles={{ body: { padding: isMobile ? 12 : 16 } }}
             title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>连锁类型分布</span>}
           >
@@ -453,7 +469,7 @@ export default function CrmDashboardPage() {
       {/* ── 明细 ── */}
       <Card
         variant="outlined"
-        style={{ borderColor: '#DCDDDD', borderRadius: 12, marginTop: 12 }}
+        style={{ borderColor: 'rgba(54,135,255,.28)', borderRadius: 12, marginTop: 12 }}
         styles={{ body: { padding: isMobile ? 12 : 16 } }}
         title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>签约明细</span>}
         extra={<Text type="secondary" style={{ fontSize: 12 }}>共 {fmtNum(filtered.length)} 条</Text>}
@@ -497,7 +513,7 @@ export default function CrmDashboardPage() {
                 key={`${String(row['连锁名称'])}-${i}`}
                 size="small"
                 variant="outlined"
-                style={{ borderColor: '#DCDDDD', borderRadius: 10, marginBottom: 8 }}
+                style={{ borderColor: 'rgba(54,135,255,.28)', borderRadius: 10, marginBottom: 8 }}
                 styles={{ body: { padding: 12 } }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>

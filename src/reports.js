@@ -100,6 +100,12 @@ async function createDataset(input, userId) {
   }
 
   const code = await uniqueCode('jdywh_datasets', input.code || name, 'code');
+  // 保存前预校验：SQL 写错（语法/表/字段不存在）直接给结构化中文错误
+  await precheckDatasetSql({
+    sourceType,
+    sourceSql: input.sourceSql,
+    datasourceId: input.datasourceId,
+  });
   const result = await db.query(
     `INSERT INTO jdywh_datasets
        (name, code, description, datasource_id, source_type, source_sql, source_table,
@@ -144,6 +150,15 @@ async function updateDataset(id, input) {
   if (input.status !== undefined) set('status', Number(input.status) ? 1 : 0);
 
   if (!fields.length) return getDataset(id);
+
+  // 改了 SQL / 来源类型时同样先预校验（SQL 写错就别写库）
+  const nextType = input.sourceType !== undefined ? input.sourceType : row.source_type;
+  const nextSql = input.sourceSql !== undefined ? input.sourceSql : row.source_sql;
+  const nextDsId = input.datasourceId !== undefined ? input.datasourceId : row.datasource_id;
+  if (nextType === 'sql' && (input.sourceSql !== undefined || input.sourceType !== undefined)) {
+    await precheckDatasetSql({ sourceType: nextType, sourceSql: nextSql, datasourceId: nextDsId });
+  }
+
   params.push(id);
   await db.query(`UPDATE jdywh_datasets SET ${fields.join(', ')} WHERE id = ?`, params);
   return getDataset(id);
@@ -194,20 +209,154 @@ async function buildQuery(dataset, limit) {
   }
 
   // SQL 数据集：仅允许只读查询
-  const sql = String(dataset.sourceSql || '').trim().replace(/;+\s*$/, '');
-  assertReadOnly(sql);
-  return { ds: source, sql, params: [], limit: maxRows };
+  const originalSql = ds.trimSqlTail(dataset.sourceSql);
+  const safeSql = assertReadOnly(originalSql);
+  // 词法级补引号：修复 `select * from zkcrm-ry` 这类含连字符/中文/保留字的表名
+  const sql = ds.normalizeSql(source, safeSql);
+  return { ds: source, sql, params: [], limit: maxRows, originalSql, normalizedSql: sql };
 }
 
-/** SQL 安全校验：只允许单条 SELECT / WITH 查询 */
+/**
+ * SQL 安全校验：只允许单条 SELECT / WITH 查询
+ *
+ * 返回去掉尾部空语句分号的 SQL，调用方据此继续做标识符补引号与分页。
+ *
+ * 判定在「剥掉注释与字符串字面量」的骨架上进行，
+ * 否则 `WHERE remark = 'please update it'` 这类合法查询会被误杀；
+ * 同时支持 `WITH ...`、`WITH RECURSIVE ...` 与 `(SELECT ...) UNION (...)` 写法。
+ */
 function assertReadOnly(sql) {
-  const s = String(sql || '').trim();
-  if (!s) throw new Error('SQL 不能为空');
-  if (s.includes(';')) throw new Error('只允许执行单条查询语句（不允许分号）');
-  if (!/^(select|with)\s/i.test(s)) throw new Error('只允许 SELECT / WITH 查询语句');
-  const forbidden = /\b(insert|update|delete|drop|truncate|alter|create|replace|grant|revoke|rename|call|exec|execute|load_file|outfile|dumpfile|into\s+outfile|into\s+dumpfile)\b/i;
-  if (forbidden.test(s)) throw new Error('查询语句包含不允许的关键字（仅支持只读查询）');
-  return true;
+  const raw = String(sql == null ? '' : sql).trim();
+  if (!raw) throw new Error('SQL 不能为空');
+
+  const body = stripLiteralsAndComments(raw);
+  const withoutTrailing = stripLiteralsAndComments(ds.trimSqlTail(raw));
+  if (withoutTrailing.includes(';')) {
+    throw new Error('只允许执行单条查询语句（不允许分号分隔的多条语句）');
+  }
+  if (!/^[\s(]*(select|with)\b/i.test(body)) {
+    throw new Error('只允许 SELECT / WITH 查询语句');
+  }
+
+  const forbidden = /\b(insert|update|delete|drop|truncate|alter|create|replace|grant|revoke|rename|call|exec|execute|load_file|outfile|dumpfile|lock|unlock|handler|prepare|deallocate|do)\b/i;
+  const hit = body.match(forbidden);
+  if (hit) {
+    throw new Error(`查询语句包含不允许的关键字「${String(hit[1]).toUpperCase()}」（仅支持只读查询）`);
+  }
+  if (/\binto\s+(outfile|dumpfile)\b/i.test(body)) {
+    throw new Error('查询语句包含不允许的导出子句（仅支持只读查询）');
+  }
+  return ds.trimSqlTail(raw);
+}
+
+/**
+ * 剥掉注释与字符串字面量，只留 SQL 结构骨架（关键字、括号、运算符）。
+ * 用于关键字安全检查，避免字符串内容误触发。
+ */
+function stripLiteralsAndComments(sql) {
+  const s = String(sql || '');
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === '-' && s[i + 1] === '-') {
+      while (i < s.length && s[i] !== '\n') i += 1;
+      out += ' ';
+      continue;
+    }
+    if (ch === '#' ) {
+      while (i < s.length && s[i] !== '\n') i += 1;
+      out += ' ';
+      continue;
+    }
+    if (ch === '/' && s[i + 1] === '*') {
+      const end = s.indexOf('*/', i + 2);
+      i = end < 0 ? s.length : end + 2;
+      out += ' ';
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      let j = i + 1;
+      while (j < s.length) {
+        if (s[j] === '\\') { j += 2; continue; }
+        if (s[j] === ch) {
+          if (s[j + 1] === ch) { j += 2; continue; }
+          break;
+        }
+        j += 1;
+      }
+      out += ch === '`' ? ' ident ' : " 'str' ";
+      i = j + 1;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
+/**
+ * 执行临时 SQL（数据集设计器 test-sql 与 AI 问数共用同一条链路）
+ *
+ * 统一顺序：去尾分号 → 只读校验 → 标识符补引号 → 分页 → 执行；
+ * 执行失败抛出带 code / errno / sqlMessage / sql / originalSql / hint 的中文结构化错误。
+ */
+async function testSql(input) {
+  const body = input || {};
+  const source = await datasources.getById(body.datasourceId || 0);
+  if (!source) throw new Error('数据源不存在或已删除');
+
+  const originalSql = ds.trimSqlTail(body.sql);
+  const safeSql = assertReadOnly(originalSql);
+  const normalizedSql = ds.normalizeSql(source, safeSql);
+  const limit = Math.min(Number(body.limit) || 50, 1000);
+  const sql = ds.paginate(source, normalizedSql, limit, 0);
+
+  const started = Date.now();
+  let rows;
+  try {
+    rows = await ds.query(source, sql, []);
+  } catch (err) {
+    throw ds.describeDbError(source, err, sql, originalSql, normalizedSql);
+  }
+
+  return {
+    rows,
+    columns: rows.length ? Object.keys(rows[0]).map((k) => ({ name: k, type: typeof rows[0][k] })) : [],
+    rowCount: rows.length,
+    elapsed: Date.now() - started,
+    sql,
+    originalSql,
+    normalizedSql,
+    autoQuoted: originalSql.trim() !== normalizedSql.trim(),
+  };
+}
+
+/** 保存数据集时做的 SQL 预校验：语法/表/字段错误直接拦住，连接类错误放行 */
+async function validateDatasetSql(input) {
+  if (input.sourceType !== 'sql') return null;
+  const sqlText = ds.trimSqlTail(input.sourceSql);
+  if (!sqlText) return null;
+  return testSql({ datasourceId: input.datasourceId || 0, sql: sqlText, limit: 1 });
+}
+
+/** 这些错误说明 SQL 本身有问题，保存时就该拦住；其余（网络/超时）放行 */
+const BLOCKING_DB_CODES = [
+  'ER_PARSE_ERROR', 'ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR',
+  'ER_TABLEACCESS_DENIED_ERROR', 'ER_DBACCESS_DENIED_ERROR', 'ER_NO_DB_ERROR',
+];
+
+/**
+ * 保存前的预校验包装：只有「SQL 本身有问题」才阻断保存。
+ * 数据源暂时连不上时不阻断，避免用户存不了数据集。
+ */
+async function precheckDatasetSql(input) {
+  try {
+    return await validateDatasetSql(input);
+  } catch (err) {
+    if (err && err.isDbError && BLOCKING_DB_CODES.indexOf(err.code) < 0) return null;
+    throw err;
+  }
 }
 
 /** 执行数据集查询 */
@@ -221,7 +370,12 @@ async function runDataset(id, options) {
   const sql = ds.paginate(q.ds, q.sql, q.limit, 0);
 
   const started = Date.now();
-  const rows = await ds.query(q.ds, sql, q.params);
+  let rows;
+  try {
+    rows = await ds.query(q.ds, sql, q.params);
+  } catch (err) {
+    throw ds.describeDbError(q.ds, err, sql, q.originalSql || q.sql, q.normalizedSql || q.sql);
+  }
   const elapsed = Date.now() - started;
 
   const columns = rows.length ? Object.keys(rows[0]).map((k) => ({
@@ -235,6 +389,7 @@ async function runDataset(id, options) {
     rowCount: rows.length,
     elapsed,
     sql,
+    originalSql: q.originalSql || q.sql,
     datasourceName: dataset.datasourceId === 0 ? '本机数据库' : String(dataset.datasourceId),
   };
 }
@@ -528,6 +683,10 @@ module.exports = {
   inferFields,
   buildQuery,
   assertReadOnly,
+  testSql,
+  validateDatasetSql,
+  precheckDatasetSql,
+  stripLiteralsAndComments,
   listReports,
   getReport,
   createReport,

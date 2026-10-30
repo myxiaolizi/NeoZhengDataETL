@@ -1,5 +1,5 @@
 /** 个人中心：头像（上传/配色）、资料编辑、修改密码、登录设备管理（含移动端适配） */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Avatar, Button, Card, Col, ColorPicker, Empty, Form, Grid, Input,
   Modal, Popconfirm, Row, Space, Spin, Tag, Tooltip, Typography, message,
@@ -10,29 +10,31 @@ import {
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore } from '@/stores/app';
 import {
   changePassword, listSessions, revokeOtherSessions, updateAvatar, updateProfile,
 } from '@/api/users';
 import type { MeSession, MeUser } from '@/api/users';
+import { PALETTE, NEUTRAL } from '@/theme';
 import { fmtTime } from '@/utils';
 
 const { Text } = Typography;
 const { useBreakpoint } = Grid;
 
 const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  navy: '#003378',
-  cyan: '#45B4FF',
-  light: '#73DBFF',
-  green: '#A2D73C',
-  yellow: '#FFC000',
-  orange: '#EC673C',
-  red: '#E86161',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
+  primary: PALETTE.primary,
+  blue: PALETTE.primary,
+  navy: NEUTRAL.text,
+  cyan: PALETTE.cyan,
+  light: PALETTE.cyan,
+  green: PALETTE.green,
+  yellow: PALETTE.yellow,
+  orange: PALETTE.orange,
+  red: PALETTE.red,
+  gray: NEUTRAL.textTertiary,
+  line: NEUTRAL.border,
+} as const;
 
 function softStyle(color: string): React.CSSProperties {
   return { background: `${color}1A`, color, border: 'none', borderRadius: 6, margin: 0, fontSize: 12 };
@@ -40,7 +42,8 @@ function softStyle(color: string): React.CSSProperties {
 
 /** 头像可选底色（仅调色板） */
 const AVATAR_COLORS = [
-  C.blue, C.primary, C.cyan, C.light, C.green, C.yellow, C.orange, C.red, C.navy, C.gray,
+  PALETTE.primary, PALETTE.cyan, PALETTE.green, PALETTE.yellow,
+  PALETTE.orange, PALETTE.violet, PALETTE.red, NEUTRAL.text, NEUTRAL.textTertiary,
 ];
 
 /** 由 User-Agent 粗略识别设备类型与浏览器 */
@@ -73,7 +76,7 @@ export default function ProfilePage() {
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [pendingAvatar, setPendingAvatar] = useState<string | null>(null);
-  const [pendingColor, setPendingColor] = useState<string>(C.blue);
+  const [pendingColor, setPendingColor] = useState<string>(PALETTE.primary);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [sessions, setSessions] = useState<MeSession[]>([]);
@@ -106,6 +109,15 @@ export default function ProfilePage() {
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  const stats = useMemo<StatCardItem[]>(() => {
+    const others = sessions.filter((s) => !s.current).length;
+    return [
+      { key: 'role', label: '当前角色', value: user?.roleName || user?.role || '-', color: PALETTE.primary },
+      { key: 'email', label: '邮箱验证', value: user?.emailVerified ? '已验证' : user?.email ? '未验证' : '未设置', color: user?.emailVerified ? PALETTE.green : NEUTRAL.textTertiary },
+      { key: 'sessions', label: '其他登录设备', value: others, suffix: '台', color: PALETTE.cyan },
+    ];
+  }, [sessions, user]);
 
   /* ---------- 资料 ---------- */
   const saveProfile = async () => {
@@ -157,7 +169,7 @@ export default function ProfilePage() {
   /* ---------- 头像 ---------- */
   const openAvatar = () => {
     setPendingAvatar(null);
-    setPendingColor(user?.avatarColor || C.blue);
+    setPendingColor(user?.avatarColor || PALETTE.primary);
     setAvatarOpen(true);
   };
 
@@ -244,7 +256,7 @@ export default function ProfilePage() {
             size={isMobile ? 76 : 88}
             src={user?.avatar || undefined}
             style={{
-              background: user?.avatarColor || C.blue,
+              background: user?.avatarColor || PALETTE.primary,
               fontSize: isMobile ? 30 : 34,
               fontWeight: 700,
             }}
@@ -261,9 +273,9 @@ export default function ProfilePage() {
                 position: 'absolute',
                 right: -2,
                 bottom: -2,
-                border: `2px solid #FFFFFF`,
+                border: `2px solid ${NEUTRAL.surface}`,
                 background: C.primary,
-                color: '#FFFFFF',
+                color: NEUTRAL.textInverse,
                 minWidth: 28,
                 height: 28,
               }}
@@ -275,7 +287,7 @@ export default function ProfilePage() {
           {displayName}
         </div>
         <div style={{ marginTop: 6 }}>
-          <Tag style={softStyle(user?.role === 'admin' ? C.red : C.primary)}>
+          <Tag style={softStyle(user?.role === 'admin' ? PALETTE.red : PALETTE.primary)}>
             <Space size={4}>
               <SafetyCertificateOutlined />
               <span>{user?.roleName || user?.role || '-'}</span>
@@ -508,7 +520,7 @@ export default function ProfilePage() {
                 key={`${idx}-${s.ip || 'ip'}-${s.createdAt}`}
                 style={{
                   padding: isMobile ? '10px 12px' : '10px 14px',
-                  borderTop: idx === 0 ? undefined : `1px solid ${C.line}`,
+                  borderTop: idx === 0 ? undefined : `1px solid ${NEUTRAL.borderSubtle}`,
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, width: '100%', minWidth: 0 }}>
@@ -537,15 +549,7 @@ export default function ProfilePage() {
   );
 
   return (
-    <Page
-      title="个人中心"
-      subTitle={isMobile ? '管理个人资料与安全设置' : '管理个人资料、登录密码与登录设备'}
-      extra={
-        <Tag style={{ ...softStyle(C.primary), padding: '3px 10px', fontSize: 12.5 }}>
-          {user?.roleName || '普通用户'}
-        </Tag>
-      }
-    >
+    <Page title="个人中心" stats={stats}>
       {isMobile ? (
         <Space orientation="vertical" size={12} style={{ width: '100%' }}>
           {identityCard}
@@ -638,11 +642,11 @@ export default function ProfilePage() {
                       borderRadius: 10,
                       background: color,
                       cursor: 'pointer',
-                      border: on ? `2px solid ${C.navy}` : `1px solid ${C.line}`,
+                      border: on ? `2px solid ${NEUTRAL.text}` : `1px solid ${NEUTRAL.border}`,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      color: '#FFFFFF',
+                      color: NEUTRAL.textInverse,
                       fontSize: 14,
                     }}
                   >
@@ -665,7 +669,7 @@ export default function ProfilePage() {
                     width: 36,
                     height: 36,
                     borderRadius: 10,
-                    border: `1px dashed ${C.line}`,
+                    border: `1px dashed ${NEUTRAL.border}`,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',

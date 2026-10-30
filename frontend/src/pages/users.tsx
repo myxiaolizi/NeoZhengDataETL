@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Avatar, Button, Card, Col, Empty, Form, Grid, Input, InputNumber, Modal,
-  Popconfirm, Row, Select, Space, Statistic, Switch, Table, Tabs, Tag, Tree, Typography, message,
+  Popconfirm, Row, Select, Space, Switch, Table, Tabs, Tag, Tree, Typography, message,
 } from 'antd';
 import type { TreeDataNode } from 'antd';
 import {
@@ -12,6 +12,7 @@ import {
 import { ProTable } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore, usePermission } from '@/stores/app';
 import { C, RoleManager, softStyle } from '@/pages/roles';
 import {
@@ -21,6 +22,7 @@ import {
 import type {
   DeptMember, DeptRow, PermissionGroup, PermissionMeta, RoleRow, UserRow, UserStats,
 } from '@/api/users';
+import { PALETTE, NEUTRAL } from '@/theme';
 import { fmtTime } from '@/utils';
 
 const { Text } = Typography;
@@ -32,532 +34,15 @@ interface UserFilters {
   status?: string;
 }
 
-/* ══════════════ 用户列表 ══════════════ */
+const WEEK_MS = 7 * 24 * 3600 * 1000;
 
-interface UserTabProps {
-  depts: DeptRow[];
-  onData: (stats: UserStats, roles: RoleRow[]) => void;
-}
-
-function UserTab({ depts, onData }: UserTabProps) {
-  // 订阅 user：登录态就绪后需要重新计算权限（can 是稳定引用，单独订阅不会触发重渲染）
-  const currentUser = useAppStore((s) => s.user);
-  const can = usePermission();
-  const canWrite = !!currentUser && can('user:write');
-  /** 当前登录用户 ID：禁止删除自己（后端也会拒绝，这里提前禁用按钮） */
-  const selfId = currentUser?.id;
-  const actionRef = useRef<ActionType>(null);
-
-  const [filters, setFilters] = useState<UserFilters>({ keyword: '', role: '', status: '' });
-  const [roles, setRoles] = useState<RoleRow[]>([]);
-  const [stats, setStats] = useState<UserStats>({ total: 0, active: 0, admins: 0 });
-  const [loadError, setLoadError] = useState('');
-
-  const [userOpen, setUserOpen] = useState(false);
-  const [editing, setEditing] = useState<UserRow | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [userForm] = Form.useForm();
-
-  const [pwdUser, setPwdUser] = useState<UserRow | null>(null);
-  const [pwdForm] = Form.useForm();
-
-  const roleOptions = useMemo(
-    () => roles.map((r) => ({ label: r.name, value: r.key })),
-    [roles]
-  );
-
-  const openCreate = () => {
-    setEditing(null);
-    userForm.resetFields();
-    userForm.setFieldsValue({ role: roles[0]?.key || 'viewer', status: true });
-    setUserOpen(true);
-  };
-
-  const openEdit = (u: UserRow) => {
-    setEditing(u);
-    userForm.resetFields();
-    userForm.setFieldsValue({
-      username: u.username,
-      displayName: u.displayName || '',
-      email: u.email || '',
-      role: u.role,
-      departmentId: u.departmentId ?? undefined,
-      position: u.position || '',
-      phone: u.phone || '',
-      status: u.status === 1,
-      password: '',
-    });
-    setUserOpen(true);
-  };
-
-  const submitUser = async () => {
-    let v: {
-      username?: string; password?: string; displayName?: string; email?: string;
-      role?: string; departmentId?: number | null; position?: string; phone?: string; status?: boolean;
-    };
-    try {
-      v = await userForm.validateFields();
-    } catch {
-      return;
-    }
-    setSaving(true);
-    try {
-      if (editing) {
-        await updateUser(editing.id, {
-          displayName: (v.displayName || '').trim(),
-          email: (v.email || '').trim(),
-          role: v.role,
-          status: v.status ? 1 : 0,
-          departmentId: v.departmentId ?? null,
-          position: (v.position || '').trim(),
-          phone: (v.phone || '').trim(),
-          ...(v.password ? { password: v.password } : {}),
-        });
-        message.success('用户已更新');
-      } else {
-        await createUser({
-          username: (v.username || '').trim(),
-          password: v.password || '',
-          displayName: (v.displayName || '').trim(),
-          email: (v.email || '').trim(),
-          role: v.role,
-          status: v.status ? 1 : 0,
-          departmentId: v.departmentId ?? null,
-          position: (v.position || '').trim(),
-          phone: (v.phone || '').trim(),
-        });
-        message.success('用户创建成功');
-      }
-      setUserOpen(false);
-      actionRef.current?.reload();
-    } catch {
-      /* client 已提示错误 */
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const submitPassword = async () => {
-    if (!pwdUser) return;
-    let v: { newPassword: string };
-    try {
-      v = await pwdForm.validateFields();
-    } catch {
-      return;
-    }
-    setSaving(true);
-    try {
-      await resetUserPassword(pwdUser.id, v.newPassword);
-      message.success(`已重置 ${pwdUser.username} 的密码`);
-      setPwdUser(null);
-      pwdForm.resetFields();
-    } catch {
-      /* client 已提示 */
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const doDelete = async (u: UserRow) => {
-    try {
-      await deleteUser(u.id);
-      message.success('用户已删除');
-      actionRef.current?.reload();
-    } catch {
-      /* client 已提示 */
-    }
-  };
-
-  const columns: ProColumns<UserRow>[] = [
-    {
-      title: 'ID',
-      dataIndex: 'id',
-      width: 64,
-      align: 'center',
-    },
-    {
-      title: '用户',
-      dataIndex: 'username',
-      width: 190,
-      render: (_, u) => (
-        <Space size={8}>
-          <Avatar
-            size={30}
-            src={u.avatar || undefined}
-            style={{ background: u.avatarColor || C.blue, fontSize: 12, flexShrink: 0 }}
-          >
-            {(u.displayName || u.username).slice(0, 1)}
-          </Avatar>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: C.navy, lineHeight: 1.3 }}>{u.username}</div>
-            <div style={{ fontSize: 11.5, color: C.gray, lineHeight: 1.3 }}>
-              {u.displayName || '未设置昵称'}
-            </div>
-          </div>
-        </Space>
-      ),
-    },
-    {
-      title: '邮箱',
-      dataIndex: 'email',
-      width: 210,
-      render: (_, u) =>
-        u.email ? (
-          <Space size={4} wrap>
-            <Text style={{ fontSize: 12.5 }}>{u.email}</Text>
-            {u.emailVerified ? <Tag style={softStyle(C.green)}>已验证</Tag> : null}
-          </Space>
-        ) : (
-          <Text style={{ fontSize: 12.5, color: C.gray }}>未设置</Text>
-        ),
-    },
-    {
-      title: '角色',
-      dataIndex: 'roleName',
-      width: 120,
-      render: (_, u) => <Tag style={softStyle(u.role === 'admin' ? C.red : C.primary)}>{u.roleName || u.role}</Tag>,
-    },
-    {
-      title: '部门 / 职位',
-      dataIndex: 'department',
-      width: 160,
-      render: (_, u) => (
-        <div style={{ lineHeight: 1.4 }}>
-          <div style={{ fontSize: 12.5, color: C.navy }}>{u.department || '-'}</div>
-          {u.position ? <div style={{ fontSize: 11.5, color: C.gray }}>{u.position}</div> : null}
-        </div>
-      ),
-    },
-    {
-      title: '状态',
-      dataIndex: 'status',
-      width: 84,
-      align: 'center',
-      render: (_, u) =>
-        u.status === 1 ? (
-          <Tag style={softStyle(C.green)}>启用</Tag>
-        ) : (
-          <Tag style={softStyle(C.gray)}>禁用</Tag>
-        ),
-    },
-    {
-      title: '项目',
-      dataIndex: 'projectCount',
-      width: 72,
-      align: 'center',
-      render: (_, u) => <Text style={{ fontSize: 12.5 }}>{u.projectCount}</Text>,
-    },
-    {
-      title: '最后登录',
-      dataIndex: 'lastLoginAt',
-      width: 170,
-      render: (_, u) => (
-        <div style={{ lineHeight: 1.4 }}>
-          <div style={{ fontSize: 12.5 }}>{fmtTime(u.lastLoginAt, 'YYYY-MM-DD HH:mm')}</div>
-          {u.lastLoginIp ? <div style={{ fontSize: 11.5, color: C.gray }}>{u.lastLoginIp}</div> : null}
-        </div>
-      ),
-    },
-    {
-      title: '操作',
-      valueType: 'option',
-      width: canWrite ? 190 : 60,
-      fixed: 'right',
-      render: (_, u) =>
-        canWrite
-          ? [
-              <Button key="edit" size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(u)}>
-                编辑
-              </Button>,
-              <Button
-                key="pwd"
-                size="small"
-                type="link"
-                icon={<LockOutlined />}
-                onClick={() => {
-                  pwdForm.resetFields();
-                  setPwdUser(u);
-                }}
-              >
-                重置密码
-              </Button>,
-              <Popconfirm
-                key="del"
-                title="删除用户"
-                description={`确定删除用户「${u.username}」？该操作不可恢复。`}
-                okText="删除"
-                cancelText="取消"
-                okButtonProps={{ danger: true }}
-                onConfirm={() => doDelete(u)}
-              >
-                <Button
-                  size="small"
-                  type="link"
-                  danger
-                  icon={<DeleteOutlined />}
-                  disabled={u.username === 'admin' || u.id === selfId}
-                >
-                  删除
-                </Button>
-              </Popconfirm>,
-            ]
-          : [
-              <Text key="ro" style={{ fontSize: 12, color: C.gray }}>
-                只读
-              </Text>,
-            ],
-    },
-  ];
-
-  return (
-    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-      {/* 统计 */}
-      <Row gutter={[12, 12]}>
-        {[
-          { title: '用户总数', value: stats.total, color: C.blue, icon: <TeamOutlined /> },
-          { title: '启用账号', value: stats.active, color: C.green, icon: <UserOutlined /> },
-          { title: '超级管理员', value: stats.admins, color: C.red, icon: <SafetyCertificateOutlined /> },
-          { title: '角色数量', value: roles.length, color: C.cyan, icon: <KeyOutlined /> },
-        ].map((s) => (
-          <Col key={s.title} xs={12} md={6}>
-            <Card size="small" style={{ borderColor: C.line }} styles={{ body: { padding: '12px 14px' } }}>
-              <Statistic
-                title={
-                  <Space size={6}>
-                    <span style={{ color: s.color }}>{s.icon}</span>
-                    <span style={{ fontSize: 12.5, color: C.gray }}>{s.title}</span>
-                  </Space>
-                }
-                value={s.value}
-                styles={{ content: { color: s.color, fontSize: 22, fontWeight: 700 } }}
-              />
-            </Card>
-          </Col>
-        ))}
-      </Row>
-
-      {loadError ? (
-        <Alert type="error" showIcon title="用户列表加载失败" description={loadError} />
-      ) : null}
-
-      {/* 筛选 */}
-      <Card size="small" style={{ borderColor: C.line }} styles={{ body: { padding: 12 } }}>
-        <Space size={8} wrap>
-          <Input.Search
-            allowClear
-            placeholder="搜索账号 / 昵称 / 邮箱"
-            style={{ width: 240 }}
-            onSearch={(v) => setFilters((f) => ({ ...f, keyword: v.trim() }))}
-          />
-          <Select
-            allowClear
-            placeholder="全部角色"
-            style={{ width: 150 }}
-            options={roleOptions}
-            value={filters.role || undefined}
-            onChange={(v) => setFilters((f) => ({ ...f, role: v || '' }))}
-          />
-          <Select
-            allowClear
-            placeholder="全部状态"
-            style={{ width: 130 }}
-            options={[
-              { label: '启用', value: '1' },
-              { label: '禁用', value: '0' },
-            ]}
-            value={filters.status || undefined}
-            onChange={(v) => setFilters((f) => ({ ...f, status: v || '' }))}
-          />
-          <Button
-            icon={<ReloadOutlined />}
-            onClick={() => setFilters({ keyword: '', role: '', status: '' })}
-          >
-            重置
-          </Button>
-        </Space>
-      </Card>
-
-      <ProTable<UserRow, UserFilters>
-        rowKey="id"
-        actionRef={actionRef}
-        columns={columns}
-        params={filters}
-        search={false}
-        options={false}
-        scroll={{ x: 'max-content' }}
-        request={async (params) => {
-          const current = params.current || 1;
-          const pageSize = params.pageSize || 10;
-          try {
-            const r = await listUsers(params.keyword || '');
-            const roleList = Object.values(r.roles || {});
-            setRoles(roleList);
-            setStats(r.stats);
-            onData(r.stats, roleList);
-            setLoadError('');
-            let list = r.list;
-            if (params.role) list = list.filter((u) => u.role === params.role);
-            if (params.status) list = list.filter((u) => String(u.status) === params.status);
-            const start = (current - 1) * pageSize;
-            return { data: list.slice(start, start + pageSize), total: list.length, success: true };
-          } catch (e) {
-            setLoadError(e instanceof Error ? e.message : '需要管理员权限才能查看用户列表');
-            return { data: [], total: 0, success: false };
-          }
-        }}
-        pagination={{
-          pageSize: 10,
-          showSizeChanger: true,
-          showTotal: (t) => `共 ${t} 个用户`,
-        }}
-        headerTitle={
-          <Space size={8}>
-            <TeamOutlined style={{ color: C.primary }} />
-            <span style={{ fontSize: 13.5, fontWeight: 600, color: C.navy }}>用户列表</span>
-          </Space>
-        }
-        toolBarRender={() =>
-          canWrite
-            ? [
-                <Button key="add" type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-                  新建用户
-                </Button>,
-              ]
-            : []
-        }
-      />
-
-      {/* 新建 / 编辑用户 */}
-      <Modal
-        title={editing ? `编辑用户：${editing.username}` : '新建用户'}
-        open={userOpen}
-        onCancel={() => setUserOpen(false)}
-        onOk={submitUser}
-        okText="保存"
-        cancelText="取消"
-        confirmLoading={saving}
-        width={640}
-        destroyOnHidden
-      >
-        <Form form={userForm} layout="vertical" requiredMark={false}>
-          <Row gutter={12}>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="username"
-                label="登录账号"
-                rules={[
-                  { required: true, message: '请填写登录账号' },
-                  { pattern: /^[A-Za-z0-9_.-]{3,32}$/, message: '3-32 位字母、数字、下划线、点或短横线' },
-                ]}
-              >
-                <Input placeholder="例如：zhangsan" disabled={!!editing} autoComplete="off" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item name="displayName" label="显示名称">
-                <Input placeholder="例如：张三" maxLength={64} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="email"
-                label="邮箱"
-                rules={[{ type: 'email', message: '邮箱格式不正确' }]}
-                extra="用于找回密码与接收系统通知"
-              >
-                <Input placeholder="name@example.com" autoComplete="off" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item
-                name="password"
-                label={editing ? '重置密码（留空不修改）' : '登录密码'}
-                rules={
-                  editing
-                    ? [
-                        {
-                          validator: (_, value?: string) =>
-                            !value || value.length >= 6
-                              ? Promise.resolve()
-                              : Promise.reject(new Error('密码至少 6 位')),
-                        },
-                      ]
-                    : [
-                        { required: true, message: '请填写登录密码' },
-                        { min: 6, message: '密码至少 6 位' },
-                      ]
-                }
-              >
-                <Input.Password placeholder={editing ? '留空表示不修改' : '至少 6 位'} autoComplete="new-password" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item name="role" label="角色" rules={[{ required: true, message: '请选择角色' }]}>
-                <Select options={roleOptions} placeholder="选择角色" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item name="departmentId" label="所属部门">
-                <Select
-                  allowClear
-                  placeholder="未分配"
-                  options={depts.map((d) => ({ label: d.name, value: d.id }))}
-                  showSearch
-                  optionFilterProp="label"
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item name="position" label="职位">
-                <Input placeholder="例如：数据分析师" maxLength={64} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item name="phone" label="手机号">
-                <Input placeholder="可选" maxLength={32} />
-              </Form.Item>
-            </Col>
-            <Col xs={24}>
-              <Form.Item name="status" label="账号状态" valuePropName="checked">
-                <Switch checkedChildren="启用" unCheckedChildren="禁用" />
-              </Form.Item>
-            </Col>
-          </Row>
-        </Form>
-      </Modal>
-
-      {/* 重置密码 */}
-      <Modal
-        title={pwdUser ? `重置密码：${pwdUser.username}` : '重置密码'}
-        open={!!pwdUser}
-        onCancel={() => setPwdUser(null)}
-        onOk={submitPassword}
-        okText="重置"
-        cancelText="取消"
-        confirmLoading={saving}
-        destroyOnHidden
-      >
-        <Alert
-          type="warning"
-          showIcon
-          title="重置后该用户所有登录会话将失效，需要使用新密码重新登录。"
-          style={{ marginBottom: 14 }}
-        />
-        <Form form={pwdForm} layout="vertical" requiredMark={false}>
-          <Form.Item
-            name="newPassword"
-            label="新密码"
-            rules={[
-              { required: true, message: '请填写新密码' },
-              { min: 6, message: '密码至少 6 位' },
-            ]}
-          >
-            <Input.Password placeholder="至少 6 位" autoComplete="new-password" />
-          </Form.Item>
-        </Form>
-      </Modal>
-    </Space>
-  );
+/** 是否 7 天内创建（用于「本周新增」就地统计） */
+function isWithinWeek(iso?: string): boolean {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return false;
+  const diff = Date.now() - t;
+  return diff >= 0 && diff <= WEEK_MS;
 }
 
 /* ══════════════ 组织架构 ══════════════ */
@@ -976,7 +461,7 @@ function RoleInfoTab({ roles, groups }: { roles: RoleRow[]; groups: PermissionGr
                               flex: 1,
                               height: 8,
                               borderRadius: 4,
-                              background: 'rgba(54,135,255,.10)',
+                              background: NEUTRAL.surfaceSunken,
                               overflow: 'hidden',
                             }}
                           >
@@ -985,7 +470,7 @@ function RoleInfoTab({ roles, groups }: { roles: RoleRow[]; groups: PermissionGr
                                 width: `${pct}%`,
                                 height: '100%',
                                 borderRadius: 4,
-                                background: pct === 100 ? C.green : C.primary,
+                                background: pct === 100 ? PALETTE.green : PALETTE.primary,
                               }}
                             />
                           </div>
@@ -1037,8 +522,8 @@ function PermissionInfoTab({ groups }: { groups: PermissionGroup[] }) {
                       <code
                         style={{
                           fontSize: 11,
-                          color: C.blue,
-                          background: 'rgba(54,135,255,.08)',
+                          color: PALETTE.primaryDeep,
+                          background: PALETTE.primarySoft,
                           borderRadius: 4,
                           padding: '1px 5px',
                         }}
@@ -1061,15 +546,36 @@ function PermissionInfoTab({ groups }: { groups: PermissionGroup[] }) {
 /* ══════════════ 页面 ══════════════ */
 
 export default function UsersPage() {
+  const currentUser = useAppStore((s) => s.user);
+  const can = usePermission();
+  const canWrite = !!currentUser && can('user:write');
+  const selfId = currentUser?.id;
   const screens = useBreakpoint();
   const isMobile = !screens.md;
 
   const [activeKey, setActiveKey] = useState('users');
-  const [stats, setStats] = useState<UserStats>({ total: 0, active: 0, admins: 0 });
+  const [filters, setFilters] = useState<UserFilters>({ keyword: '', role: '', status: '' });
   const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [stats, setStats] = useState<UserStats>({ total: 0, active: 0, admins: 0 });
+  const [weekNew, setWeekNew] = useState(0);
+  const [loadError, setLoadError] = useState('');
   const [permMeta, setPermMeta] = useState<PermissionMeta>({ groups: [], all: [], names: {} });
   const [depts, setDepts] = useState<DeptRow[]>([]);
   const deptsRef = useRef<DeptRow[]>([]);
+  const actionRef = useRef<ActionType>(null);
+
+  const [userOpen, setUserOpen] = useState(false);
+  const [editing, setEditing] = useState<UserRow | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [userForm] = Form.useForm();
+
+  const [pwdUser, setPwdUser] = useState<UserRow | null>(null);
+  const [pwdForm] = Form.useForm();
+
+  const roleOptions = useMemo(
+    () => roles.map((r) => ({ label: r.name, value: r.key })),
+    [roles]
+  );
 
   /** 部门列表（供组织架构 tab 与用户表单共享） */
   const loadDepts = useCallback(async (): Promise<DeptRow[]> => {
@@ -1096,88 +602,503 @@ export default function UsersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const openCreate = () => {
+    setEditing(null);
+    userForm.resetFields();
+    userForm.setFieldsValue({ role: roles[0]?.key || 'viewer', status: true });
+    setUserOpen(true);
+  };
+
+  const openEdit = (u: UserRow) => {
+    setEditing(u);
+    userForm.resetFields();
+    userForm.setFieldsValue({
+      username: u.username,
+      displayName: u.displayName || '',
+      email: u.email || '',
+      role: u.role,
+      departmentId: u.departmentId ?? undefined,
+      position: u.position || '',
+      phone: u.phone || '',
+      status: u.status === 1,
+      password: '',
+    });
+    setUserOpen(true);
+  };
+
+  const submitUser = async () => {
+    let v: {
+      username?: string; password?: string; displayName?: string; email?: string;
+      role?: string; departmentId?: number | null; position?: string; phone?: string; status?: boolean;
+    };
+    try {
+      v = await userForm.validateFields();
+    } catch {
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editing) {
+        await updateUser(editing.id, {
+          displayName: (v.displayName || '').trim(),
+          email: (v.email || '').trim(),
+          role: v.role,
+          status: v.status ? 1 : 0,
+          departmentId: v.departmentId ?? null,
+          position: (v.position || '').trim(),
+          phone: (v.phone || '').trim(),
+          ...(v.password ? { password: v.password } : {}),
+        });
+        message.success('用户已更新');
+      } else {
+        await createUser({
+          username: (v.username || '').trim(),
+          password: v.password || '',
+          displayName: (v.displayName || '').trim(),
+          email: (v.email || '').trim(),
+          role: v.role,
+          status: v.status ? 1 : 0,
+          departmentId: v.departmentId ?? null,
+          position: (v.position || '').trim(),
+          phone: (v.phone || '').trim(),
+        });
+        message.success('用户创建成功');
+      }
+      setUserOpen(false);
+      actionRef.current?.reload();
+    } catch {
+      /* client 已提示错误 */
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const submitPassword = async () => {
+    if (!pwdUser) return;
+    let v: { newPassword: string };
+    try {
+      v = await pwdForm.validateFields();
+    } catch {
+      return;
+    }
+    setSaving(true);
+    try {
+      await resetUserPassword(pwdUser.id, v.newPassword);
+      message.success(`已重置 ${pwdUser.username} 的密码`);
+      setPwdUser(null);
+      pwdForm.resetFields();
+    } catch {
+      /* client 已提示 */
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const doDelete = async (u: UserRow) => {
+    try {
+      await deleteUser(u.id);
+      message.success('用户已删除');
+      actionRef.current?.reload();
+    } catch {
+      /* client 已提示 */
+    }
+  };
+
+  const columns: ProColumns<UserRow>[] = [
+    {
+      title: 'ID',
+      dataIndex: 'id',
+      width: 64,
+      align: 'center',
+    },
+    {
+      title: '用户',
+      dataIndex: 'username',
+      width: 190,
+      render: (_, u) => (
+        <Space size={8}>
+          <Avatar
+            size={30}
+            src={u.avatar || undefined}
+            style={{ background: u.avatarColor || PALETTE.primary, fontSize: 12, flexShrink: 0 }}
+          >
+            {(u.displayName || u.username).slice(0, 1)}
+          </Avatar>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: NEUTRAL.text, lineHeight: 1.3 }}>{u.username}</div>
+            <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, lineHeight: 1.3 }}>
+              {u.displayName || '未设置昵称'}
+            </div>
+          </div>
+        </Space>
+      ),
+    },
+    {
+      title: '邮箱',
+      dataIndex: 'email',
+      width: 210,
+      render: (_, u) =>
+        u.email ? (
+          <Space size={4} wrap>
+            <Text style={{ fontSize: 12.5 }}>{u.email}</Text>
+            {u.emailVerified ? <Tag style={softStyle(PALETTE.green)}>已验证</Tag> : null}
+          </Space>
+        ) : (
+          <Text style={{ fontSize: 12.5, color: NEUTRAL.textTertiary }}>未设置</Text>
+        ),
+    },
+    {
+      title: '角色',
+      dataIndex: 'roleName',
+      width: 120,
+      render: (_, u) => <Tag style={softStyle(u.role === 'admin' ? PALETTE.red : PALETTE.primary)}>{u.roleName || u.role}</Tag>,
+    },
+    {
+      title: '部门 / 职位',
+      dataIndex: 'department',
+      width: 160,
+      render: (_, u) => (
+        <div style={{ lineHeight: 1.4 }}>
+          <div style={{ fontSize: 12.5, color: NEUTRAL.text }}>{u.department || '-'}</div>
+          {u.position ? <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary }}>{u.position}</div> : null}
+        </div>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 84,
+      align: 'center',
+      render: (_, u) =>
+        u.status === 1 ? (
+          <Tag style={softStyle(PALETTE.green)}>启用</Tag>
+        ) : (
+          <Tag style={softStyle(NEUTRAL.textTertiary)}>禁用</Tag>
+        ),
+    },
+    {
+      title: '项目',
+      dataIndex: 'projectCount',
+      width: 72,
+      align: 'center',
+      render: (_, u) => <Text style={{ fontSize: 12.5 }}>{u.projectCount}</Text>,
+    },
+    {
+      title: '最后登录',
+      dataIndex: 'lastLoginAt',
+      width: 170,
+      render: (_, u) => (
+        <div style={{ lineHeight: 1.4 }}>
+          <div style={{ fontSize: 12.5 }}>{fmtTime(u.lastLoginAt, 'YYYY-MM-DD HH:mm')}</div>
+          {u.lastLoginIp ? <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary }}>{u.lastLoginIp}</div> : null}
+        </div>
+      ),
+    },
+    {
+      title: '操作',
+      valueType: 'option',
+      width: canWrite ? 190 : 60,
+      fixed: 'right',
+      render: (_, u) =>
+        canWrite
+          ? [
+              <Button key="edit" size="small" type="link" icon={<EditOutlined />} onClick={() => openEdit(u)}>
+                编辑
+              </Button>,
+              <Button
+                key="pwd"
+                size="small"
+                type="link"
+                icon={<LockOutlined />}
+                onClick={() => {
+                  pwdForm.resetFields();
+                  setPwdUser(u);
+                }}
+              >
+                重置密码
+              </Button>,
+              <Popconfirm
+                key="del"
+                title="删除用户"
+                description={`确定删除用户「${u.username}」？该操作不可恢复。`}
+                okText="删除"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+                onConfirm={() => doDelete(u)}
+              >
+                <Button
+                  size="small"
+                  type="link"
+                  danger
+                  icon={<DeleteOutlined />}
+                  disabled={u.username === 'admin' || u.id === selfId}
+                >
+                  删除
+                </Button>
+              </Popconfirm>,
+            ]
+          : [
+              <Text key="ro" style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>
+                只读
+              </Text>,
+            ],
+    },
+  ];
+
+  const statsCards = useMemo<StatCardItem[]>(() => {
+    const disabled = Math.max(stats.total - stats.active, 0);
+    return [
+      { key: 'total', label: '用户数', value: stats.total, suffix: '人', color: PALETTE.primary },
+      { key: 'active', label: '启用', value: stats.active, suffix: '人', color: PALETTE.green },
+      { key: 'disabled', label: '禁用', value: disabled, suffix: '人', color: NEUTRAL.textTertiary },
+      { key: 'admins', label: '管理员', value: stats.admins, suffix: '人', color: PALETTE.orange },
+      { key: 'weekNew', label: '本周新增', value: weekNew, suffix: '人', color: PALETTE.cyan },
+    ];
+  }, [stats, weekNew]);
+
+  const userListTab = (
+    <Space orientation="vertical" size={12} style={{ width: '100%' }}>
+      {loadError ? (
+        <Alert type="error" showIcon title="用户列表加载失败" description={loadError} />
+      ) : null}
+
+      <ProTable<UserRow, UserFilters>
+        rowKey="id"
+        actionRef={actionRef}
+        columns={columns}
+        params={filters}
+        search={false}
+        options={false}
+        scroll={{ x: 'max-content' }}
+        request={async (params) => {
+          const current = params.current || 1;
+          const pageSize = params.pageSize || 10;
+          try {
+            const r = await listUsers(params.keyword || '');
+            const roleList = Object.values(r.roles || {});
+            setRoles(roleList);
+            setStats(r.stats);
+            setWeekNew(r.list.filter((u) => isWithinWeek(u.createdAt)).length);
+            setLoadError('');
+            let list = r.list;
+            if (params.role) list = list.filter((u) => u.role === params.role);
+            if (params.status) list = list.filter((u) => String(u.status) === params.status);
+            const start = (current - 1) * pageSize;
+            return { data: list.slice(start, start + pageSize), total: list.length, success: true };
+          } catch (e) {
+            setLoadError(e instanceof Error ? e.message : '需要管理员权限才能查看用户列表');
+            return { data: [], total: 0, success: false };
+          }
+        }}
+        pagination={{
+          pageSize: 10,
+          showSizeChanger: true,
+          showTotal: (t) => `共 ${t} 个用户`,
+        }}
+        headerTitle={
+          <Space size={8}>
+            <TeamOutlined style={{ color: PALETTE.primary }} />
+            <span style={{ fontSize: 13.5, fontWeight: 600, color: NEUTRAL.text }}>用户列表</span>
+          </Space>
+        }
+      />
+    </Space>
+  );
+
   const tabItems = [
-    {
-      key: 'users',
-      label: (
-        <Space size={6}>
-          <TeamOutlined />
-          <span>用户列表</span>
-        </Space>
-      ),
-      children: (
-        <UserTab
-          depts={depts}
-          onData={(s, r) => {
-            setStats(s);
-            if (r.length) setRoles(r);
-          }}
-        />
-      ),
-    },
-    {
-      key: 'roles',
-      label: (
-        <Space size={6}>
-          <SafetyCertificateOutlined />
-          <span>角色权限</span>
-        </Space>
-      ),
-      children: <RoleManager embedded />,
-    },
-    {
-      key: 'org',
-      label: (
-        <Space size={6}>
-          <ApartmentOutlined />
-          <span>组织架构</span>
-        </Space>
-      ),
-      children: <OrganizationTab depts={depts} reload={loadDepts} />,
-    },
-    {
-      key: 'roleinfo',
-      label: (
-        <Space size={6}>
-          <KeyOutlined />
-          <span>角色权限说明</span>
-        </Space>
-      ),
-      children: <RoleInfoTab roles={roles} groups={permMeta.groups} />,
-    },
-    {
-      key: 'perminfo',
-      label: (
-        <Space size={6}>
-          <LockOutlined />
-          <span>权限点说明</span>
-        </Space>
-      ),
-      children: <PermissionInfoTab groups={permMeta.groups} />,
-    },
+    { key: 'users', label: (<Space size={6}><TeamOutlined /><span>用户列表</span></Space>), children: userListTab },
+    { key: 'roles', label: (<Space size={6}><SafetyCertificateOutlined /><span>角色权限</span></Space>), children: <RoleManager embedded /> },
+    { key: 'org', label: (<Space size={6}><ApartmentOutlined /><span>组织架构</span></Space>), children: <OrganizationTab depts={depts} reload={loadDepts} /> },
+    { key: 'roleinfo', label: (<Space size={6}><KeyOutlined /><span>角色权限说明</span></Space>), children: <RoleInfoTab roles={roles} groups={permMeta.groups} /> },
+    { key: 'perminfo', label: (<Space size={6}><LockOutlined /><span>权限点说明</span></Space>), children: <PermissionInfoTab groups={permMeta.groups} /> },
   ];
 
   return (
     <Page
       title="用户管理"
-      subTitle={`共 ${stats.total} 个账号 · ${stats.active} 个启用 · ${stats.admins} 个超级管理员`}
-      extra={
-        <Tag style={{ ...softStyle(C.primary), padding: '3px 10px', fontSize: 12.5 }}>
-          <Space size={4}>
-            <UserOutlined />
-            <span>账号与权限中心</span>
-          </Space>
-        </Tag>
+      search={
+        <Space size={8} wrap>
+          <Input.Search
+            allowClear
+            placeholder="搜索账号 / 昵称 / 邮箱"
+            style={{ width: isMobile ? 180 : 220 }}
+            onSearch={(v) => setFilters((f) => ({ ...f, keyword: v.trim() }))}
+          />
+          <Select
+            allowClear
+            placeholder="全部角色"
+            style={{ width: isMobile ? '100%' : 150 }}
+            options={roleOptions}
+            value={filters.role || undefined}
+            onChange={(v) => setFilters((f) => ({ ...f, role: v || '' }))}
+          />
+          <Select
+            allowClear
+            placeholder="全部状态"
+            style={{ width: isMobile ? '100%' : 130 }}
+            options={[
+              { label: '启用', value: '1' },
+              { label: '禁用', value: '0' },
+            ]}
+            value={filters.status || undefined}
+            onChange={(v) => setFilters((f) => ({ ...f, status: v || '' }))}
+          />
+          <Button
+            icon={<ReloadOutlined />}
+            onClick={() => setFilters({ keyword: '', role: '', status: '' })}
+          >
+            重置
+          </Button>
+        </Space>
+      }
+      actions={
+        canWrite ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新建用户
+          </Button>
+        ) : null
+      }
+      stats={statsCards}
+      subTabs={
+        <Tabs
+          type="card"
+          activeKey={activeKey}
+          onChange={setActiveKey}
+          items={tabItems}
+          size={isMobile ? 'small' : 'middle'}
+          tabBarStyle={{ marginBottom: 12 }}
+        />
       }
     >
-      <Tabs
-        type="card"
-        activeKey={activeKey}
-        onChange={setActiveKey}
-        items={tabItems}
-        size={isMobile ? 'small' : 'middle'}
-        tabBarStyle={{ marginBottom: 12 }}
-      />
+      {/* 新建 / 编辑用户 */}
+      <Modal
+        title={editing ? `编辑用户：${editing.username}` : '新建用户'}
+        open={userOpen}
+        onCancel={() => setUserOpen(false)}
+        onOk={submitUser}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={saving}
+        width={640}
+        destroyOnHidden
+      >
+        <Form form={userForm} layout="vertical" requiredMark={false}>
+          <Row gutter={12}>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="username"
+                label="登录账号"
+                rules={[
+                  { required: true, message: '请填写登录账号' },
+                  { pattern: /^[A-Za-z0-9_.-]{3,32}$/, message: '3-32 位字母、数字、下划线、点或短横线' },
+                ]}
+              >
+                <Input placeholder="例如：zhangsan" disabled={!!editing} autoComplete="off" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="displayName" label="显示名称">
+                <Input placeholder="例如：张三" maxLength={64} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="email"
+                label="邮箱"
+                rules={[{ type: 'email', message: '邮箱格式不正确' }]}
+                extra="用于找回密码与接收系统通知"
+              >
+                <Input placeholder="name@example.com" autoComplete="off" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="password"
+                label={editing ? '重置密码（留空不修改）' : '登录密码'}
+                rules={
+                  editing
+                    ? [
+                        {
+                          validator: (_, value?: string) =>
+                            !value || value.length >= 6
+                              ? Promise.resolve()
+                              : Promise.reject(new Error('密码至少 6 位')),
+                        },
+                      ]
+                    : [
+                        { required: true, message: '请填写登录密码' },
+                        { min: 6, message: '密码至少 6 位' },
+                      ]
+                }
+              >
+                <Input.Password placeholder={editing ? '留空表示不修改' : '至少 6 位'} autoComplete="new-password" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="role" label="角色" rules={[{ required: true, message: '请选择角色' }]}>
+                <Select options={roleOptions} placeholder="选择角色" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="departmentId" label="所属部门">
+                <Select
+                  allowClear
+                  placeholder="未分配"
+                  options={depts.map((d) => ({ label: d.name, value: d.id }))}
+                  showSearch
+                  optionFilterProp="label"
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="position" label="职位">
+                <Input placeholder="例如：数据分析师" maxLength={64} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item name="phone" label="手机号">
+                <Input placeholder="可选" maxLength={32} />
+              </Form.Item>
+            </Col>
+            <Col xs={24}>
+              <Form.Item name="status" label="账号状态" valuePropName="checked">
+                <Switch checkedChildren="启用" unCheckedChildren="禁用" />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
+      </Modal>
+
+      {/* 重置密码 */}
+      <Modal
+        title={pwdUser ? `重置密码：${pwdUser.username}` : '重置密码'}
+        open={!!pwdUser}
+        onCancel={() => setPwdUser(null)}
+        onOk={submitPassword}
+        okText="重置"
+        cancelText="取消"
+        confirmLoading={saving}
+        destroyOnHidden
+      >
+        <Alert
+          type="warning"
+          showIcon
+          title="重置后该用户所有登录会话将失效，需要使用新密码重新登录。"
+          style={{ marginBottom: 14 }}
+        />
+        <Form form={pwdForm} layout="vertical" requiredMark={false}>
+          <Form.Item
+            name="newPassword"
+            label="新密码"
+            rules={[
+              { required: true, message: '请填写新密码' },
+              { min: 6, message: '密码至少 6 位' },
+            ]}
+          >
+            <Input.Password placeholder="至少 6 位" autoComplete="new-password" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Page>
   );
 }

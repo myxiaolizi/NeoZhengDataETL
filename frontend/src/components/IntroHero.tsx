@@ -2,15 +2,26 @@
  * IntroHero —— 项目介绍页 Hero 区组件
  *
  * 视觉要点：
- *  - 品牌渐变背景 linear-gradient(135deg, #003378, #2D6FE4, #3687FF)
- *  - 光晕球 + 网格纹理（仅使用调色板颜色的不同透明度，不引入新色相）
+ *  - 品牌渐变背景：PALETTE.primaryDeep → PALETTE.primary → PALETTE.primaryLight
+ *    （V4.1 起颜色全部取自 @/theme，不再写死 V4.0 的深蓝/亮蓝色值）
+ *  - 光晕球 + 网格纹理（只用调色板颜色的不同透明度，不引入新色相）
  *  - 大标题 + 渐变高亮副标题 + 双 CTA + 关键指标
  *  - <768px 单列、按钮撑满、指标两列
  */
 import React, { useState } from 'react';
 import { Button, Grid } from 'antd';
+import { NEUTRAL, PALETTE } from '@/theme';
 
 const { useBreakpoint } = Grid;
+
+/** hex → rgba()：光晕/阴影需要透明度，用调色板色值实时换算，避免再写死新的 rgba 字面量 */
+function withAlpha(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
 
 export interface IntroHeroStat {
   value: React.ReactNode;
@@ -61,8 +72,8 @@ export default function IntroHero({
         position: 'relative',
         overflow: 'hidden',
         borderRadius: isMobile ? 14 : 20,
-        background: 'linear-gradient(135deg, #003378 0%, #2D6FE4 50%, #3687FF 100%)',
-        color: '#FFFFFF',
+        background: `linear-gradient(135deg, ${PALETTE.primaryDeep} 0%, ${PALETTE.primary} 50%, ${PALETTE.primaryLight} 100%)`,
+        color: NEUTRAL.textInverse,
         padding: isMobile ? '34px 20px 30px' : '64px 56px 56px',
       }}
     >
@@ -76,7 +87,7 @@ export default function IntroHero({
           top: -200,
           left: -140,
           borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(115,219,255,.55) 0%, rgba(115,219,255,0) 70%)',
+          background: `radial-gradient(circle, ${withAlpha(PALETTE.cyan, 0.55)} 0%, ${withAlpha(PALETTE.cyan, 0)} 70%)`,
           pointerEvents: 'none',
         }}
       />
@@ -89,7 +100,7 @@ export default function IntroHero({
           bottom: -200,
           right: -100,
           borderRadius: '50%',
-          background: 'radial-gradient(circle, rgba(162,215,60,.30) 0%, rgba(162,215,60,0) 70%)',
+          background: `radial-gradient(circle, ${withAlpha(PALETTE.green, 0.30)} 0%, ${withAlpha(PALETTE.green, 0)} 70%)`,
           pointerEvents: 'none',
         }}
       />
@@ -144,7 +155,7 @@ export default function IntroHero({
               <br />
               <span
                 style={{
-                  background: 'linear-gradient(90deg, #FFFFFF 0%, #73DBFF 100%)',
+                  background: `linear-gradient(90deg, ${NEUTRAL.textInverse} 0%, ${PALETTE.primarySoft} 100%)`,
                   WebkitBackgroundClip: 'text',
                   backgroundClip: 'text',
                   color: 'transparent',
@@ -190,13 +201,13 @@ export default function IntroHero({
                   padding: '0 28px',
                   borderRadius: 10,
                   border: 'none',
-                  background: '#FFFFFF',
-                  color: '#003378',
+                  background: NEUTRAL.textInverse,
+                  color: PALETTE.primaryDeep,
                   fontSize: 14.5,
                   fontWeight: 700,
                   boxShadow: hoverPrimary
-                    ? '0 14px 30px -10px rgba(0,51,120,.60)'
-                    : '0 8px 22px -10px rgba(0,51,120,.45)',
+                    ? `0 14px 30px -10px ${withAlpha(PALETTE.primaryDeep, 0.60)}`
+                    : `0 8px 22px -10px ${withAlpha(PALETTE.primaryDeep, 0.45)}`,
                   transform: hoverPrimary ? 'translateY(-1px)' : 'none',
                   transition: 'all .18s ease',
                 }}
@@ -216,7 +227,7 @@ export default function IntroHero({
                   borderRadius: 10,
                   border: '1.5px solid rgba(255,255,255,.60)',
                   background: hoverGhost ? 'rgba(255,255,255,.20)' : 'rgba(255,255,255,.08)',
-                  color: '#FFFFFF',
+                  color: NEUTRAL.textInverse,
                   fontSize: 14.5,
                   fontWeight: 600,
                   transition: 'all .18s ease',

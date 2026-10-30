@@ -1,8 +1,9 @@
 /** 审计日志：ProTable + 关键词/操作/日期筛选 + 按保留策略清理 */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import FilterPanel from '@/components/FilterPanel';
 import {
   Alert, Button, Card, Col, DatePicker, Grid, Input, Popconfirm, Row, Select, Space,
-  Statistic, Tag, Tooltip, Typography, message,
+  Tag, Tooltip, Typography, message,
 } from 'antd';
 import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
@@ -12,9 +13,11 @@ import {
 import { ProTable } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import Page from '@/components/Page';
+import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore, usePermission } from '@/stores/app';
 import { cleanupAuditLogs, listAuditLogs } from '@/api/users';
 import type { AuditRow, AuditStats } from '@/api/users';
+import { PALETTE, NEUTRAL } from '@/theme';
 import { fmtTime, truncate } from '@/utils';
 
 const { Text } = Typography;
@@ -22,17 +25,17 @@ const { RangePicker } = DatePicker;
 const { useBreakpoint } = Grid;
 
 const C = {
-  primary: '#3687FF',
-  blue: '#2D6FE4',
-  navy: '#003378',
-  cyan: '#45B4FF',
-  green: '#A2D73C',
-  yellow: '#FFC000',
-  orange: '#EC673C',
-  red: '#E86161',
-  gray: '#B5B5B6',
-  line: '#DCDDDD',
-};
+  primary: PALETTE.primary,
+  blue: PALETTE.primary,
+  navy: NEUTRAL.text,
+  cyan: PALETTE.cyan,
+  green: PALETTE.green,
+  yellow: PALETTE.yellow,
+  orange: PALETTE.orange,
+  red: PALETTE.red,
+  gray: NEUTRAL.textTertiary,
+  line: NEUTRAL.border,
+} as const;
 
 function softStyle(color: string): React.CSSProperties {
   return { background: `${color}1A`, color, border: 'none', borderRadius: 6, margin: 0, fontSize: 12 };
@@ -71,6 +74,7 @@ export default function AuditPage() {
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const params: AuditFilters = useMemo(
     () => ({
@@ -103,6 +107,12 @@ export default function AuditPage() {
       setCleaning(false);
     }
   };
+
+  const statCards = useMemo<StatCardItem[]>(() => [
+    { key: 'total', label: '日志总数', value: stats.total, suffix: '条', color: PALETTE.primary },
+    { key: 'today', label: '今日操作', value: stats.today, suffix: '条', color: PALETTE.orange },
+    { key: 'users', label: '涉及用户', value: stats.users, suffix: '人', color: PALETTE.green },
+  ], [stats]);
 
   const columns: ProColumns<AuditRow>[] = [
     { title: 'ID', dataIndex: 'id', width: 76, align: 'center' },
@@ -179,73 +189,54 @@ export default function AuditPage() {
   return (
     <Page
       title="审计日志"
-      subTitle={`记录用户关键操作 · 便于追溯与合规 · 共 ${stats.total} 条`}
-      extra={
-        <Space size={6} wrap>
-          <Button icon={<ReloadOutlined />} onClick={() => actionRef.current?.reload()}>
-            刷新
-          </Button>
-          {canClean ? (
-            <Popconfirm
-              title="按保留策略清理"
-              description="将删除超过保留天数的审计日志与登录日志，操作不可恢复。"
-              okText="清理"
-              cancelText="取消"
-              okButtonProps={{ danger: true }}
-              onConfirm={doCleanup}
-            >
-              <Button icon={<ClearOutlined />} loading={cleaning}>
-                清理过期日志
-              </Button>
-            </Popconfirm>
-          ) : null}
+      stats={statCards}
+      search={
+        <Space size={8} wrap>
+          <Input.Search
+            allowClear
+            placeholder="搜索用户 / 操作 / 详情 / IP"
+            style={{ width: isMobile ? '100%' : 220 }}
+            onSearch={(v) => setKeyword(v)}
+          />
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="全部操作类型"
+            style={{ width: isMobile ? '100%' : 180 }}
+            options={actionOptions}
+            value={action}
+            onChange={(v) => setAction(v)}
+          />
         </Space>
+      }
+      actions={
+        <Button icon={<ReloadOutlined />} onClick={() => actionRef.current?.reload()}>
+          刷新
+        </Button>
+      }
+      extra={
+        canClean ? (
+          <Popconfirm
+            title="按保留策略清理"
+            description="将删除超过保留天数的审计日志与登录日志，操作不可恢复。"
+            okText="清理"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+            onConfirm={doCleanup}
+          >
+            <Button icon={<ClearOutlined />} loading={cleaning}>
+              清理过期日志
+            </Button>
+          </Popconfirm>
+        ) : null
       }
     >
       <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-        <Row gutter={[12, 12]}>
-          {[
-            { title: '日志总数', value: stats.total, color: C.blue, icon: <FileSearchOutlined /> },
-            { title: '今日操作', value: stats.today, color: C.orange, icon: <ThunderboltOutlined /> },
-            { title: '涉及用户', value: stats.users, color: C.green, icon: <TeamOutlined /> },
-          ].map((s) => (
-            <Col key={s.title} xs={12} md={8}>
-              <Card size="small" style={{ borderColor: C.line }} styles={{ body: { padding: '12px 14px' } }}>
-                <Statistic
-                  title={
-                    <Space size={6}>
-                      <span style={{ color: s.color }}>{s.icon}</span>
-                      <span style={{ fontSize: 12.5, color: C.gray }}>{s.title}</span>
-                    </Space>
-                  }
-                  value={s.value}
-                  styles={{ content: { color: s.color, fontSize: 22, fontWeight: 700 } }}
-                />
-              </Card>
-            </Col>
-          ))}
-        </Row>
-
         {error ? <Alert type="error" showIcon title="审计日志加载失败" description={error} /> : null}
 
-        <Card size="small" style={{ borderColor: C.line }} styles={{ body: { padding: 12 } }}>
-          <Space size={8} wrap>
-            <Input.Search
-              allowClear
-              placeholder="搜索用户 / 操作 / 详情 / IP"
-              style={{ width: isMobile ? '100%' : 260 }}
-              onSearch={(v) => setKeyword(v)}
-            />
-            <Select
-              allowClear
-              showSearch
-              optionFilterProp="label"
-              placeholder="全部操作类型"
-              style={{ width: isMobile ? '100%' : 200 }}
-              options={actionOptions}
-              value={action}
-              onChange={(v) => setAction(v)}
-            />
+        <FilterPanel
+          advanced={
             <RangePicker
               style={{ width: isMobile ? '100%' : 260 }}
               value={range}
@@ -253,6 +244,9 @@ export default function AuditPage() {
               onChange={(v) => setRange(v && v[0] && v[1] ? [v[0], v[1]] : null)}
               disabledDate={(d) => d && d.isAfter(dayjs().endOf('day'))}
             />
+          }
+          activeCount={range ? 1 : 0}
+          extra={
             <Button
               icon={<ReloadOutlined />}
               onClick={() => {
@@ -263,8 +257,12 @@ export default function AuditPage() {
             >
               重置
             </Button>
+          }
+        >
+          <Space size={8} wrap>
+            <span style={{ fontSize: 12.5, color: NEUTRAL.textSecondary }}>按时间范围筛选</span>
           </Space>
-        </Card>
+        </FilterPanel>
 
         <ProTable<AuditRow, AuditFilters>
           rowKey="id"
@@ -283,6 +281,7 @@ export default function AuditPage() {
           request={async (p) => {
             const current = p.current || 1;
             const pageSize = p.pageSize || 20;
+            setLoading(true);
             try {
               const r = await listAuditLogs({
                 page: current,
@@ -299,6 +298,8 @@ export default function AuditPage() {
             } catch (e) {
               setError(e instanceof Error ? e.message : '需要「查看审计日志」权限');
               return { data: [], total: 0, success: false };
+            } finally {
+              setLoading(false);
             }
           }}
           pagination={{

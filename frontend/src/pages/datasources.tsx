@@ -1,8 +1,8 @@
-/** 数据源管理：15 大类 / 80+ 类型目录 + ProTable + 动态连接参数 + 连接测试 + 表结构浏览 */
+/** 数据源管理：15 大类 / 80+ 类型目录 + V4.1 标准结构 + 动态连接参数 + 连接测试 + 表结构浏览 */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Button, Space, Tag, Drawer, Collapse, Empty, Alert, Typography, Divider, Badge,
-  Table, Tooltip, App, Input, Spin,
+  Button, Space, Tag, Modal, Collapse, Empty, Alert, Typography, Divider, Badge,
+  Table, Tooltip, App, Input, Select, Spin, Grid,
 } from 'antd';
 import {
   PlusOutlined, ReloadOutlined, ApiOutlined, DatabaseOutlined, ThunderboltOutlined,
@@ -10,13 +10,15 @@ import {
   AppstoreOutlined, SearchOutlined,
 } from '@ant-design/icons';
 import {
-  ProTable, DrawerForm, ProFormText, ProFormDigit, ProFormSelect, ProFormSwitch,
+  ProTable, ModalForm, ProFormText, ProFormDigit, ProFormSelect, ProFormSwitch,
   ProFormTextArea,
 } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import Page from '@/components/Page';
-import { useAppStore, usePermission } from '@/stores/app';
-import { fmtTime } from '@/utils';
+import type { StatCardItem } from '@/components/StatCards';
+import { NEUTRAL, PALETTE, statColor } from '@/theme';
+import { usePermission } from '@/stores/app';
+import { fmtAgo, fmtTime } from '@/utils';
 import {
   listDatasources, listDatasourceTypes, getDatasourceType, createDatasource, updateDatasource,
   deleteDatasource, testDatasource, testDatasourceRaw, listDatasourceTables,
@@ -28,12 +30,7 @@ import type {
 } from '@/api/datasources';
 
 const { Text, Paragraph } = Typography;
-
-/** 调色板（契约限定 13 色） */
-const PALETTE = [
-  '#3687FF', '#45B4FF', '#003378', '#2D6FE4', '#EC673C', '#E86161',
-  '#FFC000', '#A2D73C', '#73DBFF', '#B5B5B6', '#DCDDDD',
-];
+const { useBreakpoint } = Grid;
 
 /** 连接参数字段的中文标签 */
 const FIELD_LABELS: Record<string, string> = {
@@ -92,15 +89,24 @@ type TypeMetaMap = Record<string, { name: string; conn: string; available: boole
 
 export default function DatasourcesPage() {
   const { message, modal } = App.useApp();
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
   const can = usePermission();
   const canWrite = can('datasource:write');
 
   const actionRef = useRef<ActionType>(null);
+  const [allList, setAllList] = useState<Datasource[]>([]);
   const [catalog, setCatalog] = useState<DsTypeCategory[]>([]);
   const [stats, setStats] = useState<DsStats | null>(null);
   const [typeMap, setTypeMap] = useState<TypeMetaMap>({});
+  const [loadError, setLoadError] = useState<string>('');
 
-  const [typeDrawerOpen, setTypeDrawerOpen] = useState(false);
+  /* ---------- 搜索筛选 ---------- */
+  const [keyword, setKeyword] = useState('');
+  const [typeFilter, setTypeFilter] = useState<string>('');
+
+  /* ---------- 详情 / 表结构 Modal ---------- */
+  const [typeModalOpen, setTypeModalOpen] = useState(false);
   const [tablesOpen, setTablesOpen] = useState(false);
   const [tablesRow, setTablesRow] = useState<Datasource | null>(null);
 
@@ -234,7 +240,6 @@ export default function DatasourcesPage() {
       if (v !== undefined) payload[k] = v;
     });
 
-    // API 类数据源的主机/库名由 options 派生，这里补齐便于列表展示
     const conn = typeMap[type]?.conn;
     if (conn === 'api') {
       if (!payload.host) {
@@ -330,7 +335,7 @@ export default function DatasourcesPage() {
   const handleDelete = (row: Datasource) => {
     modal.confirm({
       title: `删除数据源「${row.name}」`,
-      icon: <ExclamationCircleOutlined style={{ color: '#E86161' }} />,
+      icon: <ExclamationCircleOutlined style={{ color: PALETTE.red }} />,
       content: '删除后不可恢复；若已被项目或数据集引用将无法删除。',
       okText: '删除',
       okButtonProps: { danger: true },
@@ -345,45 +350,89 @@ export default function DatasourcesPage() {
     });
   };
 
+  /** V4.1 数据卡片（5 个：数据源总数 / MySQL 数 / 非 MySQL 数 / 连接失败数 / 最近更新） */
+  const statItems = useMemo<StatCardItem[]>(() => {
+    const total = allList.length;
+    const mysqlCount = allList.filter((d) => String(d.type || '').toLowerCase().includes('mysql')).length;
+    const nonMysqlCount = total - mysqlCount;
+    const failedCount = allList.filter((d) => d.lastTestOk === false).length;
+    const latestTime = allList.reduce<string>((acc, d) => {
+      const t = d.updatedAt || d.lastTestAt || d.createdAt || '';
+      return t && (!acc || new Date(t).getTime() > new Date(acc).getTime()) ? t : acc;
+    }, '');
+
+    return [
+      {
+        key: 'total',
+        label: '数据源总数',
+        value: total,
+        suffix: '个',
+        color: PALETTE.primary,
+        hint: stats ? `支持 ${stats.types} 种类型` : undefined,
+        onClick: () => setTypeFilter(''),
+      },
+      {
+        key: 'mysql',
+        label: 'MySQL 数',
+        value: mysqlCount,
+        suffix: '个',
+        color: PALETTE.cyan,
+        onClick: () => setTypeFilter('mysql'),
+      },
+      {
+        key: 'nonMysql',
+        label: '非 MySQL 数',
+        value: nonMysqlCount,
+        suffix: '个',
+        color: PALETTE.green,
+        hint: stats ? `含 API ${stats.apiTypes} 种` : undefined,
+      },
+      {
+        key: 'failed',
+        label: '连接失败数',
+        value: failedCount,
+        suffix: '个',
+        color: failedCount > 0 ? PALETTE.red : PALETTE.teal,
+        hint: failedCount > 0 ? '请检查连接参数' : '全部正常或待测试',
+      },
+      {
+        key: 'latest',
+        label: '最近更新',
+        value: latestTime ? fmtAgo(latestTime) : '暂无',
+        color: PALETTE.violet,
+        hint: latestTime ? fmtTime(latestTime, 'YYYY-MM-DD HH:mm') : undefined,
+      },
+    ];
+  }, [allList, stats]);
+
   /* ---------- 列定义 ---------- */
   const columns: ProColumns<Datasource>[] = [
     {
-      title: '关键词',
-      dataIndex: 'keyword',
-      hideInTable: true,
-      fieldProps: { placeholder: '名称 / 主机 / 库名 / 备注' },
-    },
-    {
-      title: '类型',
-      dataIndex: 'typeKey',
-      hideInTable: true,
-      valueType: 'select',
-      fieldProps: { options: typeOptions, showSearch: true, placeholder: '全部类型' },
-    },
-    {
       title: '数据源名称',
       dataIndex: 'name',
-      width: 230,
+      width: 220,
+      sorter: (a, b) => String(a.name || '').localeCompare(String(b.name || '')),
       render: (_, row) => (
         <Space size={6} wrap>
-          <DatabaseOutlined style={{ color: row.isDefault ? '#2D6FE4' : '#3687FF' }} />
-          <Text strong style={{ color: '#003378' }}>{row.name}</Text>
-          {row.isDefault ? <Tag color="#2D6FE4">默认</Tag> : null}
+          <DatabaseOutlined style={{ color: row.isDefault ? PALETTE.primaryDeep : PALETTE.primary }} />
+          <Text strong style={{ color: NEUTRAL.text }}>{row.name}</Text>
+          {row.isDefault ? <Tag color={PALETTE.primary}>默认</Tag> : null}
         </Space>
       ),
     },
     {
       title: '类型',
       dataIndex: 'type',
-      width: 200,
+      width: 190,
+      sorter: (a, b) => String(a.type || '').localeCompare(String(b.type || '')),
       render: (_, row) => {
         const meta = typeMap[row.type];
         return (
           <Space size={4} wrap>
-            <Tag color={meta?.conn === 'api' ? '#73DBFF' : '#45B4FF'} style={{ marginInlineEnd: 0 }}>
+            <Tag color={meta?.conn === 'api' ? PALETTE.cyan : PALETTE.primary} style={{ marginInlineEnd: 0 }}>
               {meta?.name || row.type}
             </Tag>
-            <Tag color={meta?.conn === 'api' ? '#B5B5B6' : '#A2D73C'} style={{ marginInlineEnd: 0 }}>
+            <Tag color={meta?.conn === 'api' ? PALETTE.gray : PALETTE.green} style={{ marginInlineEnd: 0 }}>
               {meta?.conn === 'api' ? 'API' : 'SQL'}
             </Tag>
           </Space>
@@ -393,7 +442,7 @@ export default function DatasourcesPage() {
     {
       title: '连接地址',
       dataIndex: 'host',
-      width: 270,
+      width: 250,
       ellipsis: true,
       render: (_, row) => (
         <Space size={2} direction="vertical" style={{ fontSize: 12.5 }}>
@@ -409,18 +458,19 @@ export default function DatasourcesPage() {
     {
       title: '连接状态',
       dataIndex: 'lastTestOk',
-      width: 170,
+      width: 150,
+      sorter: (a, b) => Number(a.lastTestOk ?? -1) - Number(b.lastTestOk ?? -1),
       render: (_, row) => {
         if (row.lastTestOk === null || row.lastTestOk === undefined) {
-          return <Tag color="#B5B5B6">未测试</Tag>;
+          return <Tag color={PALETTE.gray}>未测试</Tag>;
         }
         return row.lastTestOk ? (
           <Tooltip title={row.lastTestMsg || '连接正常'}>
-            <Tag icon={<CheckCircleFilled />} color="#A2D73C">正常</Tag>
+            <Tag icon={<CheckCircleFilled />} color={PALETTE.green}>正常</Tag>
           </Tooltip>
         ) : (
           <Tooltip title={row.lastTestMsg || '连接失败'}>
-            <Tag icon={<CloseCircleFilled />} color="#E86161">失败</Tag>
+            <Tag icon={<CloseCircleFilled />} color={PALETTE.red}>失败</Tag>
           </Tooltip>
         );
       },
@@ -429,6 +479,7 @@ export default function DatasourcesPage() {
       title: '启用',
       dataIndex: 'status',
       width: 90,
+      sorter: (a, b) => Number(a.status || 0) - Number(b.status || 0),
       render: (_, row) =>
         row.status ? <Badge status="processing" text="启用" /> : <Badge status="default" text="停用" />,
     },
@@ -436,6 +487,7 @@ export default function DatasourcesPage() {
       title: '最近测试',
       dataIndex: 'lastTestAt',
       width: 165,
+      sorter: (a, b) => new Date(a.lastTestAt || 0).getTime() - new Date(b.lastTestAt || 0).getTime(),
       render: (_, row) => <Text type="secondary" style={{ fontSize: 12.5 }}>{fmtTime(row.lastTestAt)}</Text>,
     },
     {
@@ -462,7 +514,7 @@ export default function DatasourcesPage() {
           items.push(<a key="edit" onClick={() => openEdit(row)}>编辑</a>);
           if (!row.isDefault) {
             items.push(
-              <a key="del" style={{ color: '#E86161' }} onClick={() => handleDelete(row)}>删除</a>
+              <a key="del" style={{ color: PALETTE.red }} onClick={() => handleDelete(row)}>删除</a>
             );
           }
         }
@@ -474,165 +526,182 @@ export default function DatasourcesPage() {
   return (
     <Page
       title="数据源"
-      subTitle="统一管理关系型数据库、数仓、NoSQL、消息队列、办公与云服务等 15 大类接入源"
+      search={
+        <>
+          <Select
+            allowClear
+            showSearch
+            optionFilterProp="label"
+            placeholder="类型筛选"
+            value={typeFilter || undefined}
+            onChange={(v) => setTypeFilter(v || '')}
+            options={typeOptions}
+            style={{ width: isMobile ? 150 : 200 }}
+          />
+          <Input.Search
+            allowClear
+            placeholder="搜索名称 / 主机 / 库名 / 备注"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            onSearch={(v) => setKeyword(v)}
+            style={{ width: isMobile ? 190 : 260 }}
+          />
+        </>
+      }
+      actions={
+        canWrite ? (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            新建数据源
+          </Button>
+        ) : undefined
+      }
       extra={
         <>
-          <Button icon={<AppstoreOutlined />} onClick={() => setTypeDrawerOpen(true)}>
+          <Button icon={<AppstoreOutlined />} onClick={() => setTypeModalOpen(true)}>
             类型目录{stats ? `（${stats.types}）` : ''}
           </Button>
           <Button icon={<ReloadOutlined />} onClick={() => { loadCatalog(); actionRef.current?.reload(); }}>
             刷新
           </Button>
-          {canWrite && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-              新建数据源
-            </Button>
-          )}
         </>
       }
+      stats={statItems}
     >
-      {/* 统计条 */}
-      {stats && (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-            gap: 12,
-            marginBottom: 16,
-          }}
-        >
-          {[
-            { label: '类型类别', value: stats.categories, color: '#3687FF' },
-            { label: '支持类型', value: stats.types, color: '#2D6FE4' },
-            { label: '可直接使用', value: stats.available, color: '#A2D73C' },
-            { label: '需装驱动', value: stats.unavailable, color: '#FFC000' },
-            { label: 'SQL 类', value: stats.sqlTypes, color: '#45B4FF' },
-            { label: 'API 类', value: stats.apiTypes, color: '#73DBFF' },
-          ].map((s) => (
-            <div
-              key={s.label}
-              style={{
-                border: '1px solid #DCDDDD',
-                borderRadius: 10,
-                padding: '12px 14px',
-                background: '#FFFFFF',
-              }}
-            >
-              <div style={{ fontSize: 12.5, color: 'rgba(0,51,120,.55)' }}>{s.label}</div>
-              <div style={{ fontSize: 22, fontWeight: 700, color: s.color, lineHeight: 1.3 }}>
-                {s.value}
-              </div>
-            </div>
-          ))}
-        </div>
+      {loadError && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          title="加载数据源列表失败"
+          description={loadError}
+          action={
+            <Button size="small" onClick={() => actionRef.current?.reload()}>
+              重试
+            </Button>
+          }
+        />
       )}
 
       <ProTable<Datasource, { keyword?: string; typeKey?: string }>
         rowKey="id"
         actionRef={actionRef}
         columns={columns}
-        scroll={{ x: 1280 }}
-        search={{ labelWidth: 'auto', defaultCollapsed: false }}
+        params={{ keyword, typeKey: typeFilter }}
+        scroll={{ x: 'max-content' }}
+        search={false}
         options={{ density: false, fullScreen: true, setting: true, reload: false }}
         pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 条` }}
         headerTitle="数据源列表"
+        locale={{ emptyText: <Empty description={keyword || typeFilter ? '没有符合条件的数据源' : '暂无数据源'} /> }}
         request={async (params) => {
-          const r = await listDatasources();
-          let list = r.list || [];
-          if (r.catalog) applyCatalog(r.catalog);
-          if (r.stats) setStats(r.stats);
-          const kw = (params.keyword || '').trim().toLowerCase();
-          if (kw) {
-            list = list.filter((d) =>
-              [d.name, d.host, d.database, d.user, d.remark, d.type]
-                .filter(Boolean)
-                .some((v) => String(v).toLowerCase().includes(kw))
-            );
+          setLoadError('');
+          try {
+            const r = await listDatasources();
+            let list = r.list || [];
+            setAllList(list);
+            if (r.catalog) applyCatalog(r.catalog);
+            if (r.stats) setStats(r.stats);
+            const kw = (params.keyword || '').trim().toLowerCase();
+            if (kw) {
+              list = list.filter((d) =>
+                [d.name, d.host, d.database, d.user, d.remark, d.type]
+                  .filter(Boolean)
+                  .some((v) => String(v).toLowerCase().includes(kw))
+              );
+            }
+            if (params.typeKey) list = list.filter((d) => d.type === params.typeKey);
+            return { data: list, total: list.length, success: true };
+          } catch (e) {
+            setLoadError(e instanceof Error ? e.message : '请求失败');
+            return { data: [], total: 0, success: false };
           }
-          if (params.typeKey) list = list.filter((d) => d.type === params.typeKey);
-          return { data: list, total: list.length, success: true };
         }}
       />
 
-      {/* ---------- 类型目录抽屉 ---------- */}
-      <Drawer
+      {/* ---------- 类型目录弹窗（Modal） ---------- */}
+      <Modal
         title="数据源类型目录"
-        open={typeDrawerOpen}
-        onClose={() => setTypeDrawerOpen(false)}
-        size={720}
+        open={typeModalOpen}
+        onCancel={() => setTypeModalOpen(false)}
+        footer={
+          <Button onClick={() => setTypeModalOpen(false)}>关闭</Button>
+        }
+        width={isMobile ? '94vw' : 780}
         destroyOnHidden
       >
         <Paragraph type="secondary" style={{ fontSize: 12.5 }}>
           共 {stats?.categories ?? 0} 个类别、{stats?.types ?? 0} 种类型。标记「需驱动」的类型需先在服务端安装对应 npm 驱动包后才能连通。
         </Paragraph>
-        <Collapse
-          defaultActiveKey={catalog.slice(0, 2).map((c) => c.key)}
-          items={catalog.map((c, ci) => ({
-            key: c.key,
-            label: (
-              <Space>
-                <span style={{ fontSize: 15 }}>{c.icon}</span>
-                <Text strong>{c.name}</Text>
-                <Tag color={PALETTE[ci % PALETTE.length]} style={{ color: '#FFFFFF' }}>
-                  {c.types?.length || 0} 种
-                </Tag>
-              </Space>
-            ),
-            children: (
-              <>
-                <Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 10 }}>
-                  {c.desc}
-                </Paragraph>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
-                  {(c.types || []).map((t) => (
-                    <div
-                      key={t.key}
-                      style={{
-                        border: '1px solid #DCDDDD',
-                        borderRadius: 8,
-                        padding: '8px 10px',
-                        background: t.available ? '#FFFFFF' : 'rgba(181,181,182,.10)',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
-                        <Text strong style={{ fontSize: 13, color: '#003378' }}>{t.name}</Text>
-                        {t.available ? (
-                          <Tag color="#A2D73C" style={{ marginInlineEnd: 0, fontSize: 11 }}>可用</Tag>
-                        ) : (
-                          <Tag color="#FFC000" style={{ marginInlineEnd: 0, fontSize: 11 }}>需驱动</Tag>
+        <div style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: 4 }}>
+          <Collapse
+            defaultActiveKey={catalog.slice(0, 2).map((c) => c.key)}
+            items={catalog.map((c, ci) => ({
+              key: c.key,
+              label: (
+                <Space>
+                  <span style={{ fontSize: 15 }}>{c.icon}</span>
+                  <Text strong style={{ color: NEUTRAL.text }}>{c.name}</Text>
+                  <Tag color={statColor(ci)} style={{ color: NEUTRAL.textInverse }}>
+                    {c.types?.length || 0} 种
+                  </Tag>
+                </Space>
+              ),
+              children: (
+                <>
+                  <Paragraph type="secondary" style={{ fontSize: 12.5, marginBottom: 10 }}>
+                    {c.desc}
+                  </Paragraph>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 8 }}>
+                    {(c.types || []).map((t) => (
+                      <div
+                        key={t.key}
+                        style={{
+                          border: `1px solid ${NEUTRAL.border}`,
+                          borderRadius: 8,
+                          padding: '8px 10px',
+                          background: t.available ? NEUTRAL.surface : NEUTRAL.surfaceAlt,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 6 }}>
+                          <Text strong style={{ fontSize: 13, color: NEUTRAL.text }}>{t.name}</Text>
+                          {t.available ? (
+                            <Tag color={PALETTE.green} style={{ marginInlineEnd: 0, fontSize: 11 }}>可用</Tag>
+                          ) : (
+                            <Tag color={PALETTE.yellow} style={{ marginInlineEnd: 0, fontSize: 11 }}>需驱动</Tag>
+                          )}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: NEUTRAL.textSecondary, marginTop: 4 }}>
+                          {t.conn === 'api' ? <ApiOutlined /> : <DatabaseOutlined />} {t.conn.toUpperCase()}
+                          {t.defaultPort ? ` · ${t.defaultPort}` : ''}
+                        </div>
+                        {t.driverPkg && (
+                          <div style={{ fontSize: 11, color: NEUTRAL.textTertiary, marginTop: 2 }}>{t.driverPkg}</div>
                         )}
                       </div>
-                      <div style={{ fontSize: 11.5, color: 'rgba(0,51,120,.55)', marginTop: 4 }}>
-                        {t.conn === 'api' ? <ApiOutlined /> : <DatabaseOutlined />} {t.conn.toUpperCase()}
-                        {t.defaultPort ? ` · ${t.defaultPort}` : ''}
-                      </div>
-                      {t.driverPkg && (
-                        <div style={{ fontSize: 11, color: '#B5B5B6', marginTop: 2 }}>{t.driverPkg}</div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </>
-            ),
-          }))}
-        />
-      </Drawer>
+                    ))}
+                  </div>
+                </>
+              ),
+            }))}
+          />
+        </div>
+      </Modal>
 
-      {/* ---------- 表结构浏览 ---------- */}
-      <TablesDrawer open={tablesOpen} row={tablesRow} onClose={() => setTablesOpen(false)} />
+      {/* ---------- 表结构浏览弹窗（Modal） ---------- */}
+      <TablesModal open={tablesOpen} row={tablesRow} onClose={() => setTablesOpen(false)} />
 
-      {/* ---------- 新建 / 编辑 ---------- */}
-      <DrawerForm<DsFormValues>
+      {/* ---------- 新建 / 编辑（ModalForm） ---------- */}
+      <ModalForm<DsFormValues>
         title={editing ? `编辑数据源 · ${editing.name}` : '新建数据源'}
         open={formOpen}
         onOpenChange={(o) => { setFormOpen(o); if (!o) setTestResult(null); }}
         formRef={formRef}
-        size={620}
+        width={isMobile ? '94vw' : 640}
         initialValues={initialValues}
         onFinish={handleSubmit}
         submitter={{
           searchConfig: { submitText: editing ? '保存' : '创建', resetText: '取消' },
-          render: (props, dom) => [
+          render: (_props, dom) => [
             ...dom,
             <Button key="test" icon={<ThunderboltOutlined />} loading={testing} onClick={handleTestInForm}>
               测试连接
@@ -645,7 +714,7 @@ export default function DatasourcesPage() {
             loadTypeDetail(changed.type);
           }
         }}
-        drawerProps={{ destroyOnHidden: true }}
+        modalProps={{ destroyOnHidden: true }}
       >
         <Alert
           type="info"
@@ -749,16 +818,16 @@ export default function DatasourcesPage() {
             title={testResult.text}
           />
         )}
-      </DrawerForm>
+      </ModalForm>
     </Page>
   );
 }
 
 /* ══════════════════════════════════════════════════════════
- *  表结构浏览抽屉：数据表列表 + 字段
+ *  表结构浏览弹窗：数据表列表 + 字段（Modal）
  * ══════════════════════════════════════════════════════════ */
 
-function TablesDrawer({
+function TablesModal({
   open,
   row,
   onClose,
@@ -767,6 +836,8 @@ function TablesDrawer({
   row: Datasource | null;
   onClose: () => void;
 }) {
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
   const [loading, setLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [tables, setTables] = useState<DsTableInfo[]>([]);
@@ -811,22 +882,23 @@ function TablesDrawer({
   }, [open, row, active]);
 
   return (
-    <Drawer
+    <Modal
       title={`表结构 · ${row?.name || ''}`}
       open={open}
-      onClose={onClose}
-      size={880}
+      onCancel={onClose}
+      footer={<Button onClick={onClose}>关闭</Button>}
+      width={isMobile ? '94vw' : 900}
       destroyOnHidden
     >
       <Space style={{ marginBottom: 12 }} wrap>
         <Input
           allowClear
-          prefix={<SearchOutlined style={{ color: '#B5B5B6' }} />}
+          prefix={<SearchOutlined style={{ color: NEUTRAL.textTertiary }} />}
           placeholder="搜索表名"
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           onPressEnter={() => loadTables(keyword)}
-          style={{ width: 260 }}
+          style={{ width: isMobile ? 200 : 260 }}
         />
         <Button onClick={() => loadTables(keyword)} loading={loading}>搜索</Button>
         <Text type="secondary" style={{ fontSize: 12.5 }}>共 {tables.length} 张表</Text>
@@ -834,8 +906,8 @@ function TablesDrawer({
 
       {error && <Alert type="error" showIcon title={error} style={{ marginBottom: 12 }} />}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 12 }}>
-        <div style={{ border: '1px solid #DCDDDD', borderRadius: 10, maxHeight: 520, overflow: 'auto' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '260px 1fr', gap: 12 }}>
+        <div style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10, maxHeight: isMobile ? 220 : 460, overflow: 'auto' }}>
           {tables.length === 0 ? (
             <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有可读取的数据表" style={{ margin: '40px 0' }} />
           ) : (
@@ -848,17 +920,17 @@ function TablesDrawer({
                   style={{
                     padding: '9px 12px',
                     cursor: 'pointer',
-                    borderBottom: '1px solid #DCDDDD',
-                    background: on ? 'rgba(54,135,255,.08)' : 'transparent',
-                    color: on ? '#2D6FE4' : '#003378',
+                    borderBottom: `1px solid ${NEUTRAL.borderSubtle}`,
+                    background: on ? NEUTRAL.surfaceSunken : 'transparent',
+                    color: on ? PALETTE.primary : NEUTRAL.text,
                     fontWeight: on ? 600 : 400,
                     fontSize: 13,
                   }}
                 >
-                  <TableOutlined style={{ marginRight: 6, color: on ? '#2D6FE4' : '#B5B5B6' }} />
+                  <TableOutlined style={{ marginRight: 6, color: on ? PALETTE.primary : NEUTRAL.textTertiary }} />
                   {t.name}
                   {t.comment ? (
-                    <div style={{ fontSize: 11.5, color: 'rgba(0,51,120,.45)', marginTop: 2 }}>{t.comment}</div>
+                    <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, marginTop: 2 }}>{t.comment}</div>
                   ) : null}
                 </div>
               );
@@ -866,12 +938,12 @@ function TablesDrawer({
           )}
         </div>
 
-        <div style={{ border: '1px solid #DCDDDD', borderRadius: 10, padding: 12, minHeight: 200 }}>
+        <div style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10, padding: 12, minHeight: 200 }}>
           {!active ? (
-            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请选择左侧数据表" style={{ margin: '40px 0' }} />
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="请选择数据表" style={{ margin: '40px 0' }} />
           ) : (
             <>
-              <Text strong style={{ color: '#003378' }}>{active}</Text>
+              <Text strong style={{ color: NEUTRAL.text }}>{active}</Text>
               <Text type="secondary" style={{ fontSize: 12.5, marginLeft: 8 }}>{columns.length} 个字段</Text>
               <Table<DsColumnInfo>
                 size="small"
@@ -879,7 +951,7 @@ function TablesDrawer({
                 style={{ marginTop: 10 }}
                 loading={colLoading}
                 pagination={false}
-                scroll={{ y: 400 }}
+                scroll={{ x: 'max-content', y: 360 }}
                 dataSource={columns}
                 columns={[
                   {
@@ -900,6 +972,6 @@ function TablesDrawer({
           )}
         </div>
       </div>
-    </Drawer>
+    </Modal>
   );
 }

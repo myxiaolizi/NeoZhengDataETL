@@ -1,24 +1,29 @@
-/** 字段配置页 / 字段面板
+/** 字段配置页 / 字段面板（V4.1 页面规范 + 配色令牌化）
  *
  * 支持：粘贴简道云「字段对照表」批量解析导入、单字段编辑、批量设置解析方式、
  *       结构同步（重建列 + 回填解析值）、字段删除。
  * 路由页：/projects/:id/fields
  * 内嵌：项目详情 Tabs 的「字段配置」
+ *
+ * V4.1 变更：导入面板由右侧 Drawer 改为大尺寸 Modal（禁止抽屉承载业务内容）。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, App, Button, Card, Col, Divider, Drawer, Empty, Form, Grid, Input, Modal,
-  Popconfirm, Radio, Result, Row, Select, Space, Statistic, Switch, Table, Tag, Tooltip,
+  Alert, App, Button, Card, Col, Divider, Empty, Form, Grid, Input, Modal,
+  Popconfirm, Radio, Result, Row, Select, Space, Switch, Table, Tag, Tooltip,
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
-  CloudSyncOutlined, DeleteOutlined, EditOutlined, ImportOutlined, ReloadOutlined,
-  ThunderboltOutlined,
+  ArrowLeftOutlined, CloudSyncOutlined, DeleteOutlined, EditOutlined, ImportOutlined,
+  ReloadOutlined, ThunderboltOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useParams } from 'react-router-dom';
 import Page from '@/components/Page';
-import { useAppStore, usePermission } from '@/stores/app';
+import StatCards from '@/components/StatCards';
+import type { StatCardItem } from '@/components/StatCards';
+import { usePermission } from '@/stores/app';
+import { NEUTRAL, PALETTE, SHADOW } from '@/theme';
 import {
   bulkSetParseMode, deleteField, fetchFieldModes, fetchProjectFields, importFields,
   parseFields, syncFields, updateField,
@@ -38,6 +43,14 @@ const EXTRA_MODES: ParseModeDef[] = [
 ];
 
 const FIELD_TYPES = ['string', 'number', 'bool', 'json', 'array', 'object', 'date'];
+
+/** 统一卡片外框 */
+const cardStyle: React.CSSProperties = {
+  background: NEUTRAL.surface,
+  borderColor: NEUTRAL.border,
+  borderRadius: 10,
+  boxShadow: SHADOW.card,
+};
 
 interface FieldsPanelProps {
   projectId: number;
@@ -164,7 +177,7 @@ function FieldEditModal({
                   return (
                     <div>
                       <div style={{ fontSize: 13 }}>{def?.name}</div>
-                      <div style={{ fontSize: 11.5, color: '#B5B5B6' }}>{def?.desc}</div>
+                      <div style={{ fontSize: 11.5, color: NEUTRAL.textQuaternary }}>{def?.desc}</div>
                     </div>
                   );
                 }}
@@ -212,7 +225,7 @@ function FieldEditModal({
           <Alert
             type="info"
             showIcon
-            message={`当前数据表共有 ${columns.length} 个列`}
+            title={`当前数据表共有 ${columns.length} 个列`}
             description="新增字段请使用「解析字段表 → 导入」或「同步结构」，后端会自动建列。"
           />
         )}
@@ -242,8 +255,8 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [bulkMode, setBulkMode] = useState<string>('none');
 
-  // 导入抽屉
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // 导入弹窗（V4.1：Modal 取代原右侧 Drawer）
+  const [importOpen, setImportOpen] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [parsing, setParsing] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -359,7 +372,7 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
     try {
       await importFields(projectId, parseResult.fields, importMode);
       message.success(`已导入 ${parseResult.fields.length} 个字段定义`);
-      setDrawerOpen(false);
+      setImportOpen(false);
       setPasteText('');
       setParseResult(null);
       await load();
@@ -385,13 +398,23 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
       key: 'field_name',
       width: 190,
       fixed: 'left',
+      sorter: (a, b) => String(a.field_name || '').localeCompare(String(b.field_name || '')),
       render: (_v, row) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%' }}>
-          <span style={{ color: '#003378', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <span style={{ color: NEUTRAL.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {row.field_name}
           </span>
-          {Number(row.is_system) === 1 && <Tag color="#73DBFF" style={{ fontSize: 11 }}>系统</Tag>}
-          {Number(row.enabled) === 0 && <Tag color="#B5B5B6" style={{ fontSize: 11 }}>停用</Tag>}
+          {Number(row.is_system) === 1 && (
+            <Tag
+              style={{
+                fontSize: 11, margin: 0, background: NEUTRAL.surfaceSunken,
+                border: `1px solid ${NEUTRAL.border}`, color: PALETTE.primaryDeep,
+              }}
+            >
+              系统
+            </Tag>
+          )}
+          {Number(row.enabled) === 0 && <Tag color={PALETTE.gray} style={{ fontSize: 11, margin: 0 }}>停用</Tag>}
         </span>
       ),
     },
@@ -416,7 +439,7 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
       dataIndex: 'field_type',
       key: 'field_type',
       width: 88,
-      render: (v) => <Tag style={{ fontSize: 11 }}>{String(v || '-')}</Tag>,
+      render: (v) => <Tag style={{ fontSize: 11, margin: 0 }}>{String(v || '-')}</Tag>,
     },
     {
       title: '解析方式',
@@ -455,8 +478,8 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
       render: (v) => {
         const n = Number(v || 0);
         return n > 0
-          ? <span style={{ color: '#2D6FE4', fontWeight: 600 }}>{fmtNum(n)}</span>
-          : <span style={{ color: '#B5B5B6' }}>0</span>;
+          ? <span style={{ color: PALETTE.primary, fontWeight: 600 }}>{fmtNum(n)}</span>
+          : <span style={{ color: NEUTRAL.textQuaternary }}>0</span>;
       },
     },
     {
@@ -514,7 +537,9 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
       title: '状态',
       key: 'exists',
       width: 100,
-      render: (_v, row) => (row.exists ? <Tag color="#45B4FF">已有列</Tag> : <Tag color="#A2D73C">新列</Tag>),
+      render: (_v, row) => (row.exists
+        ? <Tag color={PALETTE.cyan} style={{ margin: 0 }}>已有列</Tag>
+        : <Tag color={PALETTE.green} style={{ margin: 0 }}>新列</Tag>),
     },
     {
       title: '已有数据',
@@ -549,40 +574,29 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
 
   const parsedCount = fields.filter((f) => (f.parse_mode || 'none') !== 'none').length;
   const emptyCount = fields.filter((f) => Number(f.rows || 0) === 0).length;
+  const systemCount = fields.filter((f) => Number(f.is_system) === 1).length;
+
+  const statItems: StatCardItem[] = [
+    { key: 'defs', label: '字段定义', value: fmtNum(fields.length), suffix: '个', color: PALETTE.primary, hint: `系统字段 ${systemCount} 个` },
+    { key: 'parsed', label: '已配置解析', value: fmtNum(parsedCount), suffix: '个', color: PALETTE.green, hint: fields.length ? `占比 ${Math.round((parsedCount / fields.length) * 100)}%` : '暂无字段' },
+    { key: 'empty', label: '无数据字段', value: fmtNum(emptyCount), suffix: '个', color: PALETTE.yellow, hint: '尚未回填任何行' },
+    { key: 'cols', label: '数据表列数', value: fmtNum(columns.length), suffix: '列', color: PALETTE.orange, hint: '同步结构可补建缺失列' },
+  ];
 
   return (
     <div>
-      <Row gutter={[12, 12]}>
-        <Col xs={12} md={6}>
-          <Card variant="outlined" style={{ borderColor: '#DCDDDD', borderRadius: 10 }} styles={{ body: { padding: 12 } }}>
-            <Statistic title="字段定义" value={fields.length} styles={{ content: { color: '#2D6FE4', fontSize: 20 } }} />
-          </Card>
-        </Col>
-        <Col xs={12} md={6}>
-          <Card variant="outlined" style={{ borderColor: '#DCDDDD', borderRadius: 10 }} styles={{ body: { padding: 12 } }}>
-            <Statistic title="已配置解析" value={parsedCount} styles={{ content: { color: '#A2D73C', fontSize: 20 } }} />
-          </Card>
-        </Col>
-        <Col xs={12} md={6}>
-          <Card variant="outlined" style={{ borderColor: '#DCDDDD', borderRadius: 10 }} styles={{ body: { padding: 12 } }}>
-            <Statistic title="无数据字段" value={emptyCount} styles={{ content: { color: '#FFC000', fontSize: 20 } }} />
-          </Card>
-        </Col>
-        <Col xs={12} md={6}>
-          <Card variant="outlined" style={{ borderColor: '#DCDDDD', borderRadius: 10 }} styles={{ body: { padding: 12 } }}>
-            <Statistic title="数据表列数" value={columns.length} styles={{ content: { color: '#EC673C', fontSize: 20 } }} />
-          </Card>
-        </Col>
-      </Row>
+      <div style={{ marginBottom: 12 }}>
+        <StatCards items={statItems} />
+      </div>
 
       <Card
         variant="outlined"
-        style={{ borderColor: '#DCDDDD', borderRadius: 12, marginTop: 12 }}
+        style={cardStyle}
         styles={{ body: { padding: isMobile ? 12 : 14 } }}
-        title={<span style={{ fontSize: 14, fontWeight: 600, color: '#003378' }}>字段列表</span>}
+        title={<span style={{ fontSize: 14, fontWeight: 600, color: NEUTRAL.text }}>字段列表</span>}
         extra={
           <Space size={8} wrap>
-            <Button icon={<ImportOutlined />} onClick={() => setDrawerOpen(true)}>解析字段表</Button>
+            <Button icon={<ImportOutlined />} onClick={() => setImportOpen(true)}>解析字段表</Button>
             <Button icon={<CloudSyncOutlined />} loading={syncLoading} onClick={doSync}>同步结构</Button>
             <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void load()}>刷新</Button>
           </Space>
@@ -591,7 +605,7 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
         {selectedKeys.length > 0 && (
           <>
             <Space size={8} wrap style={{ marginBottom: 10 }}>
-              <Tag color="#3687FF">已选 {selectedKeys.length} 个字段</Tag>
+              <Tag color={PALETTE.primary} style={{ margin: 0 }}>已选 {selectedKeys.length} 个字段</Tag>
               <Select
                 size="small"
                 style={{ width: 200 }}
@@ -625,16 +639,17 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
         />
       </Card>
 
-      {/* ── 导入抽屉 ── */}
-      <Drawer
-        open={drawerOpen}
-        onClose={() => setDrawerOpen(false)}
-        size={isMobile ? '100%' : 780}
+      {/* ── 解析并导入字段表：Modal（V4.1 禁止 Drawer 承载业务内容） ── */}
+      <Modal
+        open={importOpen}
+        onCancel={() => setImportOpen(false)}
         title="解析并导入字段表"
+        width={isMobile ? '96%' : 900}
         destroyOnHidden
-        extra={
+        styles={{ body: { maxHeight: '70vh', overflowY: 'auto', paddingRight: 4 } }}
+        footer={
           <Space>
-            <Button onClick={() => setDrawerOpen(false)}>取消</Button>
+            <Button onClick={() => setImportOpen(false)}>取消</Button>
             <Button
               type="primary"
               disabled={!parseResult?.fields?.length}
@@ -650,7 +665,7 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
           type="info"
           showIcon
           style={{ marginBottom: 12 }}
-          message="从简道云「表单设置 → 字段对照表」整表复制后粘贴到下方"
+          title="从简道云「表单设置 → 字段对照表」整表复制后粘贴到下方"
           description="支持表头为「字段名称 / 字段ID / 字段类型 / 说明」的表格（Tab 分隔、Markdown 表格或从 Excel 复制均可）。系统字段会被自动识别。"
         />
 
@@ -682,23 +697,25 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
         {parseResult && (
           <div style={{ marginTop: 14 }}>
             <Space size={8} wrap style={{ marginBottom: 8 }}>
-              <Tag color="#3687FF">共 {parseResult.total} 个</Tag>
-              <Tag color="#A2D73C">新增列 {parseResult.newCount} 个</Tag>
-              <Tag color="#73DBFF">系统字段 {parseResult.systemCount} 个</Tag>
-              {parseResult.skipped > 0 && <Tag color="#B5B5B6">跳过 {parseResult.skipped} 行</Tag>}
+              <Tag color={PALETTE.primary} style={{ margin: 0 }}>共 {parseResult.total} 个</Tag>
+              <Tag color={PALETTE.green} style={{ margin: 0 }}>新增列 {parseResult.newCount} 个</Tag>
+              <Tag color={PALETTE.cyan} style={{ margin: 0 }}>系统字段 {parseResult.systemCount} 个</Tag>
+              {parseResult.skipped > 0 && (
+                <Tag color={PALETTE.gray} style={{ margin: 0 }}>跳过 {parseResult.skipped} 行</Tag>
+              )}
             </Space>
             {parseResult.errors.map((e) => (
-              <Alert key={e} type="error" showIcon message={e} style={{ marginBottom: 6 }} />
+              <Alert key={e} type="error" showIcon title={e} style={{ marginBottom: 6 }} />
             ))}
             {parseResult.warnings.map((w) => (
-              <Alert key={w} type="warning" showIcon message={w} style={{ marginBottom: 6 }} />
+              <Alert key={w} type="warning" showIcon title={w} style={{ marginBottom: 6 }} />
             ))}
             <Table<ParsedField>
               rowKey="fieldKey"
               size="small"
               columns={previewColumns}
               dataSource={parseResult.fields}
-              scroll={{ x: 760, y: 420 }}
+              scroll={{ x: 760 }}
               pagination={{ pageSize: 50, showSizeChanger: false, showTotal: (t) => `共 ${t} 个字段` }}
             />
           </div>
@@ -712,7 +729,7 @@ export function FieldsPanel({ projectId, onChanged }: FieldsPanelProps) {
             {Object.keys(systemFields).length > 0 ? `，系统内置字段 ${Object.keys(systemFields).length} 个。` : '。'}
           </Text>
         </Tooltip>
-      </Drawer>
+      </Modal>
 
       <FieldEditModal
         open={editOpen}
@@ -749,8 +766,11 @@ export default function ProjectFieldsPage() {
   return (
     <Page
       title="字段配置"
-      subTitle="把简道云字段映射为数据库列，并配置 JSON / 数组字段的解析方式"
-      extra={<Button onClick={() => navigate(`/projects/${projectId}`)}>返回项目详情</Button>}
+      actions={
+        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate(`/projects/${projectId}`)}>
+          返回项目详情
+        </Button>
+      }
     >
       <FieldsPanel projectId={projectId} />
     </Page>

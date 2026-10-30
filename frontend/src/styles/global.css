@@ -1,10 +1,53 @@
-/** 全局样式：仅做必要的 reset 与移动端适配，组件样式全部交给 Ant Design */
+/**
+ * 全局样式（V4.1）
+ *
+ * 原则：组件样式交给 Ant Design，这里只做三件事
+ *  1) 必要的 reset / 字体 / 移动端适配；
+ *  2) 布局外壳（顶部单栏、标签栏、蓝底白字侧栏、底部收起按钮）的样式补充
+ *     —— 这些是 antd 没有现成类名、只能靠 CSS 覆盖的地方；
+ *  3) 中康看板专用规则（.board-root / html[data-theme='dark']），**保持原样不动**。
+ *
+ * 下面的 --v41-* 变量与 src/theme.ts 的设计令牌一一对应（CSS 里只能写字面量，
+ * 所以在此集中定义一次，规则里统一引用变量，避免散落硬编码色值）。
+ * 改色请改 theme.ts + 这里的变量，两边保持一致。
+ */
+:root {
+  /* 品牌色 */
+  --v41-primary: #1668E3;
+  --v41-primary-deep: #0E4AA5;
+  --v41-primary-light: #3B82F6;
+  --v41-primary-soft: #DBEAFE;
+  /* 中性色：底 / 面 / 线 / 字 */
+  --v41-page-bg: #EEF3FB;
+  --v41-surface: #FFFFFF;
+  --v41-surface-alt: #F5F8FD;
+  --v41-surface-sunken: #EAF1FB;
+  --v41-border: #CFDEF0;
+  --v41-border-strong: #9DBBE4;
+  --v41-border-subtle: #E1EAF6;
+  --v41-text: #0B1F3B;
+  --v41-text-secondary: #33507A;
+  --v41-text-tertiary: #5D789F;
+  --v41-text-quaternary: #8FA5C2;
+  --v41-red: #D92D20;
+  /* 侧栏：蓝底白字 */
+  --v41-sider-from: #0C3F96;
+  --v41-sider-to: #0A3477;
+  --v41-sider-text: rgba(255, 255, 255, .90);
+  --v41-sider-hover: rgba(255, 255, 255, .12);
+  --v41-sider-selected: #2E7BF0;
+  --v41-sider-group: rgba(255, 255, 255, .52);
+  --v41-sider-divider: rgba(255, 255, 255, .16);
+}
+
+/* ---------------- reset / 基础 ---------------- */
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; padding: 0; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
-  background: #FFFFFF;
+  /* 页面底色统一为浅蓝灰，与纯白卡片形成「底 / 卡」分层 */
+  background: var(--v41-page-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -21,11 +64,398 @@ pre, code {
   font-family: 'SF Mono', 'Fira Code', Consolas, Menlo, monospace;
 }
 
-/* 滚动条轻量化 */
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { background: rgba(0, 51, 120, .18); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(0, 51, 120, .32); }
-::-webkit-scrollbar-track { background: transparent; }
-
 /* ProComponents 表格容器自适应 */
 .ant-pro-table-list-toolbar-container { padding-block: 12px; }
+
+/* ══════════════════════════════════════════════════════════
+ * 滚动条
+ *  - 内容区（浅色底）：细、可见但不抢眼
+ *  - 侧栏 / 抽屉（深蓝底）：深色适配，用白色低透明度滑块
+ * ══════════════════════════════════════════════════════════ */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb {
+  background: #C3D5EC;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--v41-border-strong);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* 深色侧栏滚动条（Firefox + WebKit） */
+.v41-sider-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, .30) transparent;
+}
+.v41-sider-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+.v41-sider-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, .26);
+  border: none;
+  border-radius: 3px;
+}
+.v41-sider-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .44); }
+
+/* ══════════════════════════════════════════════════════════
+ * 顶部单栏（Header）：左标签页 + 右用户名，无面包屑
+ * 标签栏不再单独占一行，样式由 BasicLayout 的 Header 承载。
+ * ══════════════════════════════════════════════════════════ */
+.v41-header-user {
+  transition: background .16s ease;
+}
+.v41-header-user:hover { background: var(--v41-surface-alt); }
+
+/* ---------------- 标签栏（内嵌 Header） ---------------- */
+.v41-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+.v41-tabs .ant-tabs { min-width: 0; }
+/* 去掉 antd Tabs 默认的下边框与额外留白，避免在 Header 里多出一条灰线。
+   antd 自己的规则是 `.ant-tabs-top > .ant-tabs-nav::before`，选择器权重与我们相同，
+   而 antd 的样式是运行时注入的、可能在 global.css 之后，所以这里必须 !important。 */
+.v41-tabs .ant-tabs-nav { margin: 0 !important; }
+.v41-tabs .ant-tabs-nav::before { display: none !important; }
+
+/* 标签做成圆角胶囊：默认 / hover / 选中三态分明 */
+.v41-tabs .ant-tabs-tab {
+  height: 28px;
+  margin: 0 !important;
+  padding: 0 10px !important;
+  background: var(--v41-surface-alt) !important;
+  border: 1px solid var(--v41-border) !important;
+  border-radius: 7px !important;
+  transition: background .16s ease, border-color .16s ease;
+}
+.v41-tabs .ant-tabs-tab + .ant-tabs-tab { margin-left: 4px !important; }
+.v41-tabs .ant-tabs-tab:hover {
+  background: var(--v41-surface-sunken) !important;
+  border-color: var(--v41-border-strong) !important;
+}
+.v41-tabs .ant-tabs-tab.ant-tabs-tab-active {
+  background: rgba(22, 104, 227, .10) !important;
+  border-color: var(--v41-primary) !important;
+}
+.v41-tabs .ant-tabs-tab .ant-tabs-tab-btn {
+  color: var(--v41-text-secondary) !important;
+  font-size: 12.5px;
+  line-height: 24px;
+}
+.v41-tabs .ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--v41-primary-deep) !important;
+  font-weight: 600;
+}
+.v41-tabs .ant-tabs-nav-more { color: var(--v41-text-tertiary); }
+.v41-tabs-actions { flex-shrink: 0; padding-left: 2px; }
+
+/* 标签文本 + 关闭按钮 */
+.v41-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 1px;
+  user-select: none;
+}
+.v41-tab-close {
+  font-size: 10px;
+  opacity: .50;
+  transition: opacity .15s ease, color .15s ease;
+}
+.v41-tab-close:hover { opacity: 1; color: var(--v41-red); }
+
+/* ══════════════════════════════════════════════════════════
+ * 侧栏（蓝底白字）
+ * 背景渐变由 BasicLayout 内联注入（SIDER.bgFrom → SIDER.bgTo），
+ * 这里只补 antd 令牌覆盖不到的细节：选中竖条、分组标题、底部按钮。
+ * ══════════════════════════════════════════════════════════ */
+.v41-sider .ant-menu-dark .ant-menu-item,
+.v41-sider .ant-menu-dark .ant-menu-item-group-title {
+  position: relative;
+}
+
+/* 分组标题：小号、浅白、不喧宾夺主 */
+.v41-sider .ant-menu-item-group-title {
+  padding: 10px 16px 4px !important;
+  color: var(--v41-sider-group) !important;
+  font-size: 11px;
+  letter-spacing: .4px;
+}
+
+/* 菜单项：白字 / 半透明白底 hover */
+.v41-sider .ant-menu-dark .ant-menu-item {
+  color: var(--v41-sider-text) !important;
+}
+.v41-sider .ant-menu-dark .ant-menu-item .anticon {
+  color: inherit !important;
+}
+.v41-sider .ant-menu-dark .ant-menu-item:hover {
+  background: var(--v41-sider-hover) !important;
+  color: var(--v41-surface) !important;
+}
+/* 选中项：实心蓝 + 左侧 3px 白色竖条（用户明确要求的「选中有标识」） */
+.v41-sider .ant-menu-dark .ant-menu-item-selected {
+  background: var(--v41-sider-selected) !important;
+  color: var(--v41-surface) !important;
+}
+/* 选中项被 hover 时保持实心蓝（上面的 :hover 规则权重更高，需要单独压住） */
+.v41-sider .ant-menu-dark .ant-menu-item-selected:hover {
+  background: var(--v41-sider-selected) !important;
+  color: var(--v41-surface) !important;
+}
+.v41-sider .ant-menu-dark .ant-menu-item-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  background: var(--v41-surface);
+  border-radius: 0 2px 2px 0;
+}
+
+/* 侧栏底部「收起菜单」按钮 */
+.v41-sider-collapse.ant-btn {
+  color: var(--v41-sider-text) !important;
+  transition: background .16s ease, color .16s ease;
+}
+.v41-sider-collapse.ant-btn:hover {
+  background: var(--v41-sider-hover) !important;
+  color: var(--v41-surface) !important;
+}
+.v41-sider-collapse.ant-btn:active {
+  background: rgba(255, 255, 255, .20) !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+ * V5.0 中康智能体客户看板
+ *
+ * 看板根节点 `.board-root` 通过内联样式注入 --bg-page / --bg-card /
+ * --text-main / --border 等 CSS 变量，并带 data-theme="dark|light"。
+ * 下面所有规则都限定在 .board-root 内，不影响平台其它页面。
+ * ══════════════════════════════════════════════════════════ */
+
+/* ---- 超期行：左侧红条 + 淡红底 ---- */
+.board-row-overdue > td:first-child {
+  box-shadow: inset 3px 0 0 #E86161;
+}
+.board-row-overdue > td {
+  background: rgba(232, 97, 97, .07) !important;
+}
+
+/* ---- 暗色模式 ---- */
+.board-root[data-theme='dark'] .ant-card {
+  background: var(--bg-card, #0E2038);
+  color: var(--text-main, #DCDDDD);
+}
+.board-root[data-theme='dark'] .ant-card-head {
+  color: var(--text-main, #DCDDDD);
+  background: transparent;
+  border-bottom-color: var(--border, rgba(115, 219, 255, .22));
+}
+.board-root[data-theme='dark'] .ant-card-head-title,
+.board-root[data-theme='dark'] .ant-card-extra {
+  color: var(--text-main, #DCDDDD);
+}
+
+/* 按钮：暗色下文字/边框必须跟随变量，否则是深蓝字压在深色底上 */
+.board-root[data-theme='dark'] .ant-btn-default {
+  background: var(--bg-card-2, #12263F);
+  border-color: var(--border, rgba(115, 219, 255, .22));
+  color: var(--text-main, #DCDDDD);
+}
+.board-root[data-theme='dark'] .ant-btn-default:hover {
+  border-color: var(--border-strong, rgba(115, 219, 255, .38));
+  color: #45B4FF;
+}
+.board-root[data-theme='dark'] .ant-btn-text,
+.board-root[data-theme='dark'] .ant-btn-link {
+  color: #45B4FF;
+}
+.board-root[data-theme='dark'] .ant-btn-primary {
+  background: #3687FF;
+  border-color: #3687FF;
+  color: #FFFFFF;
+}
+
+/* 表格 */
+.board-root[data-theme='dark'] .ant-table {
+  background: transparent;
+  color: var(--text-main, #DCDDDD);
+}
+.board-root[data-theme='dark'] .ant-table-thead > tr > th {
+  background: rgba(115, 219, 255, .10) !important;
+  color: var(--text-main, #DCDDDD) !important;
+  border-bottom-color: var(--border, rgba(115, 219, 255, .22)) !important;
+}
+.board-root[data-theme='dark'] .ant-table-thead > tr > th::before {
+  background-color: var(--border, rgba(115, 219, 255, .22)) !important;
+}
+.board-root[data-theme='dark'] .ant-table-tbody > tr > td {
+  border-bottom-color: rgba(115, 219, 255, .12) !important;
+  color: var(--text-main, #DCDDDD);
+}
+.board-root[data-theme='dark'] .ant-table-tbody > tr.ant-table-row:hover > td {
+  background: rgba(115, 219, 255, .10) !important;
+}
+.board-root[data-theme='dark'] .ant-table-tbody > tr.ant-table-placeholder > td {
+  background: transparent !important;
+}
+.board-root[data-theme='dark'] .ant-empty-description {
+  color: var(--text-sub, rgba(220, 221, 221, .66));
+}
+.board-root[data-theme='dark'] .ant-table-cell-scrollbar {
+  background: rgba(115, 219, 255, .06) !important;
+}
+
+/* 分页 */
+.board-root[data-theme='dark'] .ant-pagination,
+.board-root[data-theme='dark'] .ant-pagination-item a,
+.board-root[data-theme='dark'] .ant-pagination-prev button,
+.board-root[data-theme='dark'] .ant-pagination-next button,
+.board-root[data-theme='dark'] .ant-pagination-total-text,
+.board-root[data-theme='dark'] .ant-pagination-options,
+.board-root[data-theme='dark'] .ant-pagination-options-quick-jumper input {
+  color: var(--text-main, #DCDDDD);
+}
+.board-root[data-theme='dark'] .ant-pagination-item {
+  background: rgba(115, 219, 255, .06);
+  border-color: var(--border, rgba(115, 219, 255, .22));
+}
+.board-root[data-theme='dark'] .ant-pagination-item-active {
+  background: rgba(54, 135, 255, .28);
+  border-color: #3687FF;
+}
+.board-root[data-theme='dark'] .ant-pagination-item-active a { color: #FFFFFF; }
+.board-root[data-theme='dark'] .ant-pagination-options-quick-jumper input {
+  background: rgba(115, 219, 255, .06) !important;
+  border-color: var(--border, rgba(115, 219, 255, .22)) !important;
+}
+
+/* 输入类 */
+.board-root[data-theme='dark'] .ant-select-selector,
+.board-root[data-theme='dark'] .ant-input,
+.board-root[data-theme='dark'] .ant-input-affix-wrapper {
+  background: rgba(115, 219, 255, .06) !important;
+  border-color: var(--border, rgba(115, 219, 255, .22)) !important;
+  color: var(--text-main, #DCDDDD) !important;
+}
+.board-root[data-theme='dark'] .ant-input::placeholder { color: var(--text-mute, rgba(220, 221, 221, .42)); }
+
+/* 弹层（注意：Modal/Drawer/Popover 挂在 body 上，不在 .board-root 内，
+   这里用 body 上的 data-theme 兜底 —— Board 会同时给 html 打 data-theme）
+   antd 6 的 Modal 容器类名是 .ant-modal-container（不再是 .ant-modal-content） */
+html[data-theme='dark'] .ant-modal-container,
+html[data-theme='dark'] .ant-modal-content,
+html[data-theme='dark'] .ant-drawer-content,
+html[data-theme='dark'] .ant-popover-inner,
+html[data-theme='dark'] .ant-dropdown-menu {
+  background: #0E2038;
+  color: #DCDDDD;
+}
+html[data-theme='dark'] .ant-modal-container .ant-modal-header,
+html[data-theme='dark'] .ant-modal-content .ant-modal-header,
+html[data-theme='dark'] .ant-drawer-content .ant-drawer-header,
+html[data-theme='dark'] .ant-drawer-header {
+  background: transparent;
+  border-bottom-color: rgba(115, 219, 255, .22);
+}
+html[data-theme='dark'] .ant-modal-title,
+html[data-theme='dark'] .ant-drawer-title,
+html[data-theme='dark'] .ant-modal-body,
+html[data-theme='dark'] .ant-drawer-body,
+html[data-theme='dark'] .ant-modal-footer {
+  color: #DCDDDD;
+}
+html[data-theme='dark'] .ant-modal-container .ant-modal-close,
+html[data-theme='dark'] .ant-drawer-close { color: rgba(220, 221, 221, .72); }
+html[data-theme='dark'] .ant-modal-container .ant-modal-close:hover,
+html[data-theme='dark'] .ant-drawer-close:hover { color: #45B4FF; }
+html[data-theme='dark'] .ant-drawer-body .ant-checkbox-wrapper,
+html[data-theme='dark'] .ant-modal-body .ant-checkbox-wrapper { color: #DCDDDD; }
+html[data-theme='dark'] .ant-modal-body .ant-empty-description,
+html[data-theme='dark'] .ant-drawer-body .ant-empty-description { color: rgba(220, 221, 221, .66); }
+html[data-theme='dark'] .ant-modal-body .ant-table,
+html[data-theme='dark'] .ant-drawer-body .ant-table { background: transparent; color: #DCDDDD; }
+html[data-theme='dark'] .ant-modal-body .ant-table-thead > tr > th,
+html[data-theme='dark'] .ant-drawer-body .ant-table-thead > tr > th {
+  background: rgba(115, 219, 255, .10) !important;
+  color: #DCDDDD !important;
+  border-bottom-color: rgba(115, 219, 255, .22) !important;
+}
+html[data-theme='dark'] .ant-modal-body .ant-table-tbody > tr > td,
+html[data-theme='dark'] .ant-drawer-body .ant-table-tbody > tr > td {
+  color: #DCDDDD;
+  border-bottom-color: rgba(115, 219, 255, .12) !important;
+}
+html[data-theme='dark'] .ant-modal-body .ant-table-tbody > tr:hover > td,
+html[data-theme='dark'] .ant-drawer-body .ant-table-tbody > tr:hover > td {
+  background: rgba(115, 219, 255, .10) !important;
+}
+html[data-theme='dark'] .ant-modal-body .ant-btn-default,
+html[data-theme='dark'] .ant-drawer-body .ant-btn-default {
+  background: #12263F;
+  border-color: rgba(115, 219, 255, .22);
+  color: #DCDDDD;
+}
+html[data-theme='dark'] .ant-modal-body .ant-pagination,
+html[data-theme='dark'] .ant-drawer-body .ant-pagination { color: #DCDDDD; }
+html[data-theme='dark'] .ant-modal-body .ant-pagination-item a,
+html[data-theme='dark'] .ant-drawer-body .ant-pagination-item a { color: #DCDDDD; }
+html[data-theme='dark'] .ant-modal-body .ant-pagination-item,
+html[data-theme='dark'] .ant-drawer-body .ant-pagination-item {
+  background: rgba(115, 219, 255, .06);
+  border-color: rgba(115, 219, 255, .22);
+}
+html[data-theme='dark'] .ant-modal-body .ant-pagination-item-active,
+html[data-theme='dark'] .ant-drawer-body .ant-pagination-item-active {
+  background: rgba(54, 135, 255, .28);
+  border-color: #3687FF;
+}
+
+/* Tabs */
+.board-root[data-theme='dark'] .ant-tabs-tab { color: var(--text-sub, rgba(220, 221, 221, .66)); }
+.board-root[data-theme='dark'] .ant-tabs-tab-active .ant-tabs-tab-btn { color: #45B4FF !important; }
+
+/* 进度条轨道 */
+.board-root[data-theme='dark'] .ant-progress-inner { background: rgba(115, 219, 255, .14); }
+
+/* Checkbox / Badge */
+.board-root[data-theme='dark'] .ant-checkbox-wrapper { color: var(--text-main, #DCDDDD); }
+.board-root[data-theme='dark'] .ant-badge-count { box-shadow: none; }
+
+/* 日历（日期筛选弹窗，挂在 body 上） */
+html[data-theme='dark'] .ant-picker-calendar,
+html[data-theme='dark'] .ant-picker-calendar-header,
+html[data-theme='dark'] .ant-picker-content th,
+html[data-theme='dark'] .ant-picker-cell,
+html[data-theme='dark'] .ant-picker-cell-inner {
+  background: transparent;
+  color: #DCDDDD;
+}
+html[data-theme='dark'] .ant-picker-cell-in-view.ant-picker-cell-selected .ant-picker-cell-inner {
+  background: #3687FF;
+  color: #FFFFFF;
+}
+html[data-theme='dark'] .ant-picker-dropdown .ant-picker-panel-container {
+  background: #0E2038;
+  border: 1px solid rgba(115, 219, 255, .22);
+}
+html[data-theme='dark'] .ant-picker-header,
+html[data-theme='dark'] .ant-picker-header button { color: #DCDDDD; }
+html[data-theme='dark'] .ant-picker-panel,
+html[data-theme='dark'] .ant-picker-body { background: transparent; }
+
+/* 提示气泡 */
+html[data-theme='dark'] .ant-tooltip-inner { background: #12263F; color: #DCDDDD; }
+html[data-theme='dark'] .ant-tooltip-arrow::before { background: #12263F; }
+
+/* 浅色模式兜底 */
+.board-root[data-theme='light'] .ant-card { background: var(--bg-card, #FFFFFF); }
