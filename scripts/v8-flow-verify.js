@@ -31,7 +31,28 @@ const P102 = 'jdywh_parsed_102';
 const FLOW_CODE = 'crm_signing_v7';
 const DEFAULT_FLOW_ID = 25;
 const XLSX_DEFAULT = path.join(ROOT, '数据文件', '新增智能体签约_20261030233545.xlsx');
-const EXPECT_ROWS = 96;
+/**
+ * 业务基准行数（xlsx 96 行）。
+ *
+ * V9 修订：行数断言不再「写死必须是 96」。
+ *
+ * 背景：V8 交付后业务侧又新建了一条测试单据（流水号 215，createTime
+ * 2026-10-31 23:36 北京），它**晚于** xlsx 导出时刻（2026-10-30 23:30），
+ * 所以解析表变成 97 行。若脚本仍强制「必须 96 行」，就会把**正常的业务新增**
+ * 判成失败 —— 这正是 V9 验收时出现的 3 条红灯（2.1 / 5.4 / 6.1）的唯一原因。
+ *
+ * 现在的口径（更严格，而不是更宽松）：
+ *   目标表行数 = xlsx 行数 + 快照之后新增的行数
+ * 也就是要求「xlsx 里的每一行都在目标表里」且「目标表多出来的行都能被
+ * `jdywh_data_16` 里快照后的推送解释」—— 既容忍业务新增，又不放过丢行。
+ *
+ * 可用 `--expect-rows=N` 显式覆盖（用于回归比对固定快照）。
+ */
+const EXPECT_ROWS = (() => {
+  const a = (process.argv.slice(2).find((x) => x.startsWith('--expect-rows=')) || '').split('=')[1];
+  const n = Number(a);
+  return Number.isFinite(n) && n > 0 ? n : 96;
+})();
 const EXPECT_BIZ_COLS = 59;
 
 const ARGV = process.argv.slice(2);
@@ -57,8 +78,23 @@ const SNAPSHOT_MS = (() => {
   const t = Date.parse(s);
   return Number.isFinite(t) ? t : Date.UTC(2026, 9, 30, 15, 30, 0);
 })();
+/**
+ * V9：快照时刻的「北京本地时间字符串」，用于和 `parsed_16` 里
+ * `提交时间(解析)`（形如 `2026-10-31 23:36:51`，无时区）做字符串比较。
+ *
+ * 不能用 `new Date(SNAPSHOT_MS).toISOString()` —— 那是 UTC，会差 8 小时，
+ * 导致「快照后新增行」少算（凌晨时段尤其明显）。
+ */
+const SNAPSHOT_STR = (() => {
+  const d = new Date(SNAPSHOT_MS + 8 * 3600 * 1000);
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+})();
 
 let pass = 0; let fail = 0; let skip = 0; let blocked = 0;
+/** V9：动态行数期望（在 [2] 段计算，供 5.4 / 6.1 复用） */
+let DYNAMIC_EXPECT_ROWS = EXPECT_ROWS;
+/** V9：快照之后业务新增的 data_id 集合（目标表比 xlsx 多出来的行必须正好等于它） */
+const NEW_DATA_IDS = new Set();
 const failures = [];
 const skips = [];
 const blocks = [];
@@ -431,7 +467,44 @@ async function main() {
   info('\n--- [2] 行数 / data_id 唯一索引（upsert 前提） ---');
   const cnt = await db.query(`SELECT COUNT(*) AS n, COUNT(DISTINCT data_id) AS d FROM \`${TARGET}\``);
   const rowCount = Number(cnt[0].n); const distinctIds = Number(cnt[0].d);
-  ok(`2.1 目标表行数 = ${EXPECT_ROWS}`, rowCount === EXPECT_ROWS, `实际 ${rowCount}`);
+
+  /**
+   * V9：动态行数期望。
+   *
+   * 目标表行数应当 = xlsx 基准行数（96）+ **快照之后业务侧新增的行数**。
+   * 「新增行」用 `parsed_16` 的「提交时间(解析)」> 业务表快照时刻 判定
+   * （215 就是 2026-10-31 23:36:51 新建的，晚于 2026-10-30 23:30 的 xlsx）。
+   *
+   * 这样断言更严格而不是更宽松：
+   *   - xlsx 里少一行（丢行）→ 仍会 FAIL
+   *   - 目标表凭空多一行（脏行/重复）→ 也会 FAIL
+   *   - 只有「业务新增」才被放行，并会在输出里明确列出是哪些流水号
+   */
+  let expectRows = EXPECT_ROWS;
+  let newRowsInfo = [];
+  try {
+    const p16cols = await db.query(
+      `SELECT COLUMN_NAME AS col, COLUMN_COMMENT AS cmt FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`, [P16]
+    );
+    const ctCol = (p16cols.find((c) => String(c.cmt || '') === '提交时间(解析)') || {}).col;
+    if (ctCol) {
+      newRowsInfo = await db.query(
+        `SELECT jdy_data_id FROM \`${P16}\` WHERE \`${ctCol}\` > ?`, [SNAPSHOT_STR]
+      );
+      newRowsInfo.forEach((r) => NEW_DATA_IDS.add(String(r.jdy_data_id)));
+      expectRows = EXPECT_ROWS + newRowsInfo.length;
+      if (newRowsInfo.length) {
+        info(`  ↳ 快照(${SNAPSHOT_STR})之后业务新增 ${newRowsInfo.length} 行 → 期望目标表 ${expectRows} 行`);
+      }
+    }
+  } catch (e) {
+    info(`  ↳ 动态行数判定失败（回退为固定 ${EXPECT_ROWS}）：${e.message}`);
+  }
+
+  ok(`2.1 目标表行数 = ${expectRows}（xlsx ${EXPECT_ROWS}${newRowsInfo.length ? ` + 快照后新增 ${newRowsInfo.length}` : ''}）`,
+    rowCount === expectRows, `实际 ${rowCount}`);
+  DYNAMIC_EXPECT_ROWS = expectRows;
   ok('2.2 data_id 无重复（COUNT(*) = COUNT(DISTINCT data_id)）',
     rowCount === distinctIds, `rows=${rowCount} distinct=${distinctIds}`);
 
@@ -624,11 +697,26 @@ async function main() {
     const tgtById = new Map(tgt.map((r) => [normText(r.data_id), r]));
     const xlsxIds = xlsx.rows.map((r) => normText(r.values[0]));
     const xlsxSet = new Set(xlsxIds);
-    ok('5.4 data_id 集合一致（xlsx ⊂ 目标表 且 目标表 ⊂ xlsx）',
-      xlsxSet.size === EXPECT_ROWS && xlsxSet.size === tgtById.size
-      && xlsxIds.every((id) => tgtById.has(id)),
-      `xlsx 唯一 ${xlsxSet.size} / 目标表 ${tgtById.size}`);
-
+    /*
+     * V9：集合一致性判定（比 V8 更严格）。
+     *
+     * 要求三条同时成立：
+     *   1. xlsx 的 data_id 全部出现在目标表（不丢行）；
+     *   2. 目标表 = xlsx 的 data_id ∪ 快照后业务新增的 data_id（不多不少）；
+     *   3. xlsx 内 data_id 无重复。
+     * 这样「业务新增 215」被正确放行，而「凭空多一行」「少一行」仍会 FAIL。
+     */
+    const extraInTarget = [...tgtById.keys()].filter((id) => !xlsxSet.has(id));
+    const unexplainedExtra = extraInTarget.filter((id) => !NEW_DATA_IDS.has(id));
+    const missingInTarget = xlsxIds.filter((id) => !tgtById.has(id));
+    ok('5.4 data_id 集合一致（xlsx 全部在目标表；目标表多出的行必须是快照后业务新增）',
+      xlsxSet.size === EXPECT_ROWS
+      && missingInTarget.length === 0
+      && unexplainedExtra.length === 0
+      && tgtById.size === xlsxSet.size + NEW_DATA_IDS.size,
+      `xlsx 唯一 ${xlsxSet.size} / 目标表 ${tgtById.size} / 快照后新增 ${NEW_DATA_IDS.size}`
+      + (missingInTarget.length ? ` / 目标表缺失 ${missingInTarget.length}` : '')
+      + (unexplainedExtra.length ? ` / 无法解释的额外行 ${unexplainedExtra.length}: ${unexplainedExtra.slice(0, 5).join(',')}` : ''));
     /*
      * fresh 语义（Lead 验收要求）：
      *   fresh 行 = 该 data_id 在 jdywh_data_16 里**最后一条推送**的 jdy_op_time > 业务基准快照时刻。
@@ -743,14 +831,17 @@ async function main() {
   /* ---------- 6. 推导规则对目标表（而非 xlsx）的命中率 ---------- */
   const tgtRows = await db.query(`SELECT data_id, 当前节点, 当前负责人 FROM \`${TARGET}\``);
   let derivedHit = 0;
+  let derivedChecked = 0;
   tgtRows.forEach((r) => {
     const d = derived.get(normText(r.data_id));
     if (!d) return;
+    derivedChecked += 1;
     if (String(d.node === null ? '' : d.node) === normText(r['当前节点'])
       && String(d.owner === null ? '' : d.owner) === normText(r['当前负责人'])) derivedHit += 1;
   });
-  ok(`6.1 目标表两列 = 当前库数据按四要素规则独立复算的结果（${EXPECT_ROWS}/${EXPECT_ROWS}）`,
-    derivedHit === EXPECT_ROWS, `命中 ${derivedHit}/${EXPECT_ROWS}`);
+  ok(`6.1 目标表两列 = 当前库数据按四要素规则独立复算的结果（${derivedHit}/${derivedChecked}）`,
+    derivedHit === derivedChecked && derivedChecked === tgtRows.length,
+    `命中 ${derivedHit}/${derivedChecked}，目标表 ${tgtRows.length} 行`);
 
   /* ---------- 7. 幂等（不改库：用指纹说明可重复性） ---------- */
   info('\n--- [7] 幂等 ---');

@@ -74,7 +74,32 @@ async function main() {
   }
 
   console.log('');
-  ok('1.1 最终结果行数 = 96（契约 §3.1 parsed_16 行数）', finalRows.length === 96, `实际 ${finalRows.length}`);
+  /**
+   * V9 修订：**行数断言不再写死 96**。
+   *
+   * 背景：V8 交付后业务侧又新建了一条单据（流水号 215，2026-10-31 23:36 北京），
+   * 它晚于 xlsx 快照（2026-10-30 23:30），于是 `parsed_16` 从 96 行变 97 行。
+   * 旧断言硬编码 `=== 96`，会把**正常的业务新增**判成 FAIL（不是流程装配出错）。
+   *
+   * 新口径：用 `parsed_16` 的实际行数作为期望 —— dry-run 的输入就是 parsed_16，
+   * 只要「输入 N 行 → 输出 N 行（不膨胀、不丢行）」即合格。
+   * 可用 `--expect-rows=N` 显式固定（回归比对老快照时用）。
+   */
+  const EXPECT_ROWS = await (async () => {
+    const a = process.argv.slice(2).find((x) => x.startsWith('--expect-rows='));
+    if (a) {
+      const n = Number(a.split('=')[1]);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    try {
+      const r = await require('../src/db').queryOne('SELECT COUNT(*) AS c FROM `jdywh_parsed_16`');
+      return Number(r.c);
+    } catch (_) {
+      return 96;
+    }
+  })();
+  ok(`1.1 最终结果行数 = ${EXPECT_ROWS}（= parsed_16 实际行数，不膨胀不丢行）`,
+    finalRows.length === EXPECT_ROWS, `实际 ${finalRows.length}`);
 
   const cols = Object.keys(finalRows[0] || {});
   console.log(`\n[2] 最终列数 ${cols.length}`);
@@ -102,7 +127,28 @@ async function main() {
   console.log('\n[3] 当前节点/当前负责人 来源分布');
   const withFlow = finalRows.filter((r) => r['当前节点'] !== null && r['当前节点'] !== undefined && String(r['当前节点']) !== '');
   console.log(`    有值：${withFlow.length} 行；空：${finalRows.length - withFlow.length} 行`);
-  ok('3.1 当前节点有值的行数 = 92（96 - 4 条流程结束置空）', withFlow.length === 92, `实际 ${withFlow.length}`);
+  /**
+   * V9 修订：「空行数」不再写死 4。
+   *
+   * 旧断言 `withFlow.length === 92` 等价于「96 行里恰好 4 行终态置空」。
+   * 现在行数变成 97，且**新增行也可能处于终态**，所以改成按数据本身推导：
+   *   期望有值行数 = 总行数 − (sys_flow_state_2 = 1 的终态行数)
+   * 这与「规则 1：流程已结束 → 两列置空」是同一口径，比硬编码更严格
+   * （终态行若没置空会立刻 FAIL）。
+   */
+  const endedCount = await (async () => {
+    try {
+      const r = await require('../src/db').queryOne(
+        'SELECT COUNT(*) AS c FROM `jdywh_parsed_16` WHERE `sys_flow_state_2` = 1'
+      );
+      return Number(r.c);
+    } catch (_) {
+      return 4;
+    }
+  })();
+  const expectWithFlow = EXPECT_ROWS - endedCount;
+  ok(`3.1 当前节点有值的行数 = ${expectWithFlow}（${EXPECT_ROWS} 行 − ${endedCount} 条流程结束置空）`,
+    withFlow.length === expectWithFlow, `实际 ${withFlow.length}`);
 
   /* 逐个实例核对：102 有事件时取 102，否则回退 16 */
   const t16 = await require('../src/db').query('SELECT `jdy_data_id`, `flow_current_node`, `flow_current_owner`, `sys_flow_state_2` FROM `jdywh_parsed_16`');

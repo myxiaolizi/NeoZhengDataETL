@@ -1678,8 +1678,28 @@ router.post('/system/cleanup', auth.requireAdminApi, async (req, res, next) => {
 
 function publicBaseUrl(req) {
   const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-  const host = req.headers['x-forwarded-host'] || req.headers.host;
-  return `${proto}://${host}`;
+  let host = req.headers['x-forwarded-host'] || req.headers.host || '';
+  /**
+   * V7.2：去掉标准端口，避免分享链接出现 `https://host:443/s/xxx` 这类多余端口。
+   * Nginx 转发时 host 常带 :443 / :80。
+   */
+  host = String(host).trim();
+  /**
+   * V7.2：无条件去掉标准端口。
+   * 之前按 proto 判断，但 Nginx 未透传 X-Forwarded-Proto 时 proto 为 http，
+   * 而 Host 头仍是 domain:443，导致 :443 未被清除。
+   * 标准端口（https:443 / http:80）本就不该显式出现在分享链接里。
+   */
+  const hostPortMatch = host.match(/^(.*?)(?::(\d+))$/);
+  if (hostPortMatch) {
+    const hp = hostPortMatch[2];
+    if (hp === '443' || hp === '80') host = hostPortMatch[1];
+  }
+  /* 协议推断：Host 端口为 443 或 X-Forwarded-Proto/X-Scheme=https → https */
+  let finalProto = String(proto).toLowerCase() === 'https' ? 'https' : 'http';
+  const rawHost = String(req.headers['x-forwarded-host'] || req.headers.host || '');
+  if (/:443$/.test(rawHost) || String(req.headers['x-scheme'] || '').toLowerCase() === 'https') finalProto = 'https';
+  return `${finalProto}://${host}`;
 }
 
 /* ══════════════════════════════════════════════════════════

@@ -1864,8 +1864,31 @@ async function run(flowId, trigger) {
 /** on_push 默认冷却时间（毫秒）：运行结束后此时长内的重复触发直接合并 */
 const ON_PUSH_COOLDOWN_MS = 3000;
 
+/** 尾随补跑：定时器额外余量（避免刚好卡在冷却边界上又被拦） */
+const DEFER_MARGIN_MS = 120;
+/** 尾随补跑：最多重试次数（运行中一直被占用时） */
+const MAX_DEFER_ATTEMPTS = 5;
+/** 尾随补跑：单次最长等待（防止异常情况下挂太久） */
+const MAX_DEFER_WAIT_MS = 30000;
+
 /** 运行闸门：flowId → { running, startedAt, finishedAt } */
 const RUN_GATES = new Map();
+
+/**
+ * 尾随补跑队列：flowId → { flow, reason, attempts, timer, at }
+ *
+ * V9 修复的根因（215 缺「实施对接时间」）：
+ *   简道云一次业务操作常连发多条推送（215 在 23:51:01 的 0.26 秒内发了 6 条：
+ *   4 条流程推送 + 2 条数据推送）。历史实现是**前导合并**：第一条推送启动流程，
+ *   后续推送在 running/cooldown 期间被**直接丢弃**。
+ *   而真正携带「实施对接时间」的是**最后一条数据推送**（log#1459，23:51:01.325），
+ *   它被冷却吞掉 → 宽表永远停在「实施对接时间为空」。
+ *
+ *   正确语义是**尾随合并（trailing debounce）**：合并期间的任何一次触发都记一个
+ *   「待补跑」，等闸门放开后**再跑一次**。因为各 source_project 节点每次都是全量快照，
+ *   补跑一次即可把最后一条推送的数据带进目标表。
+ */
+const PENDING_RERUN = new Map();
 
 /** 推送触发时「因节点类型不受支持而跳过」的日志去重集合（key = flowId:类型列表） */
 const UNSUPPORTED_FLOW_LOGGED = new Set();
@@ -1953,9 +1976,119 @@ function endFlowRun(flowId, options) {
   RUN_GATES.set(String(flowId), { running: false, startedAt: 0, finishedAt: now });
 }
 
-/** 清空闸门（仅测试/排障用） */
+/** 清空闸门（仅测试/排障用）；同时清掉等待中的尾随补跑定时器 */
 function resetFlowRunGates() {
   RUN_GATES.clear();
+  clearDeferredReruns();
+}
+
+/** 清空尾随补跑队列（取消所有未触发的定时器） */
+function clearDeferredReruns() {
+  for (const entry of PENDING_RERUN.values()) {
+    if (entry && entry.timer) clearTimeout(entry.timer);
+  }
+  PENDING_RERUN.clear();
+}
+
+/** 查看等待中的尾随补跑（排障/自检用，只读） */
+function listDeferredReruns() {
+  return Array.from(PENDING_RERUN.values()).map((e) => ({
+    flowId: e.flowId, reason: e.reason, attempts: e.attempts, at: e.at,
+  }));
+}
+
+/** 尾随补跑是否启用（默认启用；测试注入时钟时默认不排真实定时器，保证确定性） */
+function deferredRerunEnabled(opts) {
+  if (opts && opts.deferCooldown === false) return false;
+  const v = process.env.FLOW_ON_PUSH_DEFER;
+  if (String(v === undefined || v === null ? '1' : v) === '0') return false;
+  if (opts && opts.now !== undefined && opts.now !== null && opts.deferWithInjectedClock !== true) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * 登记一次「尾随补跑」
+ *
+ * 合并期间的重复触发不再被静默丢弃：等闸门放开后补跑一次，跑的是**最新全量快照**。
+ * 同一流程多次登记只保留 1 个（快照语义下跑一次就够）。
+ *
+ * @returns {{scheduled: boolean, delay?: number, reason?: string}}
+ */
+function scheduleDeferredRerun(flow, waitMs, reason, opts) {
+  const flowId = Number(flow && flow.id);
+  if (!Number.isFinite(flowId) || flowId <= 0) return { scheduled: false, reason: 'bad_flow_id' };
+
+  const prev = PENDING_RERUN.get(flowId);
+  if (prev) {
+    // 已有待补跑：只更新流程定义（配置可能变了），不重置定时器（避免长突发无限延后）
+    prev.flow = flow;
+    return { scheduled: false, reason: 'already_pending' };
+  }
+
+  const hint = Number(waitMs);
+  const want = Number.isFinite(hint) && hint > 0 ? hint : ON_PUSH_COOLDOWN_MS;
+  const injected = opts && Number.isFinite(opts.deferDelayMs) ? Number(opts.deferDelayMs) : null;
+  const delay = injected !== null ? injected : Math.min(want, MAX_DEFER_WAIT_MS);
+
+  const entry = {
+    flowId,
+    flow,
+    reason: reason || 'cooldown',
+    attempts: 0,
+    at: Date.now() + delay,
+    timer: null,
+  };
+  entry.timer = setTimeout(() => fireDeferredRerun(flowId, opts), delay + (injected !== null ? 0 : DEFER_MARGIN_MS));
+  if (entry.timer && typeof entry.timer.unref === 'function') entry.timer.unref();
+  PENDING_RERUN.set(flowId, entry);
+  return { scheduled: true, delay };
+}
+
+/** 定时器到点：抢占闸门后执行一次补跑；仍被占用则再等一轮 */
+function fireDeferredRerun(flowId, opts) {
+  const entry = PENDING_RERUN.get(flowId);
+  if (!entry) return;
+
+  /*
+   * 这里**不再套用冷却期**：登记补跑时算的等待时间已经包含「剩余冷却 + 余量」，
+   * 定时器到点就意味着冷却已过。再套一次冷却只会白白多等一轮。
+   * 仍要过闸门的唯一原因是「此刻有另一次运行在跑」——那就再等一轮。
+   */
+  const gate = beginFlowRun(flowId, { cooldownMs: 0 });
+  if (!gate.started) {
+    entry.attempts += 1;
+    if (entry.attempts > MAX_DEFER_ATTEMPTS) {
+      PENDING_RERUN.delete(flowId);
+      console.error(`[flow] 尾随补跑放弃流程 #${flowId}：连续 ${entry.attempts} 次被运行闸门拒绝（${gate.reason}）`);
+      return;
+    }
+    const wait = Math.min(
+      gate.reason === 'cooldown' && Number.isFinite(gate.waitMs) ? gate.waitMs : ON_PUSH_COOLDOWN_MS,
+      MAX_DEFER_WAIT_MS
+    );
+    entry.at = Date.now() + wait;
+    entry.timer = setTimeout(() => fireDeferredRerun(flowId, opts), wait + DEFER_MARGIN_MS);
+    if (entry.timer && typeof entry.timer.unref === 'function') entry.timer.unref();
+    return;
+  }
+
+  PENDING_RERUN.delete(flowId);
+
+  const runner = opts && typeof opts.runner === 'function'
+    ? opts.runner
+    : (id, trigger) => run(id, trigger);
+
+  console.log(`[flow] 尾随补跑流程 #${flowId}（合并期间有更新，改跑最后一次全量快照）`);
+  setImmediate(() => {
+    Promise.resolve()
+      .then(() => runner(flowId, 'push'))
+      .catch((err) => {
+        console.error(`[flow] 尾随补跑流程 #${flowId} 执行失败:`, err && err.message ? err.message : err);
+      })
+      .finally(() => endFlowRun(flowId, {}));
+  });
 }
 
 /**
@@ -2054,7 +2187,28 @@ async function triggerOnPush(projectId, options) {
 
     const gate = beginFlowRun(flowId, { now: opts.now, cooldownMs: opts.cooldownMs });
     if (!gate.started) {
-      result.skipped.push({ flowId, reason: gate.reason });
+      /*
+       * V9：合并 ≠ 丢弃。
+       * 简道云一次业务操作会连发多条推送，真正携带新值的那条往往在最后
+       * （215 的「实施对接时间」就是被冷却吞掉的）。这里登记尾随补跑：
+       * 闸门放开后再跑一次全量快照，保证最后一条推送的数据一定进目标表。
+       */
+      let deferred = null;
+      if (deferredRerunEnabled(opts)) {
+        const waitMs = gate.reason === 'cooldown' && Number.isFinite(gate.waitMs)
+          ? gate.waitMs
+          : (Number.isFinite(opts.cooldownMs) ? opts.cooldownMs : ON_PUSH_COOLDOWN_MS);
+        deferred = scheduleDeferredRerun(f, waitMs, gate.reason, opts);
+      }
+      result.skipped.push({
+        flowId,
+        reason: gate.reason,
+        ...(deferred && deferred.scheduled ? { deferred: true, deferMs: deferred.delay } : {}),
+      });
+      if (deferred && deferred.scheduled) {
+        if (!Array.isArray(result.deferred)) result.deferred = [];
+        result.deferred.push({ flowId, reason: gate.reason, waitMs: deferred.delay });
+      }
       continue;
     }
     result.triggered.push(flowId);
@@ -2305,6 +2459,9 @@ module.exports = {
   ON_PUSH_COOLDOWN_MS,
   triggerOnPush, selectOnPushFlows, flowReferencesProject, flowRunMode, normalizeRunMode,
   beginFlowRun, endFlowRun, resetFlowRunGates, listTriggerFlows, invalidateTriggerFlowCache,
+  // 尾随补跑（V9：合并期间的新推送不再被丢弃，闸门放开后补跑一次全量快照）
+  scheduleDeferredRerun, fireDeferredRerun, clearDeferredReruns, listDeferredReruns,
+  deferredRerunEnabled,
   // 能力自检（节点类型缺失时给出中文可读错误，见 assertFlowSupported 注释）
   unknownNodeTypes, assertFlowSupported,
   ensureUpsertKey,

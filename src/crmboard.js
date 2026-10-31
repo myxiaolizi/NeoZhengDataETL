@@ -103,6 +103,35 @@ const NODE_OVERDUE_RULE = {
 };
 
 /**
+ * V8.1：各节点的「完成时间」列（parsed_16）。
+ *
+ * 用于「流程处理」按日统计每日各节点完成了多少客户。
+ * 这组列在 V7.1 已用于「工作日超期」计算（见 NODE_OVERDUE_RULE），语义确认为「该节点的完成时间」。
+ *
+ * 实测日期分布（96 条客户）：
+ *   销售签约: 10-22:61 10-23:3 10-26:13 10-27:5 10-28:10 10-29:3 10-31:1
+ *   策略开通: 10-22:60 10-23:4 10-26:13 10-27:5 10-28:10 10-29:3 10-31:1
+ *   实施对接: 10-22:34 10-23:3 10-26:1  10-27:7 10-28:7  10-29:1 10-31:1
+ *   对接审核: 10-22:8  10-23:1 10-27:1
+ *   客服处理: 10-22:21 10-23:1 10-26:1 10-27:1
+ *   客户培训: 10-22:17 10-23:1 10-27:1
+ *   连锁使用: 10-22:4
+ *   策略审核: 10-22:4  10-27:1
+ *   流程结束: 无独立时间列（用当前节点为空判定，不参与按日统计）
+ */
+const NODE_DONE_COL = [
+  { node: '销售签约', col: 'w_1793094135522_p' },
+  { node: '策略开通', col: 'w_1793094135524_p' },
+  { node: '实施对接', col: 'w_1793094135538_p' },
+  { node: '对接审核', col: 'w_1793094135578_p' },
+  { node: '客服处理', col: 'w_1793094135592_p' },
+  { node: '客户培训', col: 'w_1793094135593_p' },
+  { node: '连锁使用', col: 'w_1793094135594_p' },
+  { node: '策略审核', col: 'w_1793094135608_p' },
+  { node: '流程结束', col: null },
+];
+
+/**
  * 计算两个日期之间的工作日天数（排除周六日）。
  * 结束时间晚于开始时间；只数 (start, end] 区间内的工作日。
  *
@@ -1352,12 +1381,24 @@ function buildRow6(clients, flowEvents, now) {
   };
 
   /**
-   * ── 流程处理：V7.1 改为「近 7 个自然日」+「近 30 个自然日」双窗口 ──
+   * ── 流程处理：V8.1 数据源修正 ──
    *
-   * V7 原为「最近 5 个工作日」（跳过周末）。V7.1 需求要求：
-   *   - 卡片正文显示最近 7 日
-   *   - 「更多」弹窗显示最近 30 日
-   * 改为自然日连续窗口，避免周末空洞、更直观。
+   * V7.1 之前用 `jdywh_parsed_102`（流程事件表）统计「每日完成数」，实测发现数据与用户看到的严重不符：
+   *   用户反馈 策略开通 10-22=60 家，而 102 表在 22 日**根本没有数据**。
+   *
+   * 实测比对三个数据源（10-22 至 10-29）：
+   *   日期    用户反馈   parsed_16 完成时间列   parsed_102 事件表
+   *   10-22     60            60 ✓                无
+   *   10-23      4             4 ✓                1
+   *   10-26     12            13                  13
+   *   10-27      5             5 ✓                5
+   *   10-28     11            10                  13
+   *   10-29      3             3 ✓                3
+   *
+   * 结论：**正确数据源是 `parsed_16` 的各节点完成时间列**（与用户值 4/6 完全一致）。
+   * 102 表的 `header_created_at` 还是毫秒时间戳 double，`DATE()` 对它返回 NULL，本身也不可靠。
+   *
+   * 因此 V8.1 改为按 parsed_16 的 `w_1793094135xxx_p` 完成时间列逐日聚合。
    */
   const buildWindow = (n2) => {
     const arr = [];
@@ -1366,8 +1407,8 @@ function buildRow6(clients, flowEvents, now) {
     }
     return arr;
   };
-  const workdays = buildWindow(7);     // 卡片正文：7 日
-  const days30 = buildWindow(30);      // 弹窗：30 日
+  const workdays = buildWindow(7);     // 卡片正文：近 7 日
+  const days30 = buildWindow(30);      // 「更多」弹窗：近 30 日
 
   const nodeList = FLOW_NODES.slice();
   const mkMatrix = (len) => nodeList.map(() => new Array(len).fill(0));
@@ -1383,39 +1424,39 @@ function buildRow6(clients, flowEvents, now) {
   const idx30 = new Map(days30.map((d, i) => [d, i]));
   const nodeIdx = new Map(nodeList.map((nm, i) => [nm, i]));
 
-  // 事件实例 → 连锁区域：parsed_102.event_instance_id === parsed_16.jdy_data_id
-  const instanceRegion = new Map();
+  /**
+   * 用 parsed_16 的节点完成时间列聚合。
+   * 注意：clients 里的字段是 enterAt/nodeDays 等派生值，这里直接读 runRaw 的原始列。
+   * （normalizeClient 保留了 runRaw: raw）
+   */
   clients.forEach((c) => {
-    if (c.dataId) instanceRegion.set(c.dataId, c.region);
-  });
+    const raw = c.runRaw || {};
+    if (!raw) return;
+    const reg = c.region;
 
-  flowEvents.forEach((e) => {
-    // 只统计「完成」事件：event_completed_count > 0
-    const done = n(e.event_completed_count);
-    if (done <= 0) return;
-    const at = toDate(e.header_created_at_p) || toDate(e.header_created_at);
-    if (!at) return;
-    const key = ymd(at);
-    const nodeName = mapNode(e.event_flow_name);
-    const j = nodeIdx.get(nodeName);
-    if (j === undefined) return;
-    const instId = s(e.event_instance_id);
-    const reg = instId ? instanceRegion.get(instId) : '';
+    NODE_DONE_COL.forEach(({ node, col }) => {
+      if (!col) return;
+      const at = toDate(raw[col]);
+      if (!at) return;
+      const key = ymd(at);
+      const j = nodeIdx.get(node);
+      if (j === undefined) return;
 
-    // 7 日窗口
-    const i = wdIdx.get(key);
-    if (i !== undefined) {
-      matrix[j][i] += done;
-      if (reg === '南区') matrixSouth[j][i] += done;
-      else if (reg === '北区') matrixNorth[j][i] += done;
-    }
-    // 30 日窗口
-    const k = idx30.get(key);
-    if (k !== undefined) {
-      matrix30[j][k] += done;
-      if (reg === '南区') matrix30South[j][k] += done;
-      else if (reg === '北区') matrix30North[j][k] += done;
-    }
+      // 7 日窗口
+      const i = wdIdx.get(key);
+      if (i !== undefined) {
+        matrix[j][i] += 1;
+        if (reg === '南区') matrixSouth[j][i] += 1;
+        else if (reg === '北区') matrixNorth[j][i] += 1;
+      }
+      // 30 日窗口
+      const k = idx30.get(key);
+      if (k !== undefined) {
+        matrix30[j][k] += 1;
+        if (reg === '南区') matrix30South[j][k] += 1;
+        else if (reg === '北区') matrix30North[j][k] += 1;
+      }
+    });
   });
 
   const flowProgress = {
@@ -1442,6 +1483,8 @@ function buildRow6(clients, flowEvents, now) {
     },
     matrix30South,
     matrix30North,
+    /** V8.1：数据源标记，便于前端/排查时确认 */
+    source: 'parsed_16.node_done_time',
   };
 
   // ── 有开通策略的客户数（按南北区）──
@@ -1865,7 +1908,7 @@ async function buildRow9(now) {
  * ══════════════════════════════════════════════════════════════════ */
 
 const DETAIL_COLUMNS = [
-  { key: 'seq', title: '序号', width: 64, default: true, align: 'center' },
+  { key: 'seq', title: '序号', width: 88, default: true, align: 'center' },
   { key: 'region', title: '区域', width: 80, default: true, align: 'center' },
   { key: 'chainId', title: '连锁ID', width: 100, default: true },
   { key: 'chainName', title: '连锁名称', width: 240, default: true },
@@ -2063,20 +2106,53 @@ async function buildClientDetail(chainId) {
   if (!id) return null;
 
   const now = new Date();
-  const [staff, run30, allClients] = await Promise.all([
+  /**
+   * V8.1：客户详情补充运行数据。
+   *
+   * 实测：`jdywh_mail_30`（by整体汇总）最新日只有 19 个连锁，与 parsed_16 的 97 个客户
+   * 交集仅 15 个 —— 绝大多数客户在 mail_30 里没有行，导致详情「运行数据」全空。
+   * 而 `jdywh_mail_31`（by明细）覆盖同一批连锁，且 row7 也用它，口径一致。
+   *
+   * 因此这里同时加载 mail_30 与 mail_31：优先 mail_30（快照汇总），
+   * 缺失时回退到「把该连锁在 mail_31 的多行按类型聚合」。
+   */
+  const [staff, run30, run31, allClients] = await Promise.all([
     loadStaff(),
     loadRunSummary(),
+    loadRunDetail(),
     loadClients(),
   ]);
+
   // 运行数据按连锁ID 建索引（与 buildBoard 保持一致）
   const runMap = new Map();
   (run30.rows || []).forEach((r) => {
-    const id = s(r[M.chainId]);
-    if (id) runMap.set(id, r);
+    const cid = s(r[M.chainId]);
+    if (cid) runMap.set(cid, r);
   });
+
+  /* mail_31 按连锁聚合（当 mail_30 无该连锁时作为兜底） */
+  const run31Agg = (() => {
+    const list = (run31.rows || []).filter((r) => s(r[M.chainId]) === id);
+    if (!list.length) return null;
+    const sum = (k) => list.reduce((acc, r) => acc + n(r[k]), 0);
+    const max = (k) => list.reduce((acc, r) => Math.max(acc, n(r[k])), 0);
+    const out = {};
+    // 累加型指标
+    [M.sent, M.arrived, M.gmv, M.couponIssuedPeople, M.couponUsedPeople,
+      M.couponIssued, M.couponUsed, M.couponGmv, M.couponCost, M.channelCost,
+    ].forEach((k) => { out[k] = sum(k); });
+    // 策略数按「当日最大」而非求和（同一策略可能每天都运行）
+    out[M.runningStrategies] = max(M.runningStrategies);
+    out[M.openedStrategies] = max(M.openedStrategies);
+    return out;
+  })();
+
   const clients = (allClients || []).map((raw) => normalizeClient(raw, staff, runMap, now));
   const c = clients.find((x) => x.chainId === id);
   if (!c) return null;
+  /** 供下方 runMetrics 使用：mail_30 优先，缺失回退 mail_31 聚合值 */
+  const runSource = c.run || run31Agg;
+  const runSourceKind = c.run ? 'mail_30' : (run31Agg ? 'mail_31' : null);
 
   /** 9 个节点的完成时间与该节点停留时长 */
   const NODE_COLS = [
@@ -2168,6 +2244,45 @@ async function buildClientDetail(chainId) {
     },
     timeline,
     run: c.run || null,
+    /**
+     * V8.1：把 run（mail_30 原始行）解析成结构化指标，前端直接渲染，
+     * 不再需要自己认 c_xxxx 列名。run 为 null 时各字段为 0。
+     */
+    runMetrics: (() => {
+      const r = c.run;
+      if (!r) return null;
+      const g = (k) => n(r[k]);
+      const opened = g(M.openedStrategies);
+      const running = g(M.runningStrategies);
+      const sent = g(M.sent);
+      const arrived = g(M.arrived);
+      const gmv = g(M.gmv);
+      const cIssuedPpl = g(M.couponIssuedPeople);
+      const cUsedPpl = g(M.couponUsedPeople);
+      const cIssued = g(M.couponIssued);
+      const cUsed = g(M.couponUsed);
+      const channelCost = g(M.channelCost);
+      const couponCost = g(M.couponCost);
+      const totalCost = channelCost + couponCost;
+      return {
+        openedStrategies: round(opened, 2),
+        runningStrategies: round(running, 2),
+        reachedPeople: round(sent, 2),
+        arrivedPeople: round(arrived, 2),
+        reachRate: round(div(arrived, sent), 4),
+        couponIssuedPeople: round(cIssuedPpl, 2),
+        couponUsedPeople: round(cUsedPpl, 2),
+        couponIssued: round(cIssued, 2),
+        couponUsed: round(cUsed, 2),
+        couponRate: round(div(cUsedPpl, cIssuedPpl), 4),
+        gmv: round(gmv, 2),
+        perCapita: round(div(gmv, arrived), 2),
+        channelCost: round(channelCost, 2),
+        couponCost: round(couponCost, 2),
+        totalCost: round(totalCost, 2),
+        roi: round(div(totalCost, gmv), 4),
+      };
+    })(),
     signAtLabel: c.signAt ? mdCn(c.signAt) : '',
     submitAtLabel: c.submitAt ? mdCn(c.submitAt) : '',
   };

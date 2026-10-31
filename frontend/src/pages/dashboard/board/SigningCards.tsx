@@ -26,7 +26,33 @@ interface Props {
 /* ══════════════ 局部样式（仅本组件，vb1- 前缀避免与全局冲突） ══════════════ */
 const CSS = `
 /* V7.1 需求 C：1080P（1920）下 6 张卡 **1 排显示**；手机端 2 排 × 每排 3 个。 */
-.vb1-grid{display:grid;gap:12px;grid-template-columns:repeat(6,minmax(0,1fr));grid-auto-rows:1fr;align-items:stretch}
+.vb1-grid{display:grid;gap:12px;grid-template-columns:repeat(4,minmax(0,1fr));grid-auto-rows:1fr;align-items:stretch}
+/* V8.1 C1：合并卡占更宽（内含 3 区块），其余 3 卡等分 */
+.vb1-grid > .vb1-card-merged{grid-column:span 1}
+@media(max-width:1600px){.vb1-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.vb1-grid{grid-template-columns:1fr}}
+
+/* 合并卡内部：3 区块横向并排 */
+.vb1-mg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;height:100%;align-items:stretch}
+.vb1-mg-sec{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;min-width:0;padding:4px 2px;border-right:1px dashed var(--line)}
+.vb1-mg-sec:last-child{border-right:0}
+.vb1-mg-lbl{font-size:10px;font-weight:650;color:var(--text3);letter-spacing:.2px;white-space:nowrap}
+.vb1-mg-num{font-size:26px;font-weight:750;line-height:1;letter-spacing:-1px;font-variant-numeric:tabular-nums;color:var(--cyan)}
+.vb1-mg-num em{font-style:normal;font-size:10px;font-weight:600;color:var(--text3);margin-left:2px}
+.vb1-mg-split{display:flex;flex-direction:column;gap:2px;font-size:10px;font-variant-numeric:tabular-nums;margin-top:2px}
+.vb1-mg-split span{display:flex;align-items:center;gap:3px;font-weight:650}
+.vb1-mg-split i{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.vb1-mg-split .s{color:var(--brand)}
+.vb1-mg-split .s i{background:var(--brand)}
+.vb1-mg-split .n{color:var(--green)}
+.vb1-mg-split .n i{background:var(--green)}
+.vb1-mg-types{display:flex;flex-direction:column;gap:4px;width:100%;min-width:0}
+.vb1-mg-type{display:flex;align-items:center;gap:5px;font-size:10.5px;padding:3px 6px;border-radius:7px;background:var(--panel2);border:1px solid var(--line);min-width:0}
+.vb1-mg-type .nm{flex:1;color:var(--text2);font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.vb1-mg-type b{color:var(--text);font-weight:750;font-variant-numeric:tabular-nums}
+.vb1-mg-type b em{font-style:normal;font-size:9px;color:var(--text3);margin-left:1px}
+.vb1-mg-type .st{font-size:9.5px;color:var(--text3);white-space:nowrap}
+@media(max-width:1200px){.vb1-mg{grid-template-columns:1fr;gap:6px}.vb1-mg-sec{border-right:0;border-bottom:1px dashed var(--line);padding-bottom:6px}.vb1-mg-sec:last-child{border-bottom:0}}
 @media(max-width:1366px){.vb1-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 /* 手机端：2 排 × 3 列（需求明确要求每排 3 个） */
 @media(max-width:768px){.vb1-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}}
@@ -97,7 +123,8 @@ const CSS = `
 .vb1-pg-l .d{width:6px;height:6px;border-radius:50%;background:var(--brand);flex-shrink:0}
 .vb1-pg-l.g2 .d{background:var(--green)}
 .vb1-pg-v{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text)}
-.vb1-pg-v em{font-style:normal;font-size:10px;font-weight:600;color:var(--text3);margin-left:4px}
+.vb1-pg-v em{font-style:normal;font-size:10px;font-weight:600;color:var(--text3);margin-left:6px;padding-left:5px;border-left:1px solid var(--line)}
+.vb1-pg-v .sep{color:var(--text3);margin:0 1px;font-weight:600}
 .vb1-pg-track{height:6px;border-radius:4px;background:var(--line2);overflow:hidden;box-shadow:inset 0 1px 2px rgba(20,52,102,.05)}
 .vb1-pg-fill{height:100%;border-radius:4px;min-width:3px;background:linear-gradient(90deg,var(--brand),var(--brand3));transition:width .7s cubic-bezier(.4,0,.2,1);box-shadow:0 1px 3px color-mix(in srgb,var(--brand) 30%,transparent)}
 .vb1-pg-fill.g2{background:linear-gradient(90deg,var(--green),var(--green2,var(--green)));box-shadow:0 1px 3px color-mix(in srgb,var(--green) 30%,transparent)}
@@ -341,34 +368,47 @@ export default function SigningCards({ data, loading, isMobile }: Props) {
       <style>{CSS}</style>
 
       <div className="vb1-grid">
-        {/* 卡1 签约客户总数（圆环） */}
-        <Shell title="签约客户总数" hint="总客户数">
-          <Donut
-            south={r1.totalClientsByRegion.south}
-            north={r1.totalClientsByRegion.north}
-            total={r1.totalClients}
-            label="家客户"
-          />
-        </Shell>
-
-        {/* 卡2 门店总数（大数字 + 南北拆分） */}
-        <Shell title="门店总数" dot="var(--cyan)" hint="家门店">
-          <div className="vb1-bignum">
-            <b>{fmtNum(r1.totalStores)}</b>
-            <span>全部门店数</span>
-          </div>
-          <div className="vb1-split">
-            <div className="vb1-sp south">
-              <div className="vb1-sp-l"><span className="d" />南区门店</div>
-              <div className="vb1-sp-v">{fmtNum(r1.storesByRegion.south)}<em>家</em></div>
+        {/* 卡1（合并）签约概览：客户总数 + 门店总数 + 签约类型 三区块合一（V8.1 C1） */}
+        <Shell title="签约概览" hint="客户 / 门店 / 类型" className="vb1-card-merged">
+          <div className="vb1-mg">
+            {/* 区块1：客户总数 */}
+            <div className="vb1-mg-sec">
+              <div className="vb1-mg-lbl">签约客户</div>
+              <Donut
+                south={r1.totalClientsByRegion.south}
+                north={r1.totalClientsByRegion.north}
+                total={r1.totalClients}
+                label="家客户"
+              />
             </div>
-            <div className="vb1-sp north">
-              <div className="vb1-sp-l"><span className="d" />北区门店</div>
-              <div className="vb1-sp-v">{fmtNum(r1.storesByRegion.north)}<em>家</em></div>
+            {/* 区块2：门店总数 */}
+            <div className="vb1-mg-sec">
+              <div className="vb1-mg-lbl">门店总数</div>
+              <div className="vb1-mg-num">{fmtNum(r1.totalStores)}<em>家</em></div>
+              <div className="vb1-mg-split">
+                <span className="s"><i />南 {fmtNum(r1.storesByRegion.south)}</span>
+                <span className="n"><i />北 {fmtNum(r1.storesByRegion.north)}</span>
+              </div>
+            </div>
+            {/* 区块3：签约类型 */}
+            <div className="vb1-mg-sec">
+              <div className="vb1-mg-lbl">签约类型</div>
+              {r1.signTypes.length === 0 ? (
+                <div className="vb1-empty" style={{ minHeight: 0 }}><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无" /></div>
+              ) : (
+                <div className="vb1-mg-types">
+                  {r1.signTypes.map((t) => (
+                    <div key={t.name} className="vb1-mg-type">
+                      <span className="nm">{t.name}</span>
+                      <b>{t.clients}<em>户</em></b>
+                      <span className="st">{fmtNum(t.stores)} 店</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </Shell>
-
         {/* 卡3 任务完成进度（V7：半圆 + 连锁数/目标数 + 双进度条） */}
         <Shell title="任务完成进度" dot="var(--warn)" hint={`${fmtNum(r1.progress.achieved)} / ${fmtNum(r1.progress.target)}`}>
           <div className="vb1-semi-wrap">
@@ -396,7 +436,9 @@ export default function SigningCards({ data, loading, isMobile }: Props) {
               <div className="vb1-pg-top">
                 <span className="vb1-pg-l"><span className="d" />南区</span>
                 <span className="vb1-pg-v">
-                  {fmtNum(r1.progress.south.achieved)}/{fmtNum(r1.progress.south.target)}
+                  {fmtNum(r1.progress.south.achieved)}
+                  <span className="sep">/</span>
+                  {fmtNum(r1.progress.south.target)}
                   <em>{r1.progress.south.rate.toFixed(1)}%</em>
                 </span>
               </div>
@@ -408,7 +450,9 @@ export default function SigningCards({ data, loading, isMobile }: Props) {
               <div className="vb1-pg-top">
                 <span className="vb1-pg-l g2"><span className="d" />北区</span>
                 <span className="vb1-pg-v">
-                  {fmtNum(r1.progress.north.achieved)}/{fmtNum(r1.progress.north.target)}
+                  {fmtNum(r1.progress.north.achieved)}
+                  <span className="sep">/</span>
+                  {fmtNum(r1.progress.north.target)}
                   <em>{r1.progress.north.rate.toFixed(1)}%</em>
                 </span>
               </div>
@@ -419,50 +463,6 @@ export default function SigningCards({ data, loading, isMobile }: Props) {
           </div>
         </Shell>
 
-        {/* 卡4 签约类型（.tl-row） */}
-        <Shell title="签约类型" dot="var(--purple)" hint={r1.signTypes.length ? `${r1.signTypes.length} 类` : undefined}>
-          {r1.signTypes.length === 0 ? (
-            <div className="vb1-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" /></div>
-          ) : (
-            <div className="vb1-tlist">
-              {r1.signTypes.map((t, i) => {
-                const pct = (t.clients / maxSignClients) * 100;
-                const color = i === 0 ? 'var(--brand)' : 'var(--cyan)';
-                return (
-                  <Tooltip
-                    key={t.name}
-                    title={
-                      <div>
-                        {t.byChainType.map((b) => (
-                          <div key={b.name}>{b.name}：{b.clients} 户 / {b.stores} 店</div>
-                        ))}
-                      </div>
-                    }
-                  >
-                    <div className="vb1-tl">
-                      <div className="vb1-tl-top">
-                        <span className="vb1-tl-name">
-                          <span className="d" style={{ background: color }} />
-                          {t.name}
-                        </span>
-                        <span className="vb1-tl-nums">
-                          {t.clients} 户<em>· {fmtNum(t.stores)} 店</em>
-                        </span>
-                      </div>
-                      <div className="vb1-tl-bar">
-                        <i style={{ width: `${Math.max(2, Math.min(100, pct))}%`, background: color }} />
-                      </div>
-                      <div className="vb1-tl-reg">
-                        <span className="s">南区 <b>{t.south}</b></span>
-                        <span className="n">北区 <b>{t.north}</b></span>
-                      </div>
-                    </div>
-                  </Tooltip>
-                );
-              })}
-            </div>
-          )}
-        </Shell>
 
         {/* 卡5 进行中（V7：占位更大 + 5 岗位含汇总/南/北） */}
         <Shell title="进行中" dot="var(--pink)" hint={`${r1.inProgress.total} 家`}>
@@ -501,13 +501,6 @@ export default function SigningCards({ data, loading, isMobile }: Props) {
                   </div>
                 );
               })}
-              {/* 自检行：五项合计 = 进行中总数 */}
-              <div className="vb1-ing-foot">
-                五项合计 <b style={{ color: ingSum === r1.inProgress.total ? 'var(--green)' : 'var(--danger)' }}>{ingSum}</b>
-                <span className="sep">·</span>
-                进行中总数 <b>{r1.inProgress.total}</b>
-                {ingSum === r1.inProgress.total && <span className="ok-tag">一致</span>}
-              </div>
             </div>
           )}
         </Shell>

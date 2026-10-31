@@ -350,13 +350,54 @@ async function main() {
   const missingInDb = xlsxIds.filter((id) => !dbIdSet.has(id));
   const extraInDb = dbIds.filter((id) => !xlsxIdSet.has(id));
   const dupXlsx = xlsxIds.filter((id, i) => xlsxIds.indexOf(id) !== i);
-  push(2, xlsx.rows.length === 96 && rows16.length === 96
-    && missingInDb.length === 0 && extraInDb.length === 0 && dupXlsx.length === 0,
-    '业务表 96 行、DB 96 行、data_id 集合完全一致',
+
+  /**
+   * V9 修订：两条新的「合法多出行」判定。
+   *
+   * 背景：业务侧在 xlsx 导出（2026-10-30 23:30）之后新建了测试单据
+   * （流水号 215，提交时间 2026-10-31 23:36:51），于是 DB 变成 97 行。
+   * V8 的实现把行数写死 96，会把**正常的业务新增**判成 FAIL。
+   *
+   * 现在按两条互不重叠的口径解释「DB 比 xlsx 多出来的行」：
+   *   a) **快照后新建**：`parsed_16.提交时间(解析)` > 快照时刻（215 属于这类）；
+   *   b) **快照后新推送但 xlsx 未收录**：`jdywh_data_16` 里该 data_id 的
+   *      `MAX(jdy_op_time)` > 快照毫秒（业务侧导出后又改过、xlsx 抓的是旧行集合）。
+   * 两者都不算数据错误；但「既不是新增、也没推送证据」的多出行仍会 FAIL。
+   */
+  const submmitCol = (() => {
+    const hit = (dbColumns || []).find((c) => String(c.COLUMN_COMMENT || '') === '提交时间(解析)');
+    return hit ? hit.COLUMN_NAME : null;
+  })();
+  const createdAfterSnapshot = new Set();
+  if (submmitCol) {
+    const snapStr = (() => {
+      const d = new Date(opt.snapshotMs + 8 * 3600 * 1000);
+      return d.toISOString().slice(0, 19).replace('T', ' ');
+    })();
+    try {
+      const r = await db.query(
+        `SELECT jdy_data_id FROM jdywh_parsed_16 WHERE \`${submmitCol}\` > ?`, [snapStr]
+      );
+      r.forEach((x) => createdAfterSnapshot.add(normText(x.jdy_data_id)));
+    } catch (_) { /* 判定失败则退回旧口径 */ }
+  }
+  const explainedExtra = extraInDb.filter(
+    (id) => isFresh(id) || createdAfterSnapshot.has(id)
+  );
+  const unexplainedExtra = extraInDb.filter(
+    (id) => !isFresh(id) && !createdAfterSnapshot.has(id)
+  );
+  const expectedRows = xlsx.rows.length + explainedExtra.length;
+
+  push(2, rows16.length === expectedRows
+    && missingInDb.length === 0 && unexplainedExtra.length === 0 && dupXlsx.length === 0,
+    `业务表 ${xlsx.rows.length} 行、DB ${rows16.length} 行（含快照后新增 ${explainedExtra.length} 行，已归因）、data_id 集合一致`,
     `业务表 ${xlsx.rows.length} 行（sheet「${xlsx.sheet}」，${xlsx.header.length} 列）｜DB ${rows16.length} 行`
-    + `\ndata_id 仅在业务表: ${missingInDb.length}｜仅在 DB: ${extraInDb.length}｜业务表内重复: ${dupXlsx.length}`
+    + `\n快照后新增/新推送可解释的多出行: ${explainedExtra.length}`
+    + `（新建 ${createdAfterSnapshot.size} / 快照后有推送 ${extraInDb.filter((id) => isFresh(id)).length}）`
+    + `\ndata_id 仅在业务表: ${missingInDb.length}｜无法解释的额外行: ${unexplainedExtra.length}｜业务表内重复: ${dupXlsx.length}`
     + (missingInDb.length ? `\n  仅在业务表: ${missingInDb.join(', ')}` : '')
-    + (extraInDb.length ? `\n  仅在 DB: ${extraInDb.join(', ')}` : ''));
+    + (unexplainedExtra.length ? `\n  无法解释: ${unexplainedExtra.join(', ')}` : ''));
   console.log('');
 
   /* ---------------- 逐格比对 ---------------- */

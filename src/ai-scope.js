@@ -354,12 +354,31 @@ async function columnLabelMap(projectId) {
   }
 }
 
+/**
+ * 列对象补全类型元信息。
+ *
+ * V9 起多带 `dataType`（裸类型名，如 double / varchar / text）与 `maxLen`（声明长度）：
+ * 值域采样要靠它们判断「这个列值不值得采样」（见下文第二节·补）。
+ * 这两项是纯附加字段，历史调用方只读 name/type/label，不受影响。
+ */
 function decorateColumns(cols, labels) {
-  return (cols || []).map((c) => ({
-    name: c.name,
-    type: c.type || c.dataType || '',
-    label: labels[c.name] || c.comment || '',
-  }));
+  return (cols || []).map((c) => {
+    const rawType = String(c.type || c.dataType || '');
+    const dataType = rawType.toLowerCase().replace(/\(.*$/, '').trim()
+      || String(c.dataType || '').toLowerCase().trim();
+    let maxLen = Number(c.maxLen || 0) || 0;
+    if (!maxLen) {
+      const m = rawType.match(/\((\d+)\)/);
+      if (m) maxLen = Number(m[1]);
+    }
+    return {
+      name: c.name,
+      type: c.type || c.dataType || '',
+      dataType,
+      maxLen,
+      label: labels[c.name] || c.comment || '',
+    };
+  });
 }
 
 /**
@@ -533,8 +552,17 @@ async function resolveFlow(id) {
   };
 }
 
-/** 解析单条 scope 项 → 统一对象（失败时带 invalid:true + reason） */
-async function resolveOne(item) {
+/**
+ * 解析单条 scope 项 → 统一对象（失败时带 invalid:true + reason）
+ *
+ * @param {{kind:string,id:number,tableType?:string}} item
+ * @param {{sampleValues?:boolean}} [options]
+ *        sampleValues 默认 **true**：解析成功后顺带做低基数列值域采样
+ *        （问数必须先有值域，否则模型会按中文语义瞎猜数值编码列）。
+ *        批量枚举场景（scope-options 列表、分享 meta）显式传 false 以省开销。
+ */
+async function resolveOne(item, options) {
+  const opts = options || {};
   const kind = String((item && item.kind) || '').trim().toLowerCase();
   const id = Number(item && item.id);
   const base = { kind, id, name: '', table: null, datasourceId: 0, columns: [], rowCount: 0 };
@@ -558,12 +586,394 @@ async function resolveOne(item) {
   if (!r || r.invalid) {
     return Object.assign(base, { invalid: true, reason: (r && r.invalid) || '解析失败' });
   }
-  return Object.assign(base, r, {
+  const merged = Object.assign(base, r, {
     kind,
     id: Number(r.id || id),
     label: KIND_LABEL[kind],
     invalid: false,
   });
+
+  // V9：低基数列值域采样（自带超时与异常兜底，失败只是没有 values）
+  if (opts.sampleValues !== false) {
+    await sampleValueDomains(merged);
+  }
+  return merged;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+ *  二·补、低基数列值域采样（V9）
+ *
+ *  真实故障（V8 遗留）：`buildSchemaText` 只喂「列名(注释)」，**不给取值域**。
+ *  `jdywh_parsed_16.sys_flow_state_2` 是 DOUBLE 存 0/1、注释却叫「流程状态」，
+ *  模型只能按中文语义猜：
+ *      WHERE sys_flow_state_2 = '2'              → 0 行（实际 0→93、1→4）
+ *      WHERE flow_current_node = '流转完成'       → 0 行（该列存节点名）
+ *      WHERE widget_1791533061604 = '流转完成'    → 0 行（该列也存节点名）
+ *  同一张表还有「流程状态(节点)」「当前节点」两个注释相近、含义完全不同的列，
+ *  模型无从区分该用哪个。
+ *
+ *  方案：对**低基数列**做一次轻量采样，把「取值 → 行数」写进
+ *  `source.columns[i].values = [{v:'0',c:93},{v:'1',c:4}]`，
+ *  提示词里显式写成「取值：0=进行中(93行)、1=流转完成(4行)」，模型就不必猜。
+ *
+ *  性能红线（每次问数都会跑 resolveScope）：
+ *    · 只采样「distinct ≤ 24」的低基数列，整表行数 > 50 万直接跳过；
+ *    · 每个来源最多 2 轮 SQL（非文本族一轮、文本族一轮），每轮「distinct 统计 + 取值分组」
+ *      各 1 条语句 —— 单表只扫 2 次，不做 N 次往返；
+ *    · 最多 40 个候选列，优先「状态/类型/结果/是否/节点/区域/级别/版本」；
+ *    · 单条语句 1.2s、整体 2.5s 预算，超时或报错一律放弃采样。
+ *    · **采样失败绝不抛出**：该列没有 values 而已，问数照常进行。
+ * ══════════════════════════════════════════════════════════════════ */
+
+/** 可采样列的数据类型白名单（值域只对这些类型有意义） */
+const SAMPLE_TYPES = new Set([
+  'int', 'bigint', 'smallint', 'tinyint', 'mediumint',
+  'double', 'float', 'decimal', 'numeric',
+  'varchar', 'char', 'enum', 'set',
+  'text', 'tinytext',
+]);
+
+/** 文本族（TEXT/TINYTEXT）：取值可能很长，单独一轮，且只在小表上尝试 */
+const SAMPLE_TEXT_TYPES = new Set(['text', 'tinytext']);
+
+/** 声明长度上限：VARCHAR(255) 这类业务列要保留；TEXT/LONGTEXT 的 65535 不在其列 */
+const SAMPLE_MAX_DECLARED_LEN = 255;
+/** 单个取值渲染后的长度上限（有更长的取值即视为长文本列，整列不展开取值） */
+const SAMPLE_MAX_VALUE_LEN = 64;
+/** 只对低基数列采样 */
+const SAMPLE_MAX_DISTINCT = 24;
+/** 一轮最多采样列数 */
+const SAMPLE_MAX_COLUMNS = 40;
+/** 文本族最多采样列数 */
+const SAMPLE_MAX_TEXT_COLUMNS = 12;
+/** 行数超过此值不再做文本族采样 */
+const SAMPLE_TEXT_MAX_ROWS = 50000;
+/** 表行数超过此值整体不采样 */
+const SAMPLE_MAX_ROWS = 500000;
+/** 每列最多保留的取值个数 */
+const SAMPLE_TOP_VALUES = 8;
+/** 单条采样语句超时预算（ms） */
+const SAMPLE_QUERY_TIMEOUT_MS = Math.max(300, Number(process.env.AI_SAMPLE_TIMEOUT_MS) || 1200);
+/** 单次采样整体预算（ms）：超预算就放弃余下阶段 */
+const SAMPLE_TOTAL_BUDGET_MS = Math.max(500, Number(process.env.AI_SAMPLE_BUDGET_MS) || 2500);
+/** 值域优先关键词：业务上最常用来筛选/分组的列 */
+const SAMPLE_PRIORITY_RE = /状态|类型|结果|是否|节点|区域|级别|版本/;
+/** 采样时跳过的系统/超长列（浪费预算且无业务含义） */
+const SAMPLE_SKIP_NAMES = new Set([
+  'id', 'raw_json', 'jdy_data_id', 'jdy_op', 'jdy_op_time', 'jdy_form_name',
+  'sys_app_id_2', 'sys_entry_id_2',
+  'received_at', 'updated_at', 'created_at',
+]);
+
+/**
+ * 取值里出现这些字符就不展开该列的取值域：
+ *   \r\n\t  换行/制表符会破坏「一列一行」的提示词结构；
+ *   、      是我们拼接多个取值的分隔符；
+ *   =       是「取值=含义」的分隔符；
+ *   ()      是行数的括号。
+ * 出现这些字符说明该列是自由文本，本来也不适合当枚举用。
+ */
+const SAMPLE_VALUE_UNSAFE_RE = /[\r\n\t、=()]/;
+
+/**
+ * 已知枚举列的「取值 → 中文含义」字典（按**列名**匹配，与项目/表无关）。
+ *
+ * 简道云流程状态码是平台固定语义：0 进行中 / 1 已完成（流转完成）/ 2 已结束 / 3 已撤销。
+ * 只在列名命中时补充含义，绝不按值瞎猜别的列。
+ */
+const KNOWN_ENUM_DICTS = [
+  {
+    match: (c) => /^sys_flow_state(_\d+)?$/i.test(String((c && c.name) || '')),
+    meanings: { 0: '进行中', 1: '流转完成', 2: '已结束', 3: '已撤销' },
+    note: '〔该列是流程状态码：1=流转完成（即「已完成/办结」），0=进行中（未完成）；'
+      + '问「完成了流程 / 走完流程 / 已办结」请用 `该列 = 1`〕',
+  },
+];
+
+/** 给 Promise 加超时兜底：超时后放弃等待（原查询仍在后台跑完，不影响主流程） */
+function withTimeout(promise, ms, label) {
+  let timer = null;
+  const guard = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}超时（>${ms}ms）`)), ms);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  });
+  return Promise.race([promise, guard]).finally(() => { if (timer) clearTimeout(timer); });
+}
+
+/** 生成 MySQL 字符串字面量（只用于回显我们自己的列名，不拼接用户输入） */
+function sqlTextLiteral(v) {
+  return `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`;
+}
+
+/** 该列是否文本族 */
+function isTextFamily(c) {
+  return SAMPLE_TEXT_TYPES.has(String((c && c.dataType) || '').toLowerCase());
+}
+
+/**
+ * 挑选值得采样的候选列（按优先级排序后截断）。
+ * @param {Array} columns 已 decorate 的列
+ * @param {number} rowCount 表行数
+ * @returns {{core:Array, text:Array}}
+ */
+function pickSampleCandidates(columns, rowCount) {
+  const rows = Number(rowCount || 0);
+  const picked = [];
+  (columns || []).forEach((c) => {
+    const name = String((c && c.name) || '');
+    if (!name || SAMPLE_SKIP_NAMES.has(name)) return;
+    const dt = String((c.dataType || c.type) || '').toLowerCase().replace(/\(.*$/, '').trim();
+    if (!SAMPLE_TYPES.has(dt)) return;
+    const maxLen = Number(c.maxLen || 0);
+    if (SAMPLE_TEXT_TYPES.has(dt)) {
+      // 文本族：只在小表上尝试；取值是否过长由 SAMPLE_MAX_VALUE_LEN 兜住
+      if (rows > SAMPLE_TEXT_MAX_ROWS) return;
+    } else if (maxLen && maxLen > SAMPLE_MAX_DECLARED_LEN) {
+      return;
+    }
+    picked.push(c);
+  });
+
+  const hit = (c) => SAMPLE_PRIORITY_RE.test(`${c.name || ''} ${c.label || ''}`);
+  const ordered = picked.filter(hit).concat(picked.filter((c) => !hit(c)));
+  return {
+    core: ordered.filter((c) => !isTextFamily(c)).slice(0, SAMPLE_MAX_COLUMNS),
+    text: ordered.filter(isTextFamily).slice(0, SAMPLE_MAX_TEXT_COLUMNS),
+  };
+}
+
+/**
+ * 对一组候选列采样取值域：一轮 distinct 统计 + 一轮分组取值，共 2 条 SQL。
+ *
+ * @param {string} table 物理表名
+ * @param {Array} candidates 候选列
+ * @param {object} stat 采样统计（累加）
+ * @param {number} deadline 整体截止时间戳（ms）
+ */
+async function fillValueDomains(table, candidates, stat, deadline) {
+  const list = (candidates || []).filter((c) => c && c.name);
+  if (!list.length) return;
+  const quoted = quoteName(table);
+  const remain = () => deadline - Date.now();
+  if (remain() < 150) {
+    if (!stat.reason) stat.reason = '采样预算不足，已跳过部分列';
+    return;
+  }
+
+  // 1) 一条语句拿到全部候选列的 distinct 数（单次扫描，避免逐列往返）
+  let distinctRow = null;
+  try {
+    const exprs = list.map((c, i) => `COUNT(DISTINCT ${quoteName(c.name)}) AS d${i}`);
+    distinctRow = await withTimeout(
+      db.queryOne(`SELECT ${exprs.join(', ')} FROM ${quoted}`),
+      Math.min(SAMPLE_QUERY_TIMEOUT_MS, remain()),
+      '值域 distinct 统计'
+    );
+  } catch (err) {
+    stat.errors.push(err.message);
+    return;
+  }
+
+  const low = list.filter((c, i) => {
+    const n = Number((distinctRow && distinctRow[`d${i}`]) || 0);
+    return n > 0 && n <= SAMPLE_MAX_DISTINCT;
+  });
+  if (!low.length) return;
+
+  // 2) 一条 UNION ALL 取回各低基数列的 top 取值（每个分支独立 GROUP BY + ORDER BY + LIMIT）
+  let valueRows = [];
+  try {
+    const branches = low.map((c) => {
+      const q = quoteName(c.name);
+      return `(SELECT ${sqlTextLiteral(c.name)} AS vcol, ${q} AS vval, COUNT(*) AS vcnt
+                 FROM ${quoted} GROUP BY ${q} ORDER BY vcnt DESC, vval ASC LIMIT ${SAMPLE_TOP_VALUES})`;
+    });
+    valueRows = await withTimeout(
+      db.query(branches.join('\nUNION ALL\n')),
+      Math.min(SAMPLE_QUERY_TIMEOUT_MS, remain()),
+      '值域取值采样'
+    );
+  } catch (err) {
+    stat.errors.push(err.message);
+    return;
+  }
+
+  const buckets = new Map();
+  (valueRows || []).forEach((r) => {
+    const key = String(r.vcol);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(r);
+  });
+
+  low.forEach((c) => {
+    const got = buckets.get(String(c.name)) || [];
+    if (!got.length) return;
+    const raws = got.map((r) => (r.vval === null || r.vval === undefined ? null : String(r.vval)));
+    // 全空列（如「是否开通」97 行都是空）没有信息量，不展开
+    if (raws.every((v) => v === null || v === '')) return;
+    // 长文本 / 自由文本列：取值超长或含会破坏提示词结构的字符 → 整列不展开
+    if (raws.some((v) => v !== null && v.length > SAMPLE_MAX_VALUE_LEN)) return;
+    if (raws.some((v) => v !== null && SAMPLE_VALUE_UNSAFE_RE.test(v))) return;
+    /*
+     * NULL 与空串在提示词里都渲染成「(空)」，必须合并成一条，
+     * 否则会出现「(空)(48行)、(空)(40行)」这种模型无法理解的重复取值。
+     */
+    const acc = new Map();
+    raws.forEach((v, i) => {
+      const key = v === null || v === '' ? '(空)' : v;
+      acc.set(key, (acc.get(key) || 0) + Number(got[i].vcnt || 0));
+    });
+    const values = [...acc.entries()].map(([v, c2]) => ({ v, c: c2 }));
+    c.values = values;           // eslint-disable-line no-param-reassign
+    stat.columns += 1;
+    stat.values += values.length;
+  });
+}
+
+/**
+ * 给一个已解析来源采样低基数列值域（结果写回 source.columns[i].values）。
+ *
+ * **绝不抛出**：任何异常/超时都只让该来源「没有值域」，不影响问数。
+ *
+ * @param {object} source resolveOne 解析出的来源对象
+ * @returns {Promise<{table:string,columns:number,values:number,ms:number,reason:string,errors:string[]}>}
+ */
+async function sampleValueDomains(source) {
+  const started = Date.now();
+  const stat = { table: '', columns: 0, values: 0, ms: 0, reason: '', errors: [] };
+  try {
+    if (!source || source.invalid || !source.table) return stat;
+    stat.table = String(source.table);
+    const columns = Array.isArray(source.columns) ? source.columns : [];
+    const rowCount = Number(source.rowCount || 0);
+    if (!columns.length || rowCount <= 0) return stat;
+    if (rowCount > SAMPLE_MAX_ROWS) {
+      stat.reason = `表行数 ${rowCount} 超过 ${SAMPLE_MAX_ROWS}，跳过值域采样`;
+      return stat;
+    }
+    const { core, text } = pickSampleCandidates(columns, rowCount);
+    const deadline = started + SAMPLE_TOTAL_BUDGET_MS;
+    await fillValueDomains(source.table, core, stat, deadline);
+    await fillValueDomains(source.table, text, stat, deadline);
+  } catch (err) {
+    stat.reason = String((err && err.message) || err);
+  } finally {
+    stat.ms = Date.now() - started;
+    if (source && typeof source === 'object') source.valueDomain = stat;
+  }
+  return stat;
+}
+
+/** 取某列某取值的业务含义（无字典命中返回空串，绝不臆造） */
+function enumMeaningOf(column, value) {
+  const key = value === null || value === undefined ? '' : String(value);
+  if (!key) return '';
+  for (const d of KNOWN_ENUM_DICTS) {
+    if (!d.match(column)) continue;
+    return d.meanings[key] || '';
+  }
+  return '';
+}
+
+/** 该列是否「数值编码列」：数值类型 + 中文注释 + 取值全是数字 */
+function isNumericCodedColumn(column) {
+  const dt = String((column && (column.dataType || column.type)) || '').toLowerCase().replace(/\(.*$/, '').trim();
+  if (!['int', 'bigint', 'smallint', 'tinyint', 'mediumint',
+    'double', 'float', 'decimal', 'numeric'].includes(dt)) return false;
+  if (!/[\u4e00-\u9fa5]/.test(String(column.label || ''))) return false;
+  const values = Array.isArray(column.values) ? column.values : [];
+  if (!values.length) return false;
+  return values.every((it) => it.v === null || /^-?\d+(\.\d+)?$/.test(String(it.v)));
+}
+
+/** 「取值：0=进行中(93行)、1=流转完成(4行)」 */
+function formatValueDomain(column) {
+  const values = Array.isArray(column.values) ? column.values : [];
+  if (!values.length) return '';
+  const parts = values.map((it) => {
+    const raw = it.v === null || it.v === '' ? '(空)' : String(it.v);
+    const meaning = enumMeaningOf(column, it.v);
+    const cnt = it.c ? `(${it.c}行)` : '';
+    return meaning ? `${raw}=${meaning}${cnt}` : `${raw}${cnt}`;
+  });
+  return `取值：${parts.join('、')}`;
+}
+
+/** 单列描述：列名 + 类型 + 注释 + 取值域 + 数值编码提示 + 已知枚举说明 */
+function describeColumn(column) {
+  const label = column.label ? `（${column.label}）` : '';
+  let line = `\`${column.name}\` ${column.type || ''}${label}`.trim();
+  const domain = formatValueDomain(column);
+  if (domain) line += ` ${domain}`;
+  if (isNumericCodedColumn(column)) {
+    line += ' 〔数值编码列：只能与数值比较（如 = 1），不能用中文文本比较〕';
+  }
+  for (const d of KNOWN_ENUM_DICTS) {
+    if (d.note && d.match(column)) line += ` ${d.note}`;
+  }
+  return line;
+}
+
+/**
+ * 找出「注释近似但含义不同」的列组，用于提示词里的并列展示。
+ *
+ * 判定：把注释里的括号段拆出来，**去掉括号后相同**即同族
+ * （`流程状态` / `流程状态(节点)`、`优惠券` / `优惠券(结果)`）。
+ * 然后只保留**真正会造成误用**的族，条件全部满足：
+ *   1. 成员至少有 2 个「显示注释不同」（纯同名重复不算）；
+ *   2. 不带 `(解析)` 后缀（解析列是同一字段的加工副本，规则 4 已够，列出来只是噪音）；
+ *   3. 每个成员都采样到了值域，且成员之间「类型不同 或 取值集合不同」
+ *      —— 值域一样的同义列不构成歧义；
+ *   4. 总组数 ≤ 6、每组 ≤ 4 列，避免撑爆提示词。
+ *
+ * @param {Array} columns
+ * @returns {Array<Array>} 列组
+ */
+function similarLabelGroups(columns) {
+  const cap = (arr, n) => arr.slice(0, n);
+  /** 注释 → {base, tag}：base 是去掉全部括号段的部分，tag 是括号段拼接 */
+  const split = (label) => {
+    const s = String(label || '');
+    const tags = [];
+    const base = s.replace(/[（(]([^（）()]*)[)）]/g, (_, inner) => {
+      tags.push(String(inner).trim());
+      return '';
+    }).trim();
+    return { base, tag: tags.join('/') };
+  };
+
+  const fams = new Map();
+  (columns || []).forEach((c) => {
+    const label = String((c && c.label) || '').trim();
+    if (!label) return;
+    if (/(解析)$/.test(label)) return;                 // 解析列不进歧义组
+    const { base, tag } = split(label);
+    if (!base || base.length < 2) return;
+    if (!fams.has(base)) fams.set(base, []);
+    fams.get(base).push({ col: c, label, tag });
+  });
+
+  const signature = (c) => JSON.stringify([
+    String(c.dataType || c.type || '').toLowerCase(),
+    (Array.isArray(c.values) ? c.values : []).map((it) => `${it.v}:${it.c}`).sort(),
+  ]);
+
+  const groups = [];
+  fams.forEach((members) => {
+    if (members.length < 2) return;
+    // 「显示注释不同」才算同族内的歧义
+    if (new Set(members.map((m) => m.label)).size < 2) return;
+    const cols = members.map((m) => m.col);
+    // 必须全部采到值域，否则无从证明它们含义不同（宁可不出提示）
+    if (cols.some((c) => !Array.isArray(c.values) || !c.values.length)) return;
+    if (new Set(cols.map(signature)).size < 2) return;   // 类型与取值都一样 → 同义列
+    groups.push(cap(cols, 4));
+  });
+
+  // 组大的优先（成员越多歧义越强），再按首列在表里的顺序稳定排序
+  const order = new Map((columns || []).map((c, i) => [String(c.name), i]));
+  groups.sort((a, b) => (b.length - a.length) || (order.get(String(a[0].name)) - order.get(String(b[0].name))));
+  return cap(groups, 6);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -578,7 +988,7 @@ async function listScopeOptions() {
   try {
     const list = await reports.listDatasets();
     for (const d of list) {
-      const r = await resolveOne({ kind: 'dataset', id: d.id });
+      const r = await resolveOne({ kind: 'dataset', id: d.id }, { sampleValues: false });
       out.datasets.push(toOption(r, d.name));
     }
   } catch (err) {
@@ -589,7 +999,7 @@ async function listScopeOptions() {
   try {
     const rows = await db.query('SELECT id, name FROM jdywh_projects ORDER BY id');
     for (const p of rows) {
-      const r = await resolveOne({ kind: 'project', id: p.id });
+      const r = await resolveOne({ kind: 'project', id: p.id }, { sampleValues: false });
       out.projects.push(toOption(r, p.name));
     }
   } catch (err) {
@@ -600,7 +1010,7 @@ async function listScopeOptions() {
   try {
     const rows = await db.query('SELECT id, name FROM jdywh_mail_projects ORDER BY id');
     for (const m of rows) {
-      const r = await resolveOne({ kind: 'mail', id: m.id });
+      const r = await resolveOne({ kind: 'mail', id: m.id }, { sampleValues: false });
       out.mails.push(toOption(r, m.name));
     }
   } catch (err) {
@@ -611,7 +1021,7 @@ async function listScopeOptions() {
   try {
     const rows = await db.query('SELECT id, name FROM jdywh_flows ORDER BY id');
     for (const f of rows) {
-      const r = await resolveOne({ kind: 'flow', id: f.id });
+      const r = await resolveOne({ kind: 'flow', id: f.id }, { sampleValues: false });
       out.flows.push(toOption(r, f.name));
     }
   } catch (err) {
@@ -645,7 +1055,8 @@ function toOption(r, fallbackName) {
  * 解析并去重 scope。
  *
  * @param {Array<{kind:string,id:number,tableType?:string}>} scope
- * @param {{maxSources?:number}} [options]
+ * @param {{maxSources?:number, sampleValues?:boolean}} [options]
+ *        sampleValues 默认 true（问数要先有值域）；显式 false 可跳过采样。
  * @returns {Promise<{sources:Array, invalid:Array, dropped:Array}>}
  */
 async function resolveScope(scope, options) {
@@ -668,7 +1079,7 @@ async function resolveScope(scope, options) {
   const seenTables = new Set();
 
   for (const item of list) {
-    const r = await resolveOne(item);
+    const r = await resolveOne(item, { sampleValues: opts.sampleValues !== false });
     if (r.invalid) {
       invalid.push({ kind: r.kind, id: r.id, name: r.name, reason: r.reason });
       continue;
@@ -708,20 +1119,37 @@ async function resolveScope(scope, options) {
  *  五、给模型的 schema 描述 + CTE 注入
  * ══════════════════════════════════════════════════════════════════ */
 
-/** 生成给模型的 schema 文本（只用逻辑表名，绝不出现中文物理表名） */
+/**
+ * 生成给模型的 schema 文本（只用逻辑表名，绝不出现中文物理表名）。
+ *
+ * V9 变化（这是本次「已完成流程的客户数查成 0」的根因修复）：
+ *   1. 每列独占一行，并在**有值域**时追加「取值：0=进行中(93行)、1=流转完成(4行)」；
+ *   2. 数值类型 + 中文注释的列标注「数值编码列」，明确禁止用中文文本比较；
+ *   3. 注释相近的列（`流程状态` / `流程状态(节点)`）在「近似列提醒」里**并列展示且各自带值域**。
+ */
 function buildSchemaText(sources) {
   const blocks = [];
   (sources || []).forEach((s, idx) => {
-    const cols = (s.columns || []).map((c) => {
-      const label = c.label ? `（${c.label}）` : '';
-      return `\`${c.name}\` ${c.type || ''}${label}`.trim();
-    });
-    blocks.push([
+    const columns = s.columns || [];
+    const lines = columns.map((c) => `- ${describeColumn(c)}`);
+    const block = [
       `【${idx + 1}】${s.name}（${s.label || ''}，共 ${Number(s.rowCount || 0)} 行）`,
       `逻辑表名：${s.alias}`,
-      `字段（共 ${(s.columns || []).length} 个）：`,
-      cols.length ? cols.join('，') : '（无字段）',
-    ].join('\n'));
+      `字段（共 ${columns.length} 个）：`,
+      lines.length ? lines.join('\n') : '（无字段）',
+    ];
+
+    // 同名/近似列提醒：并列展示 + 各自带值域，让模型能区分该用哪一列
+    const groups = similarLabelGroups(columns);
+    if (groups.length) {
+      block.push('');
+      block.push('近似列提醒（以下列注释相近但含义不同，必须按列名与取值选择正确的一列，不得混用）：');
+      groups.forEach((g) => {
+        block.push(`· ${g.map((c) => describeColumn(c)).join('  ‖  ')}`);
+      });
+    }
+
+    blocks.push(block.join('\n'));
   });
   return blocks.join('\n\n');
 }
@@ -952,6 +1380,21 @@ module.exports = {
   hasLabelAliases,
   wrapSql,
   quoteName,
+  // 值域采样（V9；自测脚本直接复用）
+  sampleValueDomains,
+  pickSampleCandidates,
+  formatValueDomain,
+  describeColumn,
+  similarLabelGroups,
+  isNumericCodedColumn,
+  enumMeaningOf,
+  KNOWN_ENUM_DICTS,
+  SAMPLE_TYPES,
+  SAMPLE_MAX_DISTINCT,
+  SAMPLE_MAX_COLUMNS,
+  SAMPLE_MAX_VALUE_LEN,
+  SAMPLE_TOP_VALUES,
+  SAMPLE_MAX_ROWS,
   // 校验
   assertScopeOnly,
 };

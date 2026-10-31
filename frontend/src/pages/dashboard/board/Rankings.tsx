@@ -13,8 +13,9 @@
  * 说明：Modal 通过 portal 挂到 body，取不到 .board-root 注入的 CSS 变量（V7 踩过的坑），
  *      故弹窗内容外层重新声明整套令牌（PORTAL_LIGHT / PORTAL_DARK）。
  */
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Empty, Modal, Table } from 'antd';
+import ProvinceMapModal from './ProvinceMapModal';
 import type { ColumnsType } from 'antd/es/table';
 import { RightOutlined } from '@ant-design/icons';
 import { CHAIN_TYPE_COLORS, CHAIN_TYPE_SHORT } from '@/api/crm-board';
@@ -137,13 +138,13 @@ function shortProvince(name: string): string {
 /* ══════════════ 局部样式（vb4- 前缀） ══════════════ */
 const CSS = `
 /* E5：三张卡各自按内容撑开，底部不留空白 */
-.vb4-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start;min-width:0}
+.vb4-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:stretch;min-width:0;height:100%}
 /* 768~1279px：让 3 张卡直接成为外层第 3 排 2×2 网格的子项（列宽由 TypeSummary 侧定义） */
 @media(min-width:768px) and (max-width:1279.98px){.vb4-grid{display:contents!important}}
 /* ≤767px：外层是 1 列（Board.tsx 内联），3 张卡也各占 1 列，否则会挤成 ~108px 宽 */
 @media(max-width:767.98px){.vb4-grid{grid-template-columns:1fr!important}}
 
-.vb4-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;height:auto;min-width:0}
+.vb4-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;height:100%;min-width:0}
 .vb4-card:hover{border-color:var(--brand3);box-shadow:var(--shadow2);transform:translateY(-1px)}
 .vb4-h{padding:12px 14px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:6px 8px;flex-wrap:wrap;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent)}
 .vb4-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
@@ -151,7 +152,7 @@ const CSS = `
 .vb4-more{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:var(--brand);background:transparent;border:0;cursor:pointer;padding:2px 4px;border-radius:6px;transition:background .15s;white-space:nowrap}
 .vb4-more:hover{background:var(--brandSoft)}
 .vb4-more svg{font-size:9px}
-.vb4-b{padding:11px 12px;display:flex;flex-direction:column;justify-content:flex-start;gap:7px;min-width:0;min-height:150px}
+.vb4-b{padding:11px 12px;display:flex;flex-direction:column;justify-content:flex-start;gap:7px;min-width:0;min-height:150px;flex:1}
 .vb4-empty{padding:14px 0}
 
 /* 名次徽章（三卡共用） */
@@ -192,8 +193,8 @@ const CSS = `
 .vb4b-tags{margin-top:1px}
 
 /* ══════ C. 省份排行榜：热力网格（俯瞰地图风） ══════ */
-.vb4c-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:5px;min-width:0}
-.vb4c-cell{position:relative;border:1px solid var(--line);border-radius:9px;padding:5px 4px 4px;cursor:pointer;text-align:center;line-height:1.15;transition:transform .14s ease,box-shadow .14s ease,filter .14s ease;font-family:inherit;overflow:hidden}
+.vb4c-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:5px;min-width:0;flex:1;align-content:stretch}
+.vb4c-cell{position:relative;border:1px solid var(--line);border-radius:9px;padding:5px 4px 4px;cursor:pointer;text-align:center;line-height:1.15;transition:transform .14s ease,box-shadow .14s ease,filter .14s ease;font-family:inherit;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:56px}
 .vb4c-cell:hover{transform:translateY(-2px) scale(1.03);box-shadow:var(--shadow2);filter:brightness(1.06);z-index:1}
 .vb4c-cell:active{transform:translateY(0) scale(.99)}
 .vb4c-cell .pn{display:block;font-size:10px;font-weight:700;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -642,7 +643,7 @@ function ProvinceRankCard({
           ) : (
             <>
               <div className="vb4c-grid">
-                {items.map((r, i) => {
+                {items.slice(0, 5).map((r, i) => {
                   const no = Number(r?.rank) || i + 1;
                   const v = valueOf(r, 'clients');
                   /* 热力：10%~50% 混入省份色（brand）——上限压到 50%，保证底色始终足够浅/深，
@@ -689,9 +690,13 @@ function ProvinceRankCard({
         </div>
       </div>
 
-      <AllRankModal
-        title="省份排行榜" open={listOpen} onClose={() => setListOpen(false)}
-        items={items} metric="clients" unit="客户" dark={dark} isMobile={isMobile} showSales
+      {/* V8.1 E3：「更多」→ 中国地图 */}
+      <ProvinceMapModal
+        items={items}
+        open={listOpen}
+        onClose={() => setListOpen(false)}
+        dark={dark}
+        isMobile={isMobile}
       />
       <ProvinceDrillModal
         province={drill}

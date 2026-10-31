@@ -1,9 +1,17 @@
 /**
  * 项目介绍 / 宣传页（/intro）
  *
- * 结构：Hero → 为什么需要数据中台 → 核心能力 → 行业案例 → 技术架构 → CTA → 页脚
+ * 结构：Hero → 快速链接（GitHub / 更新记录）→ 为什么需要数据中台 → 核心能力
+ *       → 行业案例 → 技术架构 → CTA → 更新记录（内置精简版）→ 页脚
  * 颜色严格限定在 V4 调色板 13 色内（仅用不同透明度做层次）。
  * <768px 全部单列。
+ *
+ * V9 改版（本文件）：
+ *  1. 新增源码仓库 GitHub 入口（Hero 下方快速链接 + 页脚），必须是可点击 <a>；
+ *  2. 新增「更新记录」板块，内置 CHANGELOG.md 的 V9.0 / V8.0 / V7.1 / V7.0 精简版，
+ *     底部链到 GitHub 上的完整 CHANGELOG.md；
+ *  3. 页脚**不再渲染** site.footer（用户要求取消「XX公司版权所有」），改中性文案；
+ *     版本号统一取 APP_VERSION 常量，不硬编码。
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, Card, Col, Grid, Row, Space, Tag } from 'antd';
@@ -19,6 +27,7 @@ import {
   CloudDownloadOutlined,
   CoffeeOutlined,
   FormOutlined,
+  GithubOutlined,
   HomeOutlined,
   MedicineBoxOutlined,
   NodeIndexOutlined,
@@ -35,6 +44,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import IntroHero from '@/components/IntroHero';
 import { api } from '@/api/client';
+import { APP_VERSION } from '@/stores/app';
 import { PALETTE, NEUTRAL } from '@/theme';
 
 const { useBreakpoint } = Grid;
@@ -70,6 +80,11 @@ interface SiteInfo {
   name: string;
   subtitle: string;
   description: string;
+  /**
+   * 站点页脚文案（设置项 site_footer，生产库当前值是「XX公司版权所有」）。
+   * V9 起**本页刻意不渲染它**（用户要求取消版权署名），仍照常读取以免影响
+   * 与其它页面共用同一份公开设置契约；其它页面是否渲染不在本页职责内。
+   */
   footer: string;
   logoText: string;
 }
@@ -107,6 +122,98 @@ function useSiteInfo(): SiteInfo {
   }, []);
   return site;
 }
+
+/* ---------------- 源码仓库 / 更新记录（数据源：仓库根目录 CHANGELOG.md） ---------------- */
+
+/** 源码仓库首页 */
+const GITHUB_REPO = 'https://github.com/myxiaolizi/NeoZhengDataETL';
+/** 完整更新记录（GitHub 上的 CHANGELOG.md） */
+const GITHUB_CHANGELOG = 'https://github.com/myxiaolizi/NeoZhengDataETL/blob/main/CHANGELOG.md';
+
+interface ChangelogEntry {
+  /** 版本号（与 CHANGELOG.md 的章节标题一致，带 V 前缀） */
+  version: string;
+  /** 发布日期（与 CHANGELOG.md 章节标题后的日期一致） */
+  date: string;
+  /** 版本强调色（取调色板令牌，不引入新色相） */
+  color: string;
+  /** 3–6 条要点（CHANGELOG.md 对应章节的精简，不编造） */
+  points: string[];
+}
+
+/**
+ * 版本号归一化：`V9.0` / `9.0.0` / `v9` → `9.0` / `9.0` / `9`。
+ *
+ * 只用于判断「哪一条更新记录是当前版本」，从而让「当前版本」标签跟随
+ * `APP_VERSION` 常量自动走（Lead 把常量改成 V9.0 后无需再动本文件）。
+ */
+function versionKey(v: string): string {
+  const m = String(v || '')
+    .replace(/^[vV]/, '')
+    .match(/\d+(?:\.\d+)?/);
+  return m ? m[0] : '';
+}
+
+/**
+ * 内置精简版更新记录。
+ *
+ * 为什么不在前端 fetch('/CHANGELOG.md') 解析：
+ * CHANGELOG.md 在仓库根目录，**不在前端静态产物目录**（frontend/public 里没有它），
+ * 生产环境无从请求；为它加后端路由又超出前端改动范围。因此内置常量，
+ * 内容逐条对照仓库 CHANGELOG.md 的 [9.0.0] / [8.0.0] / [7.1.0] / [7.0.0] 章节，
+ * 只做压缩、不做改写；底部固定给「完整更新记录见 GitHub」的链接。
+ */
+const CHANGELOG_SUMMARY: ChangelogEntry[] = [
+  {
+    version: 'V9.0',
+    date: '2026-11-01',
+    color: PALETTE.primary,
+    points: [
+      '菜单重构：顶级入口重新归并，常用功能更靠前',
+      '系统设置与用户管理统一为标签页样式，切换不再跳页',
+      'AI 问数补全列值域（如流程状态 0 = 进行中 / 1 = 流转完成），修复「已完成流程的客户数」被查成 0',
+      '流程节点时间自动同步：进入下一节点即回写上一节点提交时间，宽表时间列不再缺失',
+      '项目介绍页改版：新增更新记录与源码仓库入口，页脚取消版权署名',
+    ],
+  },
+  {
+    version: 'V8.0',
+    date: '2026-10-31',
+    color: PALETTE.cyan,
+    points: [
+      '修复 AI 问数完全不可用的 4 个根因：接口地址被双拼、MiMo 预设指向错误平台、Key 失效、仅支持单个数据集',
+      'AI 问数从「单个数据集」升级为多数据范围：数据集 / 数据项目 / 邮箱推送 / 流程产出表',
+      '新增分享为网页：公开问数页 /a/:token，手机与电脑都能用，支持密码、有效期与导出开关',
+      '两个 CRM 项目重新独立核对，快照口径 96 行 × 59 列 100% 一致（0 差异）',
+      '流程宽表 jdywh_crm_signing_v7 上线，推送实时触发自动刷新（全量 upsert 幂等自愈）',
+      'V7 后端首次部署到生产，6.1 之后未上线的变更一并补齐',
+    ],
+  },
+  {
+    version: 'V7.1',
+    date: '2026-10-31',
+    color: PALETTE.green,
+    points: [
+      '看板与报表中心 30+ 项优化，板块标题收进卡片自身标题栏，去掉重复的段标题',
+      '1080P 下 6 张签约概览卡单排显示，手机端 2 排 × 每排 3 个，卡片填充率提升到 80%~92%',
+      '超期改「工作日」口径（排除周六日），每个节点独立阈值；为 0 的节点不再置灰',
+      '类型汇总与排行三个排行榜差异化：横向条形 / 大数字 + 环形刻度 / 热力色块网格',
+      '流程处理显示具体数字；策略模块改名并转置；客户明细可点击看详情',
+    ],
+  },
+  {
+    version: 'V7.0',
+    date: '2026-10-31',
+    color: PALETTE.orange,
+    points: [
+      '核对两个 CRM 数据项目与业务表格（96 行 × 59 列），反改历史数据 295 个单元格后逐格 0 差异',
+      '实测出【当前节点】【当前负责人】四要素推导规则，96/96 还原业务表',
+      '处理流程引擎新增 3 类节点（关联 join / 选取当前待办 / 计算列），节点类型 24 → 27 种',
+      '推送实时触发 run_mode=trigger，加工出与业务表完全一致的宽表 jdywh_crm_signing_v7',
+      '修复「字段被清空时解析列永不置空」的真实缺陷，并顺带修掉建表补列与计算列覆盖两个 bug',
+    ],
+  },
+];
 
 /* ---------------- 内容数据 ---------------- */
 
@@ -472,6 +579,69 @@ export default function IntroPage() {
         footnote={site.description}
       />
 
+      {/* ---------- 快速链接：源码仓库 + 更新记录（Hero 区下方显眼位置） ---------- */}
+      <div
+        style={{
+          marginTop: isMobile ? 14 : 20,
+          padding: isMobile ? '14px 16px' : '16px 24px',
+          borderRadius: isMobile ? 14 : 18,
+          background: C.white,
+          border: `1px solid ${tint(C.deep, 0.08)}`,
+          display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
+          alignItems: isMobile ? 'flex-start' : 'center',
+          justifyContent: 'space-between',
+          gap: isMobile ? 10 : 16,
+        }}
+      >
+        <Space size={isMobile ? 8 : 14} wrap>
+          <a
+            href={GITHUB_REPO}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 7,
+              padding: isMobile ? '6px 12px' : '7px 14px',
+              borderRadius: 9,
+              background: tint(C.deep, 0.94),
+              color: C.white,
+              fontSize: 12.5,
+              fontWeight: 600,
+              textDecoration: 'none',
+            }}
+          >
+            <GithubOutlined style={{ fontSize: 15 }} />
+            GitHub 仓库 · NeoZhengDataETL
+          </a>
+          <a
+            href={GITHUB_CHANGELOG}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: isMobile ? '6px 12px' : '7px 14px',
+              borderRadius: 9,
+              background: tint(C.primary, 0.08),
+              border: `1px solid ${tint(C.primary, 0.24)}`,
+              color: C.brand,
+              fontSize: 12.5,
+              fontWeight: 600,
+              textDecoration: 'none',
+            }}
+          >
+            <ReadOutlined style={{ fontSize: 14 }} />
+            更新记录（Changelog）
+          </a>
+        </Space>
+        <span style={{ fontSize: 11.5, color: tint(C.deep, 0.5) }}>
+          当前版本 <strong style={{ color: C.deep, fontWeight: 800 }}>{APP_VERSION}</strong>
+        </span>
+      </div>
+
       {/* ---------- 为什么需要数据中台 ---------- */}
       <Section
         title="为什么需要数据中台"
@@ -811,6 +981,105 @@ export default function IntroPage() {
         </div>
       </section>
 
+      {/* ---------- 更新记录（内置精简版，完整版见 GitHub CHANGELOG.md） ---------- */}
+      <Section
+        id="changelog"
+        title="更新记录"
+        muted
+        desc="最近 4 个版本的迭代要点。完整更新记录（含全部历史版本、根因分析与验收证据）在 GitHub 仓库的 CHANGELOG.md 中维护。"
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {CHANGELOG_SUMMARY.map((e) => (
+            <div
+              key={e.version}
+              style={{
+                padding: isMobile ? '14px 16px' : '18px 22px',
+                borderRadius: 14,
+                background: C.white,
+                border: `1px solid ${tint(C.deep, 0.08)}`,
+                borderLeft: `4px solid ${e.color}`,
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: isMobile ? 8 : 10,
+                  marginBottom: 10,
+                }}
+              >
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    padding: '2px 10px',
+                    borderRadius: 7,
+                    background: tint(e.color, 0.12),
+                    color: e.color,
+                    fontSize: 13,
+                    fontWeight: 800,
+                    letterSpacing: '-.2px',
+                  }}
+                >
+                  {e.version}
+                </span>
+                {versionKey(e.version) === versionKey(APP_VERSION) && (
+                  <Tag
+                    variant="filled"
+                    style={{
+                      margin: 0,
+                      fontSize: 11,
+                      lineHeight: '19px',
+                      borderRadius: 6,
+                      background: tint(C.green, 0.14),
+                      color: C.green,
+                      fontWeight: 700,
+                    }}
+                  >
+                    当前版本
+                  </Tag>
+                )}
+                <span style={{ fontSize: 11.5, color: tint(C.deep, 0.5) }}>{e.date}</span>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {e.points.map((pt) => (
+                  <div key={pt} style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
+                    <CheckCircleFilled style={{ color: e.color, fontSize: 12, marginTop: 4, flex: '0 0 12px' }} />
+                    <span style={{ fontSize: 12.5, lineHeight: 1.8, color: tint(C.deep, 0.72) }}>{pt}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ textAlign: 'center', marginTop: 18 }}>
+          <a
+            href={GITHUB_CHANGELOG}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12.5,
+              fontWeight: 700,
+              color: C.brand,
+              textDecoration: 'none',
+              padding: '7px 16px',
+              borderRadius: 9,
+              background: tint(C.primary, 0.08),
+              border: `1px solid ${tint(C.primary, 0.24)}`,
+            }}
+          >
+            完整更新记录见 GitHub（CHANGELOG.md）
+            <ArrowRightOutlined style={{ fontSize: 12 }} />
+          </a>
+        </div>
+      </Section>
+
       {/* ---------- 页脚 ---------- */}
       <footer
         style={{
@@ -863,6 +1132,22 @@ export default function IntroPage() {
             <a onClick={scrollToCases} style={{ color: 'rgba(255,255,255,.85)', fontSize: 12.5 }}>
               行业案例
             </a>
+            <a
+              href={GITHUB_REPO}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                color: 'rgba(255,255,255,.85)',
+                fontSize: 12.5,
+                textDecoration: 'none',
+              }}
+            >
+              <GithubOutlined style={{ fontSize: 13 }} />
+              GitHub 仓库
+            </a>
           </Space>
         </div>
 
@@ -877,9 +1162,24 @@ export default function IntroPage() {
           }}
         >
           <div>数据集成 · 数据治理 · 报表 BI · 可视化大屏 · AI 问数</div>
-          <div>
-            {site.footer ? `${site.footer} · ` : ''}
-            © {new Date().getFullYear()} {site.name}
+          {/*
+            V9：不再渲染 site.footer（生产库该值是「XX公司版权所有」，用户要求取消）。
+            改为中性文案；只改本页渲染，不去改数据库里的 site_footer 配置。
+          */}
+          <div
+            style={{
+              marginTop: 4,
+              display: 'flex',
+              flexDirection: isMobile ? 'column' : 'row',
+              alignItems: isMobile ? 'flex-start' : 'center',
+              justifyContent: 'space-between',
+              gap: isMobile ? 6 : 12,
+            }}
+          >
+            <span>
+              {site.name} · 企业多系统数据整合平台
+            </span>
+            <span style={{ whiteSpace: 'nowrap' }}>{APP_VERSION}</span>
           </div>
         </div>
       </footer>

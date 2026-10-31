@@ -23,7 +23,7 @@ import RunMetrics from '@/pages/dashboard/board/RunMetrics';
 import RunBreakdown from '@/pages/dashboard/board/RunBreakdown';
 import RunTrend from '@/pages/dashboard/board/RunTrend';
 import DetailTable from '@/pages/dashboard/board/DetailTable';
-import { REGION_COLORS, CHAIN_TYPE_COLORS, type BoardData } from '@/api/crm-board';
+import { REGION_COLORS, CHAIN_TYPE_COLORS, CHAIN_TYPE_SHORT, type BoardData } from '@/api/crm-board';
 import { NEUTRAL, PALETTE, SIDER } from '@/theme';
 import { fmtNum, fmtTime } from '@/utils';
 import {
@@ -168,24 +168,48 @@ export default function ShareView() {
   const [boardData, setBoardData] = useState<BoardData | null>(null);
   const [boardErr, setBoardErr] = useState('');
 
+  /**
+   * V8.1 需求 K：分享页顶部筛选区。
+   * 分享出去后原本没有筛选，用户要求补上。筛选变化后重新请求 /api/public/board。
+   */
+  const [sbRegion, setSbRegion] = useState<'全部' | '南区' | '北区'>('全部');
+  const [sbChainType, setSbChainType] = useState<string>('全部');
+  const [sbPreset, setSbPreset] = useState<string>('all');
+  const [boardLoading, setBoardLoading] = useState(false);
+
+  /** 可选连锁类型（从数据里出现过的类型动态生成） */
+  const sbChainOptions = useMemo(() => {
+    const set = new Set<string>();
+    (boardData?.row3?.typeDistribution || []).forEach((t) => { if (t?.name) set.add(String(t.name)); });
+    return ['全部', ...Array.from(set)];
+  }, [boardData]);
+
   useEffect(() => {
     if (!isBoardShare) return undefined;
     let alive = true;
     (async () => {
+      setBoardLoading(true);
       try {
-        const r = await fetch(`/api/public/board?token=${encodeURIComponent(token || '')}${activePwd ? `&pwd=${encodeURIComponent(activePwd)}` : ''}`, {
-          credentials: 'same-origin',
-        });
+        const qs = new URLSearchParams();
+        qs.set('token', token || '');
+        if (activePwd) qs.set('pwd', activePwd);
+        if (sbRegion !== '全部') qs.set('regions', sbRegion);
+        if (sbChainType !== '全部') qs.set('chainTypes', sbChainType);
+        if (sbPreset !== 'all') qs.set('datePreset', sbPreset);
+        const r = await fetch(`/api/public/board?${qs.toString()}`, { credentials: 'same-origin' });
         const j = await r.json().catch(() => ({}));
         if (!alive) return;
         if (!r.ok || j.ok === false) throw new Error(j.message || `加载失败（HTTP ${r.status}）`);
         setBoardData(j.data as BoardData);
+        setBoardErr('');
       } catch (e) {
         if (alive) setBoardErr(e instanceof Error ? e.message : '看板数据加载失败');
+      } finally {
+        if (alive) setBoardLoading(false);
       }
     })();
     return () => { alive = false; };
-  }, [isBoardShare, token, activePwd]);
+  }, [isBoardShare, token, activePwd, sbRegion, sbChainType, sbPreset]);
 
   const tableColumns = useMemo(() => {
     if (!rows.length) return [];
@@ -293,7 +317,20 @@ export default function ShareView() {
     } as React.CSSProperties;
 
     return (
+      
       <div className="board-root" style={{ ...boardVars, background: 'var(--bg)', minHeight: '100vh', padding: isMobile ? 12 : 20 }}>
+        <style>{`
+.sv-filterbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px;padding:10px 12px;margin-bottom:14px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);position:sticky;top:0;z-index:20;backdrop-filter:saturate(180%) blur(12px)}
+.sv-fb-grp{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.sv-fb-lbl{font-size:11px;color:var(--text3);font-weight:650;margin-right:2px;white-space:nowrap}
+.sv-fb-btn{height:26px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:11.5px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;white-space:nowrap}
+.sv-fb-btn:hover{border-color:var(--brand3);color:var(--brand)}
+.sv-fb-btn.on{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 2px 6px color-mix(in srgb,var(--brand) 30%,transparent)}
+.sv-fb-reset{height:26px;padding:0 12px;border-radius:8px;border:1px dashed var(--line);background:transparent;color:var(--text3);font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit;margin-left:auto}
+.sv-fb-reset:hover{border-color:var(--danger);color:var(--danger)}
+.sv-fb-loading{font-size:11px;color:var(--text3);margin-left:8px}
+@media(max-width:768px){.sv-filterbar{padding:8px 10px;gap:6px 10px}.sv-fb-btn{height:24px;padding:0 8px;font-size:11px}}
+`}</style>
         <div style={{ maxWidth: 1680, margin: '0 auto' }}>
           <div style={{ marginBottom: 14 }}>
             <div style={{ fontSize: isMobile ? 17 : 21, fontWeight: 700, color: 'var(--text)' }}>
@@ -303,6 +340,67 @@ export default function ShareView() {
               共享看板 · 只读视图
               {boardData?.meta?.syncedAt ? ` · 数据同步 ${fmtTime(boardData.meta.syncedAt)}` : ''}
             </div>
+          </div>
+
+          {/* V8.1 需求 K：分享页顶部筛选区 */}
+          <div className="sv-filterbar">
+            <div className="sv-fb-grp">
+              <span className="sv-fb-lbl">区域</span>
+              {(['全部', '南区', '北区'] as const).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  className={`sv-fb-btn${sbRegion === r ? ' on' : ''}`}
+                  style={sbRegion === r && r !== '全部' ? { background: REGION_COLORS[r], borderColor: REGION_COLORS[r], color: '#fff' } : undefined}
+                  onClick={() => setSbRegion(r)}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+            <div className="sv-fb-grp">
+              <span className="sv-fb-lbl">连锁类型</span>
+              {sbChainOptions.map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`sv-fb-btn${sbChainType === t ? ' on' : ''}`}
+                  style={sbChainType === t && t !== '全部' ? { background: CHAIN_TYPE_COLORS[t] || 'var(--brand)', borderColor: CHAIN_TYPE_COLORS[t] || 'var(--brand)', color: '#fff' } : undefined}
+                  onClick={() => setSbChainType(t)}
+                >
+                  {t === '全部' ? t : (CHAIN_TYPE_SHORT[t] || t)}
+                </button>
+              ))}
+            </div>
+            <div className="sv-fb-grp">
+              <span className="sv-fb-lbl">日期</span>
+              {[
+                { k: 'all', label: '全部' },
+                { k: 'thisWeek', label: '本周' },
+                { k: 'lastWeek', label: '上周' },
+                { k: 'thisMonth', label: '本月' },
+                { k: 'lastMonth', label: '上月' },
+              ].map((o) => (
+                <button
+                  key={o.k}
+                  type="button"
+                  className={`sv-fb-btn${sbPreset === o.k ? ' on' : ''}`}
+                  onClick={() => setSbPreset(o.k)}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            {(sbRegion !== '全部' || sbChainType !== '全部' || sbPreset !== 'all') && (
+              <button
+                type="button"
+                className="sv-fb-reset"
+                onClick={() => { setSbRegion('全部'); setSbChainType('全部'); setSbPreset('all'); }}
+              >
+                重置
+              </button>
+            )}
+            {boardLoading && <span className="sv-fb-loading">加载中…</span>}
           </div>
 
           {boardErr ? (

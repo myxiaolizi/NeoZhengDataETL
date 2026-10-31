@@ -32,6 +32,8 @@ _sanitize.log
 
 # 调试截图与临时 HTML
 browser-screenshots/
+# 看板调试截图（并行会话产出，不入库）
+shots/
 
 # Ant Design 参考仓库（仅本地对照用，88MB，不入库）
 ant-design/

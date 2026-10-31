@@ -325,7 +325,8 @@ export default function Board() {
               display: 'grid',
               gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 0.85fr) minmax(0, 2.15fr)',
               gap: 12,
-              alignItems: 'start',
+              /* V7.2：从 start 改为 stretch，让类型卡与排行区等高、底边齐平 */
+              alignItems: 'stretch',
               marginTop: isMobile ? 12 : 14,
             }}
           >

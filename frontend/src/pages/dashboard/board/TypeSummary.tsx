@@ -1,13 +1,13 @@
-/** 第 3 排左：连锁类型分布 — V7.1
+/** 第 3 排左：连锁类型分布 — V8.1
  *
- * E1 卡片变窄：外层 `.board-row3`（Board.tsx）在此处用 CSS 覆写为
- *     ≥1280px → `minmax(200px,.8fr) / minmax(0,2.2fr)`（类型卡更窄，突出数据）
- *     768~1279px → 等宽 2 列（保留 V7 已验证的 4 卡 2×2）
- *     卡片内部改为紧凑三行：名称+数值 / 迷你南·北堆叠条 / 南·北·占比 小字
+ * E1 卡片等高 + 内容铺满：
+ *     外层 `.board-row3`（Board.tsx）用 CSS 覆写为 ≥1280px `minmax(200px,.8fr)/minmax(0,2.2fr)`、
+ *     768~1279px 等宽 2 列；两个断点都 `align-items:stretch`，保证类型卡与右侧排行区**底边严格对齐**。
+ *     卡片 `height:100%` + 正文 `flex:1` + 列表 `justify-content:space-evenly`，
+ *     每行 `flex:1 0 auto`（只涨不缩，绝不裁字）→ 纵向铺满、底部无空白。
  * E2 每个类型行背景用其标签色浅色（10%，50+ 为 12%），边框同色 30%
- * E5 卡片 height:auto + 容器 align-items:start，下方不产生空白
  *
- * 配色：直接使用 `@/api/crm-board` 的 CHAIN_TYPE_COLORS / REGION_COLORS（V7.1 已更新为语义色）
+ * 配色：直接使用 `@/api/crm-board` 的 CHAIN_TYPE_COLORS / REGION_COLORS（语义色）
  */
 import React, { useMemo } from 'react';
 import { Empty } from 'antd';
@@ -51,26 +51,30 @@ function rowTint(name: string): { bg: string; border: string; nameColor: string;
 
 /* ══════════════ 局部样式（vb3- 前缀） ══════════════ */
 const CSS = `
-/* ── E1：外层第 3 排列宽（Board.tsx 是内联 style，故用 !important 覆写） ── */
+/* ── E1：外层第 3 排列宽（Board.tsx 是内联 style，故用 !important 覆写）
+   两个断点都用 align-items:stretch —— 类型卡与右侧排行区（或 2×2 时的同行卡）底边严格对齐 ── */
 @media(min-width:1280px){
-  .board-row3{grid-template-columns:minmax(200px,.8fr) minmax(0,2.2fr)!important;align-items:start!important}
+  .board-row3{grid-template-columns:minmax(200px,.8fr) minmax(0,2.2fr)!important;align-items:stretch!important}
 }
 @media(min-width:768px) and (max-width:1279.98px){
-  .board-row3{grid-template-columns:repeat(2,minmax(0,1fr))!important;align-items:start!important}
+  .board-row3{grid-template-columns:repeat(2,minmax(0,1fr))!important;align-items:stretch!important}
 }
 
-/* E5：卡片自适应高度，不拉伸留白 */
-.vb3-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;height:auto;min-width:0}
+/* E1：卡片 height:100% 撑满网格行高；正文 flex:1；列表 space-evenly 均匀铺满，底部不留空白 */
+.vb3-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;height:100%;min-width:0}
 .vb3-card:hover{border-color:var(--brand3);box-shadow:var(--shadow2);transform:translateY(-1px)}
 .vb3-h{padding:12px 14px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:6px 8px;flex-wrap:wrap;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent)}
 .vb3-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
 .vb3-dot{width:6px;height:6px;border-radius:2px;background:var(--purple);box-shadow:0 0 0 3px color-mix(in srgb,var(--purple) 16%,transparent);flex-shrink:0}
 .vb3-hint{font-size:11px;color:var(--text2);font-weight:600;white-space:nowrap}
-.vb3-b{padding:12px;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
+.vb3-b{padding:12px;display:flex;flex-direction:column;justify-content:flex-start;min-width:0;flex:1}
+/* E1：类型行均分正文高度，撑满卡片、底部无空白 */
+.vb3-b > .vb3-list{flex:1;justify-content:space-evenly;align-content:stretch}
 .vb3-list{display:flex;flex-direction:column;gap:8px;min-width:0}
 
-/* 紧凑行：名称+数值 / 迷你条 / 南北占比（三段都允许收缩，绝不截断） */
-.vb3-row{padding:9px 11px;border-radius:var(--radius-sm);transition:background .15s ease,border-color .15s ease;min-width:0;border:1px solid transparent}
+/* 紧凑行：名称+数值 / 迷你条 / 南北占比（三段都允许收缩，绝不截断）
+   flex:1 0 auto —— 占满剩余高度但不压缩内容（不会裁字） */
+.vb3-row{padding:9px 11px;border-radius:var(--radius-sm);transition:background .15s ease,border-color .15s ease;min-width:0;border:1px solid transparent;flex:1 0 auto;display:flex;flex-direction:column;justify-content:center}
 .vb3-top{display:flex;align-items:baseline;justify-content:space-between;gap:4px 8px;flex-wrap:wrap;min-width:0}
 .vb3-name{font-size:12.5px;font-weight:700;display:inline-flex;align-items:center;gap:5px;min-width:0;overflow-wrap:anywhere;line-height:1.25}
 .vb3-name .d{width:7px;height:7px;border-radius:2px;flex-shrink:0}

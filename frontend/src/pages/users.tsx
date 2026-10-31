@@ -12,6 +12,7 @@ import {
 import { ProTable } from '@ant-design/pro-components';
 import type { ActionType, ProColumns } from '@ant-design/pro-components';
 import Page from '@/components/Page';
+import PageTabs, { PageTabTag, pageTabLabel } from '@/components/PageTabs';
 import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore, usePermission } from '@/stores/app';
 import { C, RoleManager, softStyle } from '@/pages/roles';
@@ -905,12 +906,19 @@ export default function UsersPage() {
     </Space>
   );
 
+  /**
+   * V9：标签样式统一 —— 改用 `PageTabs`（与邮件推送、系统设置同一实现）。
+   *
+   * 旧实现是 `<Tabs type="card">` + 自定义 `tabBarStyle`，与邮件推送的默认
+   * line 型标签视觉不一致（用户明确投诉）。现在三个页面共用
+   * `@/components/PageTabs`，样式不可能再漂移。
+   */
   const tabItems = [
-    { key: 'users', label: (<Space size={6}><TeamOutlined /><span>用户列表</span></Space>), children: userListTab },
-    { key: 'roles', label: (<Space size={6}><SafetyCertificateOutlined /><span>角色权限</span></Space>), children: <RoleManager embedded /> },
-    { key: 'org', label: (<Space size={6}><ApartmentOutlined /><span>组织架构</span></Space>), children: <OrganizationTab depts={depts} reload={loadDepts} /> },
-    { key: 'roleinfo', label: (<Space size={6}><KeyOutlined /><span>角色权限说明</span></Space>), children: <RoleInfoTab roles={roles} groups={permMeta.groups} /> },
-    { key: 'perminfo', label: (<Space size={6}><LockOutlined /><span>权限点说明</span></Space>), children: <PermissionInfoTab groups={permMeta.groups} /> },
+    { key: 'users', label: pageTabLabel(<TeamOutlined />, '用户列表', <PageTabTag>{stats.total}</PageTabTag>), children: userListTab },
+    { key: 'roles', label: pageTabLabel(<SafetyCertificateOutlined />, '角色权限', <PageTabTag color={PALETTE.cyan}>{roles.length}</PageTabTag>), children: <RoleManager embedded /> },
+    { key: 'org', label: pageTabLabel(<ApartmentOutlined />, '组织架构', <PageTabTag color={PALETTE.violet}>{depts.length}</PageTabTag>), children: <OrganizationTab depts={depts} reload={loadDepts} /> },
+    { key: 'roleinfo', label: pageTabLabel(<KeyOutlined />, '角色权限说明'), children: <RoleInfoTab roles={roles} groups={permMeta.groups} /> },
+    { key: 'perminfo', label: pageTabLabel(<LockOutlined />, '权限点说明'), children: <PermissionInfoTab groups={permMeta.groups} /> },
   ];
 
   return (
@@ -960,14 +968,8 @@ export default function UsersPage() {
       }
       stats={statsCards}
       subTabs={
-        <Tabs
-          type="card"
-          activeKey={activeKey}
-          onChange={setActiveKey}
-          items={tabItems}
-          size={isMobile ? 'small' : 'middle'}
-          tabBarStyle={{ marginBottom: 12 }}
-        />
+        /* V9：统一标签栏（去掉 type="card"，与邮件推送一致） */
+        <PageTabs activeKey={activeKey} onChange={setActiveKey} items={tabItems} />
       }
     >
       {/* 新建 / 编辑用户 */}

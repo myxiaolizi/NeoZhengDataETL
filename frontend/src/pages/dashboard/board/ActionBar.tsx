@@ -262,12 +262,7 @@ export default function ActionBar({
         </button>
       </Tooltip>
 
-      {/* 3. 明暗切换（暗色显示太阳，亮色显示月亮） */}
-      <IconBtn
-        icon={dark ? ICON.sun : ICON.moon}
-        tip={dark ? '切换到浅色模式' : '切换到深色模式'}
-        onClick={onToggleDark}
-      />
+      {/* V7.2：按需求移除「明暗切换」按钮，只保留主题色调整 */}
 
       {/* 4. 主题色 */}
       <Popover

@@ -1,18 +1,19 @@
-/** 系统设置：按后端 GROUPS 元数据动态渲染表单（10 个分组 / 10 种字段类型） */
+/** 系统设置：按后端 GROUPS 元数据动态渲染表单（顶部标签栏 + 关于/版本号） */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert, Button, Card, Col, ColorPicker, Empty, Form, Grid, Input, InputNumber, Modal,
+  Alert, Button, Card, Col, ColorPicker, Descriptions, Empty, Form, Grid, Input, InputNumber, Modal,
   Row, Select, Skeleton, Space, Switch, Tag, Tooltip, Typography, message,
 } from 'antd';
 import {
-  BellOutlined, CloudServerOutlined, DatabaseOutlined, ExperimentOutlined, MailOutlined,
-  RobotOutlined, SafetyCertificateOutlined, SaveOutlined, SendOutlined,
+  BellOutlined, CloudServerOutlined, DatabaseOutlined, ExperimentOutlined, InfoCircleOutlined,
+  MailOutlined, RobotOutlined, SafetyCertificateOutlined, SaveOutlined, SendOutlined,
   SettingOutlined, ShopOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
+import PageTabs, { PageTabTag, pageTabLabel } from '@/components/PageTabs';
 import type { StatCardItem } from '@/components/StatCards';
-import { useAppStore, usePermission } from '@/stores/app';
+import { APP_VERSION, useAppStore, usePermission } from '@/stores/app';
 import {
   getSettings, isOn, listAiProviders, listDatasourceOptions, saveSettings, testAi, testMail,
 } from '@/api/settings';
@@ -469,68 +470,64 @@ export default function SettingsPage() {
     return <Tag style={softStyle(C.gray)}>{g.fields.length}</Tag>;
   };
 
-  const groupNav = (g: SettingGroup) => {
-    const on = g.key === activeKey;
-    return (
-      <div
-        key={g.key}
-        data-group={g.key}
-        onClick={() => setActiveKey(g.key)}
-        style={{
-          cursor: 'pointer',
-          padding: '9px 11px',
-          borderRadius: 8,
-          border: `1px solid ${on ? C.primary : 'transparent'}`,
-          background: on ? NEUTRAL.surfaceSunken : 'transparent',
-          transition: 'all .15s',
-          minWidth: isMobile ? 132 : undefined,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: on ? C.primary : C.gray, fontSize: 15 }}>{GROUP_ICONS[g.key] || <SettingOutlined />}</span>
-          <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: on ? 600 : 500, color: on ? C.blue : C.navy }}>{g.title}</div>
-            {!isMobile ? (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: C.gray,
-                  lineHeight: 1.4,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {g.desc}
-              </div>
-            ) : null}
-          </div>
-          {!isMobile ? groupBadge(g) : null}
-        </div>
-      </div>
-    );
-  };
+  /**
+   * V9：分组导航由「左侧两栏导航卡」改为「顶部标签栏」。
+   *
+   * 用户要求「系统设置菜单页也采用标签样式，与邮件推送一致」，
+   * 因此删除了原来的 `groupNav`（左侧列表项）与 `navCard`（左侧卡片），
+   * 统一改用 `@/components/PageTabs`（与用户管理、邮件推送同一实现）。
+   *
+   * 标签文字 + 图标 + 计数/状态徽标（`groupBadge` 复用，保证「已配置/已启用」
+   * 这类状态在标签上仍然一眼可见）。
+   */
 
-  const navCard = (
-    <Card
-      size="small"
-      title={
-        <Space size={6}>
-          <SettingOutlined style={{ color: C.primary }} />
-          <span style={{ fontSize: 13.5, fontWeight: 600, color: C.navy }}>设置分组</span>
-          <Tag style={softStyle(C.blue)}>{groups.length}</Tag>
-        </Space>
-      }
-      styles={{ body: { padding: 8 } }}
-      style={{ borderColor: C.line }}
-    >
-      {loading ? (
-        <Skeleton active paragraph={{ rows: 6 }} />
-      ) : (
-        <Space orientation="vertical" size={4} style={{ width: '100%' }}>
-          {groups.map(groupNav)}
-        </Space>
-      )}
+  /* ---------- 「关于」面板：版本号 ---------- */
+  /**
+   * 用户要求「在系统设置中显示当前版本号」。
+   *
+   * 三个版本号一起展示，便于部署后一眼确认「前后端是否都更新了」：
+   *   - 前端构建版本 `__FE_VERSION__`（frontend/package.json，构建期注入）
+   *   - 后端服务版本 `__BE_VERSION__`（根 package.json，构建期注入）
+   *   - 界面版本 `APP_VERSION`（侧栏品牌区 / 项目介绍页使用）
+   * 若前端与后端版本不一致，显式标红提示（典型事故：只传了 dist 没传 src）。
+   */
+  const versionMismatch = !!__FE_VERSION__ && !!__BE_VERSION__ && __FE_VERSION__ !== __BE_VERSION__;
+
+  const aboutPanel = (
+    <Card size="small" style={{ borderColor: C.line }}>
+      <Descriptions column={isMobile ? 1 : 2} size="small" bordered={false} colon={false}>
+        <Descriptions.Item label="当前版本号">
+          <Space size={6} wrap>
+            <Tag style={softStyle(C.primary)}>{APP_VERSION}</Tag>
+            <Text style={{ fontSize: 12.5, color: C.gray }}>（{__FE_VERSION__ || '未知'}）</Text>
+          </Space>
+        </Descriptions.Item>
+        <Descriptions.Item label="后端服务版本">
+          <Tag style={softStyle(versionMismatch ? C.red : C.green)}>{__BE_VERSION__ || '未知'}</Tag>
+        </Descriptions.Item>
+        <Descriptions.Item label="运行环境">
+          <Text style={{ fontSize: 12.5 }}>Neo Zheng DataETL · 企业多系统数据整合平台</Text>
+        </Descriptions.Item>
+        <Descriptions.Item label="源码仓库">
+          <a
+            href="https://github.com/myxiaolizi/NeoZhengDataETL"
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: 12.5 }}
+          >
+            GitHub · NeoZhengDataETL
+          </a>
+        </Descriptions.Item>
+      </Descriptions>
+      {versionMismatch ? (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginTop: 12 }}
+          title={`前后端版本不一致：前端 ${__FE_VERSION__} / 后端 ${__BE_VERSION__}`}
+          description="通常意味着只更新了前端构建产物（frontend/dist）或只更新了后端源码（src）。请确认部署是否完整。"
+        />
+      ) : null}
     </Card>
   );
 
@@ -638,56 +635,27 @@ export default function SettingsPage() {
     </Card>
   );
 
-  return (
-    <Page title="系统设置" stats={stats}>
-      {isMobile ? (
-        <Space orientation="vertical" size={12} style={{ width: '100%' }}>
-          <Card size="small" style={{ borderColor: C.line }} styles={{ body: { padding: 8 } }}>
-            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
-              {groups.map((g) => {
-                const on = g.key === activeKey;
-                return (
-                  <div
-                    key={g.key}
-                    data-group={g.key}
-                    onClick={() => setActiveKey(g.key)}
-                    style={{
-                      flex: '0 0 auto',
-                      padding: '8px 12px',
-                      borderRadius: 8,
-                      border: `1px solid ${on ? C.primary : C.line}`,
-                      background: on ? NEUTRAL.surfaceSunken : NEUTRAL.surface,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      minHeight: 44,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    <span style={{ color: on ? C.primary : C.gray, fontSize: 14 }}>
-                      {GROUP_ICONS[g.key] || <SettingOutlined />}
-                    </span>
-                    <span style={{ fontSize: 13, color: on ? C.blue : C.navy, fontWeight: on ? 600 : 500 }}>
-                      {g.title}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </Card>
-          {formPanel}
-        </Space>
-      ) : (
-        <Row gutter={12}>
-          <Col span={7} xl={6} xxl={5}>
-            {navCard}
-          </Col>
-          <Col span={17} xl={18} xxl={19}>
-            {formPanel}
-          </Col>
-        </Row>
-      )}
+  /**
+   * V9：设置分组标签（与邮件推送 / 用户管理同一套样式）。
+   *
+   * 首项固定为「关于」（显示版本号），其后是后端下发的全部设置分组。
+   * 徽标复用 `groupBadge`：状态类显示「已配置/已启用」，其余显示字段数量。
+   */
+  const tabItems = useMemo(() => [
+    { key: 'about', label: pageTabLabel(<InfoCircleOutlined />, '关于', <PageTabTag color={PALETTE.green}>{APP_VERSION}</PageTabTag>), children: aboutPanel },
+    ...groups.map((g) => ({
+      key: g.key,
+      label: pageTabLabel(GROUP_ICONS[g.key] || <SettingOutlined />, g.title, groupBadge(g)),
+      children: formPanel,
+    })),
+  ], [groups, aboutPanel, formPanel, groupBadge, values, mailReady]);
 
+  return (
+    <Page
+      title="系统设置"
+      stats={stats}
+      subTabs={<PageTabs activeKey={activeKey} onChange={setActiveKey} items={tabItems} />}
+    >
       {/* 测试邮件 */}
       <Modal
         title="发送测试邮件"

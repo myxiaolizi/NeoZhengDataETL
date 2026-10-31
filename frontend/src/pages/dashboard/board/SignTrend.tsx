@@ -136,8 +136,11 @@ const CSS = `
 .vb6-all{height:22px;padding:0 7px;border-radius:6px;border:1px dashed var(--line);background:transparent;color:var(--brand);font-size:10.5px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap;font-family:inherit;line-height:1}
 .vb6-all:hover{background:var(--brandSoft);border-color:var(--brand3)}
 
-/* 图例（在连锁类型后方/最右，可点击切换） */
-.vb6-legend{display:flex;align-items:center;gap:8px;margin-left:auto;padding-left:4px;flex-shrink:0;flex-wrap:nowrap}
+/* 图例（在连锁类型后方/最右，可点击切换）
+ * F5：全站只保留这一处 HTML 图例（echarts 侧 legend 恒为 show:false），
+ * 并做成独立的浅底块，避免与左侧「区域」筛选按钮在视觉上被误读成两份图例。 */
+.vb6-legend{display:flex;align-items:center;gap:8px;margin-left:auto;flex-shrink:0;flex-wrap:nowrap;padding:2px 8px;border-radius:7px;background:color-mix(in srgb,var(--panel2) 92%,transparent);border:1px solid var(--line2)}
+.vb6-legend .lgcap{font-size:9.5px;color:var(--text3);font-weight:700;letter-spacing:.4px;white-space:nowrap;padding-right:1px}
 .vb6-lg{display:inline-flex;align-items:center;gap:4px;cursor:pointer;user-select:none;font-size:10.5px;font-weight:600;color:var(--text2);white-space:nowrap;transition:opacity .15s;line-height:1}
 .vb6-lg:hover{color:var(--text)}
 .vb6-lg .sw{width:9px;height:9px;border-radius:3px;flex-shrink:0;transition:all .15s}
@@ -315,10 +318,12 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
     });
   };
 
-  const regionOpts: { key: RegionKey; label: string }[] = [
-    { key: 'all', label: '全部' },
-    { key: 'south', label: '南区' },
-    { key: 'north', label: '北区' },
+  /* F5：区域筛选用「全部 / 南 / 北」简写 —— 与右侧图例的「南区 / 北区」区分开，
+   * 避免标题栏里出现两遍"南区北区"被误认为重复图例。 */
+  const regionOpts: { key: RegionKey; label: string; full: string }[] = [
+    { key: 'all', label: '全部', full: '全部区域' },
+    { key: 'south', label: '南', full: '仅南区' },
+    { key: 'north', label: '北', full: '仅北区' },
   ];
   const regionGrad = (k: RegionKey) => (
     k === 'south'
@@ -352,10 +357,11 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
                     className={`vb6-seg${on ? ' on' : ''}`}
                     style={on ? { background: regionGrad(o.key) } : undefined}
                     aria-pressed={on}
+                    title={o.full}
                     onClick={() => setRegion(o.key)}
                   >
                     {o.key !== 'all' && (
-                      <span className="sw" style={{ background: on ? '#fff' : REGION_COLORS[o.label] }} />
+                      <span className="sw" style={{ background: on ? '#fff' : REGION_COLORS[o.key === 'south' ? '南区' : '北区'] }} />
                     )}
                     {o.label}
                   </button>
@@ -392,8 +398,9 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
               </>
             )}
 
-            {/* 图例在连锁类型后方（最右） */}
-            <div className="vb6-legend">
+            {/* F5：唯一的一处图例（HTML）。echarts 侧 legend 恒为 show:false，不重复渲染 */}
+            <div className="vb6-legend" data-legend="sign-trend">
+              <span className="lgcap">图例</span>
               {seriesDefs.map((d) => {
                 const off = hidden.includes(d.name);
                 return (

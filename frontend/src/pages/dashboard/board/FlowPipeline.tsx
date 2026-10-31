@@ -148,8 +148,13 @@ const ICON_FALLBACK: React.ReactNode = ico(
 /* ══════════════ 局部样式（统一 .v7flow 作用域，避免污染全局） ══════════════ */
 const CSS = `
 .v7flow{min-width:0}
-.v7flow .fm-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px 14px 11px;min-width:0;overflow:hidden}
-.v7flow .fm-map{display:flex;align-items:stretch;overflow-x:auto;overflow-y:visible;padding:2px 0 6px;scrollbar-width:thin}
+.v7flow .fm-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:0;min-width:0;overflow:hidden;display:flex;flex-direction:column}
+/* V8.1 D7：卡片标题栏 */
+.v7flow .fm-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line2);background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent);flex-shrink:0}
+.v7flow .fm-hd h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
+.v7flow .fm-hd-dot{width:6px;height:6px;border-radius:2px;background:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 16%,transparent);flex-shrink:0}
+.v7flow .fm-hd-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap}
+.v7flow .fm-map{padding:12px 14px 11px;display:flex;align-items:stretch;overflow-x:auto;overflow-y:visible;padding:2px 0 6px;scrollbar-width:thin}
 .v7flow .fm-map::-webkit-scrollbar{height:6px}
 .v7flow .fm-map::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
 
@@ -160,9 +165,9 @@ const CSS = `
 .v7flow .fm-node.off{cursor:default}
 .v7flow .fm-node.off:hover{background:transparent;border-color:transparent;transform:none;box-shadow:none}
 
-.v7flow .fm-name{font-size:11.5px;font-weight:700;color:var(--text2);letter-spacing:.2px;white-space:nowrap;line-height:1.2;display:flex;align-items:center;justify-content:center;gap:5px}
+.v7flow .fm-name{font-size:11.5px;font-weight:700;color:#fff;letter-spacing:.2px;white-space:nowrap;line-height:1.2;display:flex;align-items:center;justify-content:center;gap:5px;background:linear-gradient(135deg,var(--brand),var(--brand2));border-radius:9px;padding:4px 10px;box-shadow:0 2px 8px color-mix(in srgb,var(--brand) 26%,transparent);max-width:100%}
 /* V7.1 D2：名称前的图标 */
-.v7flow .fm-nameico{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:var(--brand)}
+.v7flow .fm-nameico{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:currentColor;opacity:.95}
 .v7flow .fm-nameico svg{width:15px;height:15px}
 /* V7.1 D5：卡片内南/北区连锁数 */
 .v7flow .fm-region{display:flex;align-items:center;justify-content:center;gap:8px;font-size:10px;color:var(--text3);line-height:1.3;font-variant-numeric:tabular-nums;white-space:nowrap}
@@ -202,7 +207,7 @@ const CSS = `
 .v7flow .fm-store.strong b{color:var(--brand);font-weight:800}
 
 /* C9 岗位客户数 */
-.v7flow .fm-roles{width:100%;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:1px 3px;margin-top:1px;padding-top:6px;border-top:1px dashed var(--line2);font-size:9.5px;color:var(--text3);line-height:1.5;font-variant-numeric:tabular-nums}
+.v7flow .fm-roles{width:100%;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:1px 4px;margin-top:2px;padding-top:5px;border-top:1px dashed var(--line2);font-size:9.5px;color:var(--text3);line-height:1.45;font-variant-numeric:tabular-nums}
 .v7flow .fm-role{white-space:nowrap}
 .v7flow .fm-role b{color:var(--text2);font-weight:800}
 .v7flow .fm-sep{color:var(--text3);opacity:.55}
@@ -361,6 +366,11 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
 
       <div className="v7flow">
         <div className="fm-card">
+          {/* V8.1 D7：卡片左上角显示名称「流程状态」 */}
+          <div className="fm-hd">
+            <h3><span className="fm-hd-dot" />流程状态</h3>
+            <span className="fm-hd-hint">共 {nodes.length} 个节点 · 点击有客户的节点查看明细</span>
+          </div>
           {nodes.length === 0 ? (
             <div style={{ padding: '14px 0' }}>
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" />
@@ -411,7 +421,6 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
 
                         {/* C4：图标 + 客户数 + 占比 同框，蓝底白字 */}
                         <div className="fm-sum" style={{ background: sumGradient(nd) }}>
-                          <span className="fm-ico">{NODE_ICON[nd.name] ?? ICON_FALLBACK}</span>
                           <span className="fm-icoline">
                             <span className="fm-c">
                               {fmtNum(nd.clients)}
@@ -421,11 +430,14 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
                           </span>
                         </div>
 
-                        {/* V7.1 D6：正常 / 超期（工作日口径） */}
-                        <div className="fm-od">
-                          <span className="fm-ok">正常 {fmtNum(normal)} 家</span>
-                          <span className="fm-bad">超期 {fmtNum(overdue)} 家</span>
-                        </div>
+                        {/* V7.1 D6：正常 / 超期（工作日口径）
+                            V8.1 D6：销售签约（起点）与流程结束（终点）不显示此行 */}
+                        {!noDuration && (
+                          <div className="fm-od">
+                            <span className="fm-ok">正常 {fmtNum(normal)} 家</span>
+                            <span className="fm-bad">超期 {fmtNum(overdue)} 家</span>
+                          </div>
+                        )}
 
                         {/* C6：耗时（C7：销售签约/流程结束不显示） */}
                         {!noDuration && (
@@ -477,11 +489,6 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
                     </React.Fragment>
                   );
                 })}
-              </div>
-
-              <div className="fm-note">
-                占比分母已排除「销售签约」「流程结束」· 超期口径：当前节点时长 &gt; 7 天 ·
-                耗时不足 1 天按小时呈现 · 0 客户节点不可点击
               </div>
             </>
           )}

@@ -1,6 +1,29 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
+import fs from 'node:fs';
+
+/**
+ * 构建期注入版本号（V9）
+ *
+ * 用户在「系统设置」里要求显示当前版本号。有两种做法：
+ *   1. 后端加 `GET /api/version` —— 但 `src/routes/api.js` 当前被并行会话占用，
+ *      为避免冲突，本轮不新增后端路由；
+ *   2. **构建时把版本号写成字面量**（本方案）—— 零请求、零后端依赖，
+ *      而且顺带能暴露「前后端版本不一致」这种部署事故。
+ *
+ * 注意：`__dirname` 在 ESM 里不可用，但 vite 以 CJS 方式加载本配置时可用，
+ * 项目里 alias 已经用了 `path.resolve(__dirname, 'src')`，这里沿用同一写法。
+ */
+function readVersion(p: string): string {
+  try {
+    return String(JSON.parse(fs.readFileSync(p, 'utf8')).version || '');
+  } catch {
+    return '';
+  }
+}
+const FE_VERSION = readVersion(path.resolve(__dirname, 'package.json'));
+const BE_VERSION = readVersion(path.resolve(__dirname, '..', 'package.json'));
 
 const BACKEND = 'http://127.0.0.1:8781';
 
@@ -87,6 +110,14 @@ for (const prefix of PUBLIC_ENTRY_PREFIXES) {
 
 export default defineConfig({
   plugins: [react()],
+  /**
+   * V9：构建期注入版本号（供「系统设置 → 关于」与项目介绍页使用）。
+   * 详见文件顶部 `readVersion` 的注释。
+   */
+  define: {
+    __FE_VERSION__: JSON.stringify(FE_VERSION),
+    __BE_VERSION__: JSON.stringify(BE_VERSION),
+  },
   resolve: {
     alias: { '@': path.resolve(__dirname, 'src') },
   },

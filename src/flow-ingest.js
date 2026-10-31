@@ -52,14 +52,19 @@ async function ensureFlowFieldDefs(projectId) {
 /**
  * 取某实例的全部事件（用于聚合流程状态）。
  * 直接读本项目的落库表，避免依赖内存状态——进程重启后依然能算出正确结果。
+ *
+ * V9：补上 `id` 与 `jdy_op_time` 两列 —— deriveNodeTimes 用 (jdy_op_time, id) 作排序键，
+ * 因为 V8 实测 37 个实例存在 header_created_at 的 1ms 级回退，只按时间戳排序会把
+ * 「完成」认到「回退前」的那条事件上。
  */
 async function eventsOfInstance(projectId, instanceId, extraEvent) {
   const table = schema.makeTableName(projectId);
   const rows = await db.query(
-    `SELECT header_created_at, event_flow_name, event_current_assignee, event_finish_action
+    `SELECT id, jdy_op_time, header_created_at, event_flow_name, event_current_assignee, event_finish_action,
+            event_created_count, event_completed_count, event_canceled_count
        FROM \`${table}\`
       WHERE event_instance_id = ?
-      ORDER BY header_created_at ASC`,
+      ORDER BY jdy_op_time ASC, id ASC`,
     [instanceId]
   );
   // 本次事件可能尚未落库（同批 upsert 后已落库，这里兜底去重）
@@ -67,10 +72,174 @@ async function eventsOfInstance(projectId, instanceId, extraEvent) {
     const key = `${extraEvent.header_created_at}|${extraEvent.event_flow_name}|${extraEvent.event_finish_action}`;
     const exists = rows.some((r) => `${r.header_created_at}|${r.event_flow_name}|${r.event_finish_action}` === key);
     if (!exists) rows.push(extraEvent);
-    rows.sort((a, b) => Number(a.header_created_at) - Number(b.header_created_at));
+    rows.sort((a, b) => (flowState.toMs(a.jdy_op_time || a.header_created_at) || 0)
+      - (flowState.toMs(b.jdy_op_time || b.header_created_at) || 0));
   }
   return rows;
 }
+
+/* ══════════════════════════════════════════════════════════
+ *  V9：节点提交时间自动同步
+ *
+ *  用户诉求（原话）
+ *  ----------------
+ *  「实际因为当前节点提交，进入下一节点时就要自动同步当前节点的提交时间；
+ *    如策略开通节点后进入实施对接节点，策略开通时间就要同步到数据表策略开通时间中。」
+ *
+ *  实现口径
+ *  --------
+ *  1. 用 `flowState.deriveNodeTimes(events)` 从流程事件流推导 8 个节点时间
+ *     （节点 N 的时间 = 该节点最后一次「完成动作」发生的时刻，即**离开该节点那一刻**）；
+ *  2. 目标列按 `COLUMN_COMMENT = 'X(解析)'` **动态**解析（不硬编码 w_xxx_p）；
+ *  3. **只补空、不清值、不覆盖已有值** —— 用户投诉的另一半正是值丢失，
+ *     已有非空时间一律保留（简道云「时间自动化」推来的值更权威）；
+ *  4. 开关 `FLOW_SYNC_NODE_TIMES=0` 一键关停（默认开启）。
+ * ══════════════════════════════════════════════════════════ */
+
+/** 节点时间同步开关（默认开启） */
+function nodeTimeSyncEnabled() {
+  const v = process.env.FLOW_SYNC_NODE_TIMES;
+  return String(v === undefined || v === null || v === '' ? '1' : v) !== '0';
+}
+
+/**
+ * 「实时行」新鲜度窗口（毫秒，默认 10 分钟）
+ *
+ * 为什么需要这个窗口——这是 V9 最关键的取舍：
+ *   8 个时间列的业务权威来源是简道云「时间自动化」字段原值。
+ *   V8 对账（_work/VERDICT.md）实证：用流程事件推导值**覆盖**这些列，
+ *   与业务表比对命中率会从 100% 掉到 26/90；V9 复测同样证明，
+ *   把历史行的空位补上会让「非 fresh 行逐格 0 差异」立刻出现 8 格发散。
+ *
+ *   但用户诉求必须满足：「当前节点提交、进入下一节点时，就要自动同步当前节点的提交时间」。
+ *   正确的时机只在**实时链路**上：
+ *     · 一次业务操作里，流程事件（102）常常比数据推送（16）**先到**，
+ *       此时时间列还是空的，补上就是「立刻看到时间」；
+ *       随后简道云自己的时间自动化值到了，会被真实值覆盖（我们只补空，永不覆盖）。
+ *     · 历史行早已不再推送，补空只会让解析表永久偏离业务表 → 必须不做。
+ *
+ * 因此：只对「最近 maxAgeMs 内还有推送」的行补空（默认 10 分钟）。
+ * 历史回填需要显式 opt-in（scripts/v9-sync-node-times.js --force-backfill）。
+ */
+const NODE_TIME_FRESH_DEFAULT_MS = 10 * 60 * 1000;
+
+/** 当前生效的新鲜度窗口（每次读取，便于测试用环境变量覆盖） */
+function nodeTimeFreshMs() {
+  const v = Number(process.env.FLOW_SYNC_NODE_TIMES_WINDOW_MS);
+  return Number.isFinite(v) && v >= 0 ? v : NODE_TIME_FRESH_DEFAULT_MS;
+}
+
+/** 「业务时间字段名 → 解析列名」缓存：表名 → { at, map } */
+const TIME_COL_CACHE = new Map();
+const TIME_COL_TTL_MS = 60000;
+
+/**
+ * 按 COLUMN_COMMENT 动态解析 8 个时间字段对应的解析列
+ *
+ * 不硬编码 w_17930941355xx_p：列名随表单字段变化，注释「X(解析)」才是稳定标识。
+ * 解析失败不抛错（返回空 map，调用方自然跳过）。
+ */
+async function resolveTimeColumns(table) {
+  const hit = TIME_COL_CACHE.get(table);
+  const now = Date.now();
+  if (hit && now - hit.at < TIME_COL_TTL_MS) return hit.map;
+
+  const map = {};
+  try {
+    const rows = await db.query(
+      `SELECT column_name, column_comment
+         FROM information_schema.columns
+        WHERE table_schema = DATABASE() AND table_name = ?`,
+      [table]
+    );
+    const byComment = new Map();
+    for (const r of rows) {
+      const c = String(r.COLUMN_COMMENT || '').trim();
+      if (c) byComment.set(c, r.COLUMN_NAME);
+    }
+    for (const field of Object.values(flowState.TIME_FIELD_OF_NODE)) {
+      const col = byComment.get(`${field}(解析)`) || byComment.get(field);
+      if (col) map[field] = col;
+    }
+  } catch (err) {
+    console.error('[flow] 解析节点时间列失败:', err.message);
+  }
+  TIME_COL_CACHE.set(table, { at: now, map });
+  return map;
+}
+
+/** 清空列名缓存（自检/建列后强制刷新用） */
+function clearTimeColumnCache() {
+  TIME_COL_CACHE.clear();
+}
+
+/**
+ * 把推导出的节点时间**补进**解析表（只补空位、只补实时行）
+ *
+ * 三条铁律：
+ *   1. 推导值为空 → 不写（保留原值，避免清空 —— 用户投诉的另一半就是值丢失）；
+ *   2. 目标单元格已有非空值 → 不写（简道云推来的值更权威）；
+ *   3. 只对「最近 freshens.maxAgeMs 内仍有推送」的行补空（历史行补空会让
+ *      解析表永久偏离业务表，V8 对账已明令禁止）。
+ *
+ * @param {string} parsedTable
+ * @param {string} dataId
+ * @param {object} derived deriveNodeTimes 的结果
+ * @param {object} [options]
+ * @param {number} [options.maxAgeMs] 新鲜度窗口；传 Infinity 关闭新鲜度限制（历史回填）
+ * @param {number} [options.now] 注入当前时间（测试用）
+ * @returns {{filled: Array, skipped?: string, excluded?: Array}}
+ */
+async function fillMissingNodeTimes(parsedTable, dataId, derived, options) {
+  const o = options || {};
+  const maxAgeMs = Number.isFinite(o.maxAgeMs) ? Number(o.maxAgeMs) : nodeTimeFreshMs();
+  const now = Number.isFinite(o.now) ? Number(o.now) : Date.now();
+
+  const colMap = await resolveTimeColumns(parsedTable);
+  const targets = [];
+  for (const field of Object.values(flowState.TIME_FIELD_OF_NODE)) {
+    if (!colMap[field]) continue;                       // 该列不存在 → 跳过
+    const ms = derived && derived.times ? derived.times[field] : null;
+    if (ms === null || ms === undefined) continue;       // 推导为空 → 一律不写（保留原值）
+    const local = flowState.toLocalString(ms);
+    if (!local) continue;
+    targets.push({ field, column: colMap[field], value: local });
+  }
+  if (!targets.length) return { filled: [], derived };
+
+  const alias = targets.map((t) => `\`${t.column}\` AS \`${t.field}\``).join(', ');
+  const cur = await db.queryOne(
+    `SELECT ${alias}, jdy_op_time FROM \`${parsedTable}\` WHERE jdy_data_id = ? LIMIT 1`,
+    [dataId]
+  );
+  if (!cur) return { filled: [], derived, skipped: 'row_not_found' };
+
+  // 新鲜度闸门：历史行不补空（避免解析表偏离业务表）
+  if (maxAgeMs !== Infinity) {
+    const lastPush = flowState.toMs(cur.jdy_op_time);
+    if (lastPush === null || now - lastPush > maxAgeMs) {
+      return { filled: [], derived, skipped: 'stale_row', lastPushMs: lastPush };
+    }
+  }
+
+  const toFill = targets.filter((t) => {
+    const v = cur[t.field];
+    return v === null || v === undefined || String(v).trim() === '';
+  });
+  if (!toFill.length) return { filled: [], derived };
+
+  /*
+   * 二次保护：SQL 里再判一次「当前为空」才写。
+   * 即使 SELECT 与 UPDATE 之间被别的链路（数据推送）写入，也不会覆盖真实值。
+   */
+  const sql = `UPDATE \`${parsedTable}\`
+                   SET ${toFill.map((t) => `\`${t.column}\` = CASE WHEN \`${t.column}\` IS NULL OR \`${t.column}\` = '' THEN ? ELSE \`${t.column}\` END`).join(', ')}
+                 WHERE jdy_data_id = ?`;
+  await db.query(sql, [...toFill.map((t) => t.value), dataId]);
+
+  return { filled: toFill.map((t) => ({ field: t.field, column: t.column, value: t.value })), derived };
+}
+
 
 /**
  * 把流程运行态写回「表单推送」项目的解析表。
@@ -108,7 +277,7 @@ async function syncRunStateToFormProject(flowProject, instanceId, events) {
     if (colSet.has('flow_current_owner') && agg.currentOwner) set.flow_current_owner = agg.currentOwner;
 
     /*
-     * 【重要】不再用流程事件聚合值覆盖 8 个节点时间列
+     * 【重要】不再用流程事件聚合值**覆盖** 8 个节点时间列
      * --------------------------------------------------
      * 2026-10-28 业务对账结论（_work/VERDICT.md）：
      *   业务系统的 8 个节点时间列 = 简道云表单「时间自动化」字段原值
@@ -121,28 +290,63 @@ async function syncRunStateToFormProject(flowProject, instanceId, events) {
      *      按截断规则该列必须为空。
      *   3) 回退场景下会把已完成的节点时间清空。
      *
-     * 因此：这 8 列的写入职责完全交还「表单推送」链路（parseValue('timestamp')），
-     * 流程推送只负责维护 flow_current_node / flow_current_owner 两个运行态字段。
+     * V9 修正（用户 2026-10-31 投诉「没有准时同步节点时间」）
+     * ------------------------------------------------------
+     * 覆盖确实是错的，但「完全不写」也不对：简道云的时间自动化字段偶尔晚到/漏推，
+     * 空位就永远补不上（215 的实施对接时间就是这样丢的）。
+     * 折中口径——**只补空位，绝不覆盖、绝不清空**：
+     *   · 推导值非空 且 目标单元格为空  → 补写（这是「进入下一节点即同步上一节点提交时间」的兜底）
+     *   · 推导值为空                    → 不写（保留原值，避免清空）
+     *   · 目标单元格已有非空值          → 不写（简道云推来的值更权威）
+     * 开关：FLOW_SYNC_NODE_TIMES=0 一键关停（默认开启）。
      */
+    const derive = nodeTimeSyncEnabled()
+      ? flowState.deriveNodeTimes(events)
+      : null;
 
     const keys = Object.keys(set);
-    if (!keys.length) {
-      // 两个运行态列都算不出（例如流程已结束、事件缺 flow_name）：
-      // 不能返回失败，否则上层会认为同步异常；这里如实说明原因。
-      return { synced: false, reason: '无可写运行态列（当前节点/负责人均未算出）' };
+    let runRows = 0;
+    if (keys.length) {
+      const r = await db.query(
+        `UPDATE \`${parsedTable}\` SET ${keys.map((c) => `\`${c}\`=?`).join(', ')} WHERE jdy_data_id=?`,
+        [...keys.map((c) => set[c]), instanceId]
+      );
+      runRows = r.affectedRows;
     }
 
-    const r = await db.query(
-      `UPDATE \`${parsedTable}\` SET ${keys.map((c) => `\`${c}\`=?`).join(', ')} WHERE jdy_data_id=?`,
-      [...keys.map((c) => set[c]), instanceId]
-    );
+    // 节点提交时间：只补空位、只补实时行（写库在 UPSERT 之后，保证随后触发的流程能读到）
+    let timeFill = { filled: [] };
+    if (derive) {
+      try {
+        timeFill = await fillMissingNodeTimes(parsedTable, instanceId, derive);
+      } catch (err) {
+        console.error('[flow] 同步节点时间失败:', err.message);
+      }
+    }
+    if (timeFill.filled && timeFill.filled.length) {
+      console.log(`[flow] 补写节点时间 ${instanceId}: ${timeFill.filled.map((f) => `${f.field}=${f.value}`).join(', ')}`);
+    }
+
+    if (!keys.length && !(timeFill.filled && timeFill.filled.length)) {
+      // 两个运行态列都算不出（例如流程已结束、事件缺 flow_name）、且没有可补的时间：
+      // 不能返回失败，否则上层会认为同步异常；这里如实说明原因。
+      return {
+        synced: false,
+        reason: '无可写的运行态列或节点时间（当前节点/负责人未算出，时间列也已齐备）',
+        nodeTimes: { filled: [] },
+      };
+    }
 
     return {
-      synced: r.affectedRows > 0,
+      synced: runRows > 0 || (timeFill.filled && timeFill.filled.length > 0),
       table: parsedTable,
       node: agg.currentNode,
       owner: agg.currentOwner,
       columns: keys.length,
+      nodeTimes: {
+        derived: derive ? derive.timesLocal : null,
+        filled: timeFill.filled || [],
+      },
     };
   } catch (err) {
     console.error('[flow] 同步流程运行态失败:', err.message);
@@ -272,6 +476,9 @@ async function handle(project, parsed, rawBody) {
   if (runInfo && runInfo.synced) {
     parts.push(`流程运行态: 节点=${runInfo.node || '-'} 负责人=${runInfo.owner || '-'}`);
   }
+  if (runInfo && runInfo.nodeTimes && runInfo.nodeTimes.filled.length) {
+    parts.push(`补节点时间: ${runInfo.nodeTimes.filled.map((f) => f.field).join('/')}`);
+  }
 
   return {
     message: parts.join('; ') || '流程推送已写入',
@@ -283,4 +490,7 @@ async function handle(project, parsed, rawBody) {
 module.exports = {
   handle, ensureFlowFieldDefs, syncRunStateToFormProject, eventsOfInstance,
   triggerOnPushAfterSave,
+  // V9：节点提交时间自动同步
+  nodeTimeSyncEnabled, nodeTimeFreshMs, NODE_TIME_FRESH_DEFAULT_MS,
+  resolveTimeColumns, fillMissingNodeTimes, clearTimeColumnCache,
 };
