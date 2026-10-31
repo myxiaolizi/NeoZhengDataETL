@@ -7,9 +7,9 @@
  *   - 超期行左侧 3px var(--danger) 竖条
  *   - 分页器对齐设计系统（圆角 8px、选中渐变 brand）
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Button, Checkbox, Divider, Drawer, Empty, Space, Table, Tooltip, Typography,
+  Alert, Button, Checkbox, Divider, Drawer, Empty, Space, Spin, Table, Tooltip, Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { SettingOutlined } from '@ant-design/icons';
@@ -17,6 +17,26 @@ import { BoardData, DetailColumnConf, DetailFullRow } from '@/api/crm-board';
 import { fmtNum, fmtPct } from './theme';
 
 const { Text } = Typography;
+
+/* ══════════════ V7.1：客户详情（需求 J） ══════════════ */
+
+interface ClientTimelineNode {
+  name: string;
+  doneAt: string;
+  doneAtLabel: string;
+  done: boolean;
+  isCurrent: boolean;
+  durationLabel: string;
+}
+
+interface ClientDetailData {
+  client: Record<string, string | number>;
+  progress: Record<string, string | number | boolean>;
+  timeline: ClientTimelineNode[];
+  run: Record<string, unknown> | null;
+  signAtLabel: string;
+  submitAtLabel: string;
+}
 
 interface Props {
   data: BoardData;
@@ -51,6 +71,25 @@ const MIN_VISIBLE = 3;
 
 /* ══════════════ 局部样式（vb11- 前缀） ══════════════ */
 const CSS = `
+/* V7.1 需求 J：客户详情 */
+.vb11-chain-link:hover{color:var(--brand2)!important;text-decoration:underline}
+.vb11-cd section{margin-bottom:18px}
+.vb11-cd h4{font-size:12.5px;font-weight:700;color:var(--text);margin:0 0 8px;padding-left:8px;border-left:3px solid var(--brand);line-height:1.2}
+.vb11-cd dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 14px;margin:0}
+.vb11-cd dl > div{display:flex;gap:8px;font-size:12px;line-height:1.6;min-width:0}
+.vb11-cd dt{flex:0 0 68px;color:var(--text3);font-weight:600;white-space:nowrap}
+.vb11-cd dd{margin:0;color:var(--text);font-weight:650;min-width:0;overflow-wrap:anywhere}
+.vb11-tl{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:0}
+.vb11-tl li{display:grid;grid-template-columns:14px 78px 1fr 62px;align-items:center;gap:8px;font-size:12px;padding:5px 0;position:relative}
+.vb11-tl li .dot{width:8px;height:8px;border-radius:50%;background:var(--line);margin:0 auto}
+.vb11-tl li.done .dot{background:var(--green)}
+.vb11-tl li.cur .dot{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 22%,transparent)}
+.vb11-tl li .nm{font-weight:650;color:var(--text2)}
+.vb11-tl li.done .nm{color:var(--text)}
+.vb11-tl li.cur .nm{color:var(--warn);font-weight:750}
+.vb11-tl li .st{color:var(--text3);font-variant-numeric:tabular-nums}
+.vb11-tl li .du{text-align:right;color:var(--text2);font-variant-numeric:tabular-nums;font-weight:650}
+
 .vb11-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease;min-width:0}
 .vb11-h{padding:13px 16px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent);flex-wrap:wrap}
 .vb11-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
@@ -149,7 +188,11 @@ const CSS = `
 `;
 
 /** 单元格渲染 */
-function renderCell(row: DetailFullRow, col: DetailColumnConf): React.ReactNode {
+function renderCell(
+  row: DetailFullRow,
+  col: DetailColumnConf,
+  onClientClick?: (chainId: string, chainName: string) => void,
+): React.ReactNode {
   const raw = (row as any)[col.key];
 
   switch (col.key) {
@@ -172,12 +215,28 @@ function renderCell(row: DetailFullRow, col: DetailColumnConf): React.ReactNode 
         </span>
       );
     }
-    case 'chainName':
+    case 'chainName': {
+      /* V7.1 需求 J：客户名称可点击，打开完整详情 */
+      const cid = String((row as unknown as Record<string, unknown>).chainId ?? '');
       return (
-        <Tooltip title={raw}>
-          <span style={{ color: 'var(--text)', fontWeight: 600 }}>{raw || '-'}</span>
+        <Tooltip title={onClientClick ? '点击查看该客户完整详情' : raw}>
+          <span
+            role={onClientClick ? 'button' : undefined}
+            tabIndex={onClientClick ? 0 : undefined}
+            className={onClientClick ? 'vb11-chain-link' : undefined}
+            style={{
+              color: onClientClick ? 'var(--brand)' : 'var(--text)',
+              fontWeight: 600,
+              cursor: onClientClick ? 'pointer' : 'default',
+            }}
+            onClick={(e) => { e.stopPropagation(); if (onClientClick) onClientClick(cid, String(raw || '')); }}
+            onKeyDown={(e) => { if (e.key === 'Enter' && onClientClick) onClientClick(cid, String(raw || '')); }}
+          >
+            {raw || '-'}
+          </span>
         </Tooltip>
       );
+    }
     case 'chainType': {
       const isInvalid = raw === '50-';
       const color = isInvalid
@@ -277,6 +336,34 @@ export default function DetailTable({ data, loading, isMobile }: Props) {
 
   const [visible, setVisible] = useState<string[]>(defaultVisible);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  /* V7.1 需求 J：客户详情抽屉 */
+  const [clientOpen, setClientOpen] = useState(false);
+  const [clientLoading, setClientLoading] = useState(false);
+  const [clientErr, setClientErr] = useState('');
+  const [clientName, setClientName] = useState('');
+  const [clientData, setClientData] = useState<ClientDetailData | null>(null);
+
+  const openClient = useCallback(async (chainId: string, chainName: string) => {
+    if (!chainId) return;
+    setClientOpen(true);
+    setClientName(chainName);
+    setClientLoading(true);
+    setClientErr('');
+    setClientData(null);
+    try {
+      const res = await fetch(`/api/crm/board/client/${encodeURIComponent(chainId)}`, {
+        credentials: 'same-origin',
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || json.ok === false) throw new Error(json.message || `加载失败（HTTP ${res.status}）`);
+      setClientData(json.data as ClientDetailData);
+    } catch (e) {
+      setClientErr(e instanceof Error ? e.message : '客户详情加载失败');
+    } finally {
+      setClientLoading(false);
+    }
+  }, []);
   /** V7：搜索框（连锁ID 或 连锁名称） */
   const [search, setSearch] = useState('');
 
@@ -354,10 +441,10 @@ export default function DetailTable({ data, loading, isMobile }: Props) {
         },
         sortDirections: ['descend', 'ascend'] as const,
         showSorterTooltip: { title: `点击按「${c.title}」排序` },
-        render: (_: unknown, row: DetailFullRow) => renderCell(row, c),
+        render: (_: unknown, row: DetailFullRow) => renderCell(row, c, openClient),
       };
     });
-  }, [columns, visible, distinctOf]);
+  }, [columns, visible, distinctOf, openClient]);
 
   const toggleColumn = (key: string, on: boolean) => {
     setVisible((cur) => {
@@ -485,6 +572,79 @@ export default function DetailTable({ data, loading, isMobile }: Props) {
         <Text style={{ fontSize: 12, color: 'var(--text3)' }}>
           提示：列顺序与后端列配置一致；「默认」标记的列会随筛选重置为可见。
         </Text>
+      </Drawer>
+    
+      {/* V7.1 需求 J：客户详情抽屉 */}
+      <Drawer
+        title={clientName ? `${clientName} · 客户详情` : '客户详情'}
+        placement="right"
+        width={isMobile ? '100%' : 720}
+        open={clientOpen}
+        onClose={() => setClientOpen(false)}
+        styles={{ body: { padding: 16 } }}
+      >
+        {clientLoading ? (
+          <div style={{ padding: 60, textAlign: 'center' }}><Spin /></div>
+        ) : clientErr ? (
+          <Alert type="error" showIcon message="客户详情加载失败" description={clientErr} />
+        ) : !clientData ? (
+          <Empty description="暂无详情" />
+        ) : (
+          <div className="vb11-cd">
+            {/* 基本信息 */}
+            <section>
+              <h4>基本信息</h4>
+              <dl>
+                <div><dt>连锁ID</dt><dd>{String(clientData.client.chainId ?? '-')}</dd></div>
+                <div><dt>连锁名称</dt><dd>{String(clientData.client.chainName ?? '-')}</dd></div>
+                <div><dt>连锁类型</dt><dd>{String(clientData.client.chainType ?? '-')}</dd></div>
+                <div><dt>区域 / 省份</dt><dd>{String(clientData.client.region ?? '-')} / {String(clientData.client.province ?? '-')}</dd></div>
+                <div><dt>门店数</dt><dd>{fmtNum(Number(clientData.client.stores) || 0)}</dd></div>
+                <div><dt>签约类型</dt><dd>{String(clientData.client.signType ?? '-')}</dd></div>
+                <div><dt>销售</dt><dd>{String(clientData.client.sales ?? '-')}</dd></div>
+                <div><dt>客服</dt><dd>{String(clientData.client.service ?? '-')}</dd></div>
+                <div><dt>解决方案</dt><dd>{String(clientData.client.solution ?? '-')}</dd></div>
+                <div><dt>培训人</dt><dd>{String(clientData.client.trainer ?? '-')}</dd></div>
+              </dl>
+            </section>
+
+            {/* 流程进度 */}
+            <section>
+              <h4>流程进度</h4>
+              <dl>
+                <div><dt>当前节点</dt><dd>{String(clientData.progress.node ?? '-')}</dd></div>
+                <div><dt>当前处理人</dt><dd>{String(clientData.progress.owner ?? '-')}</dd></div>
+                <div><dt>节点时长</dt><dd>{String(clientData.progress.currentNodeDuration ?? '-')}</dd></div>
+                <div><dt>状态</dt>
+                  <dd style={{ color: clientData.progress.isOverdue ? 'var(--danger)' : 'var(--green)', fontWeight: 700 }}>
+                    {clientData.progress.isOverdue
+                      ? `已超期 ${String(clientData.progress.overdueDays ?? 0)} 个工作日（阈值 ${String(clientData.progress.overdueThreshold ?? '-')}）`
+                      : '正常'}
+                  </dd>
+                </div>
+                <div><dt>上节点完成</dt><dd>{String(clientData.progress.prevDoneAtLabel || '-')}</dd></div>
+                <div><dt>提交 / 签约</dt><dd>{clientData.submitAtLabel || '-'} / {clientData.signAtLabel || '-'}</dd></div>
+              </dl>
+            </section>
+
+            {/* 节点时间线 */}
+            <section>
+              <h4>节点时间线</h4>
+              <ol className="vb11-tl">
+                {(clientData.timeline || []).map((t, i2) => (
+                  <li key={`${t.name}-${i2}`} className={t.isCurrent ? 'cur' : t.done ? 'done' : 'todo'}>
+                    <span className="dot" />
+                    <span className="nm">{t.name}</span>
+                    <span className="st">
+                      {t.done ? t.doneAtLabel : t.isCurrent ? '进行中' : '未开始'}
+                    </span>
+                    <span className="du">{t.durationLabel || ''}</span>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          </div>
+        )}
       </Drawer>
     </>
   );

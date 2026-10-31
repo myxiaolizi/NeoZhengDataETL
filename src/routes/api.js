@@ -16,6 +16,8 @@ const dsDriver = require('../datasource');
 const reports = require('../reports');
 const integrations = require('../integrations');
 const ai = require('../ai');
+const aiScope = require('../ai-scope');
+const aiShares = require('../ai-shares');
 const audit = require('../audit');
 const departments = require('../departments');
 const projectGroups = require('../project-groups');
@@ -190,6 +192,74 @@ router.get('/public/board', async (req, res) => {
     res.status(500).json({ ok: false, message: err.message });
   }
 });
+
+/**
+ * V8：AI 分享的公开元信息（无需登录，必须放在 requireAuthApi 之前）
+ *
+ * 只返回「标题 / 是否需要密码 / 数据范围名称与行数 / 欢迎语」，
+ * **绝不**返回物理表名、列清单或 SQL —— 包括 scope 明细在内都不下发。
+ *
+ * 密码错误不返回 403（前端需要原地显示「密码不正确」并保留密码框），
+ * 而是返回 200 + passwordError:true；真正的强制拦截在 ask 接口上。
+ * 不存在的 token → 404；停用 → 403；过期 → 410。
+ */
+router.get('/public/ai-shares/:token', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ ok: false, message: '缺少分享令牌' });
+
+    const pwd = req.query.pwd !== undefined ? String(req.query.pwd) : '';
+    const r = await aiShares.publicMeta(token, pwd);
+
+    if (r.ok) {
+      res.set('Cache-Control', 'no-store');
+      return res.json({ ok: true, data: r });
+    }
+    const map = { not_found: 404, disabled: 403, expired: 410 };
+    const status = map[r.code] || 400;
+    return res.status(status).json({ ok: false, code: r.code, message: r.message });
+  } catch (err) { next(err); }
+});
+
+/**
+ * V8：AI 分享的公开问数（无需登录，必须放在 requireAuthApi 之前）
+ *
+ * 用**该分享绑定的 scope** 走与登录问数完全相同的管线（同一条 SQL 安全校验链），
+ * 返回结果**不含 sql**（避免泄露表结构），rows 上限 min(ai_max_rows, 200)。
+ *
+ * 限流：单 token 20 次/分、单 IP 30 次/分、密码错 5 次/10 分钟 → 429。
+ */
+router.post('/public/ai-shares/:token/ask', async (req, res, next) => {
+  try {
+    const token = String(req.params.token || '').trim();
+    if (!token) return res.status(400).json({ ok: false, message: '缺少分享令牌' });
+
+    const body = req.body || {};
+    const r = await aiShares.publicAsk(token, body.question, {
+      pwd: body.pwd !== undefined ? body.pwd : (req.query.pwd !== undefined ? req.query.pwd : ''),
+      sessionKey: body.sessionKey,
+      history: body.history,
+      ip: publicClientIp(req),
+    });
+
+    if (r.ok) return res.json({ ok: true, data: r });
+
+    const map = {
+      not_found: 404, disabled: 403, expired: 410, PASSWORD: 403,
+      RATE_PASSWORD: 429, RATE_TOKEN: 429, RATE_IP: 429,
+    };
+    const status = map[r.code] || 400;
+    if (status === 429) res.set('Retry-After', '60');
+    return res.status(status).json({ ok: false, code: r.code, message: r.message });
+  } catch (err) { next(err); }
+});
+
+/** 公开接口取客户端 IP（与 audit.clientIp 同规则，优先 X-Forwarded-For 首个） */
+function publicClientIp(req) {
+  const fwd = req.headers && req.headers['x-forwarded-for'];
+  if (fwd) return String(fwd).split(',')[0].trim();
+  return (req.socket && req.socket.remoteAddress) || (req.connection && req.connection.remoteAddress) || '';
+}
 
 /* ══════════════ 以下接口需要登录 ══════════════ */
 
@@ -2116,20 +2186,164 @@ router.get('/integration-logs', auth.requirePerm('integration:read'), async (req
  *  AI 问数
  * ══════════════════════════════════════════════════════════ */
 
+/**
+ * AI 问数（V8：支持多数据范围）
+ *
+ * 请求体：
+ *   { question, scope:[{kind,id,tableType?}], datasetId?, sessionKey?, history? }
+ *   - scope 为空时回落到 datasetId（向后兼容旧前端）
+ *   - scope 与 datasetId 都为空 → 明确报「请先选择要问数的数据范围」
+ *
+ * 契约见 _work/v8/CONTRACT.md 第 2.3 / 2.4 节。
+ */
 router.post('/ai/ask', auth.requirePerm('ai:use'), async (req, res, next) => {
   try {
     const enabled = await settings.getBool('ai_enabled');
     if (!enabled) return res.status(400).json({ ok: false, message: '系统未启用 AI 问数，请先在系统设置中开启' });
 
     const body = req.body || {};
-    const r = await ai.ask(body.question, {
-      datasetId: body.datasetId,
+    const question = String(body.question || '').trim();
+    if (!question) return res.status(400).json({ ok: false, message: '请输入问题' });
+
+    const scope = Array.isArray(body.scope) && body.scope.length
+      ? body.scope
+      : (body.datasetId !== undefined && body.datasetId !== null && body.datasetId !== ''
+        ? [{ kind: 'dataset', id: Number(body.datasetId) }]
+        : null);
+    if (!scope || !scope.length) {
+      return res.status(400).json({
+        ok: false,
+        message: '请先选择要问数的数据范围（数据集 / 数据项目 / 邮件推送 / 流程产出）',
+      });
+    }
+
+    const r = await ai.ask(question, {
+      scope,
       sessionKey: body.sessionKey,
       userId: req.user.id,
       history: body.history,
     });
-    await audit.log(req, 'ai.ask', { detail: { question: String(body.question || '').slice(0, 200) } });
+    await audit.log(req, 'ai.ask', {
+      detail: {
+        question: question.slice(0, 200),
+        scope: scope.map((s) => `${s.kind}:${s.id}`).slice(0, 20).join(','),
+      },
+    });
     res.json({ ok: true, data: r });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/**
+ * V8：可选数据范围树
+ *
+ * 返回 {datasets, projects, mails, flows}，每项含 name / rowCount / columnCount / columns，
+ * 坏源带 invalid:true + reason（前端据此置灰，模型也永远不会看到这些表）。
+ */
+router.get('/ai/scope-options', auth.requirePerm('ai:use'), async (req, res, next) => {
+  try {
+    const data = await aiScope.listScopeOptions();
+    data.maxSources = await settings.getInt('ai_scope_max_sources', 8);
+    data.enabled = await settings.getBool('ai_enabled');
+    res.json({ ok: true, data });
+  } catch (err) { next(err); }
+});
+
+/* ── AI 分享管理（需登录） ── */
+
+/**
+ * 请求 Host（含端口），用于拼接分享链接。
+ *
+ * 【V8 修正】生产实测踩到的两个坑（宝塔 Node 项目反代默认配置）：
+ *   1. `proxy_set_header Host $host:$server_port;` → Host 头是 `域名:443`，
+ *      直接拼出来是 `http://域名:443/a/xxx`（协议错 + 端口多余），
+ *      用户复制到微信/短信里打开会走一次 301，个别客户端直接失败；
+ *   2. 宝塔只设 `X-Scheme`（不设 `X-Forwarded-Proto`），而 `req.protocol`
+ *      在反代后面恒为 http → 协议判断错误。
+ *
+ * 现在按优先级取协议：`X-Forwarded-Proto` → `X-Scheme` → Host 端口为 443 则 https
+ * → `req.protocol`；并把 https 的 `:443`、http 的 `:80` 去掉（默认端口不显式写）。
+ */
+function requestHost(req) {
+  const h = req.headers || {};
+
+  const firstOf = (v) => String(v || '').split(',')[0].trim();
+
+  let host = firstOf(h['x-forwarded-host']) || firstOf(h.host) || '';
+  if (!host) return '';
+
+  // 从 Host 里拆出端口（支持 IPv6 的 [::1]:443 写法）
+  let hostname = host;
+  let port = '';
+  const m6 = host.match(/^\[([^\]]+)\](?::(\d+))?$/);
+  if (m6) { hostname = `[${m6[1]}]`; port = m6[2] || ''; }
+  else {
+    const m = host.match(/^([^:]+)(?::(\d+))?$/);
+    if (m) { hostname = m[1]; port = m[2] || ''; }
+  }
+
+  let proto = (firstOf(h['x-forwarded-proto']) || firstOf(h['x-scheme']) || '').toLowerCase();
+  if (proto !== 'http' && proto !== 'https') {
+    proto = port === '443' ? 'https' : (String(req.protocol || '').toLowerCase() === 'https' ? 'https' : 'http');
+  }
+
+  // 默认端口不显式写（https:443 / http:80）
+  if ((proto === 'https' && port === '443') || (proto === 'http' && port === '80')) port = '';
+
+  return `${proto}://${hostname}${port ? ':' + port : ''}`;
+}
+
+/** 创建分享 */
+router.post('/ai/shares', auth.requirePerm('ai:use'), async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    const share = await aiShares.createShare(body, req.user.id, { reqHost: requestHost(req) });
+    await audit.log(req, 'ai.share.create', {
+      targetType: 'ai_share', targetId: share.id,
+      detail: { title: share.title, scopeSize: (share.scope || []).length, hasPassword: share.hasPassword },
+    });
+    res.json({ ok: true, data: share, message: '分享链接已生成' });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/** 分享列表 */
+router.get('/ai/shares', auth.requirePerm('ai:use'), async (req, res, next) => {
+  try {
+    const r = await aiShares.listShares({
+      reqHost: requestHost(req),
+      page: req.query.page,
+      pageSize: req.query.pageSize,
+    });
+    res.json({ ok: true, data: r });
+  } catch (err) { next(err); }
+});
+
+/** 启停分享 */
+router.patch('/ai/shares/:id', auth.requirePerm('ai:use'), async (req, res, next) => {
+  try {
+    const body = req.body || {};
+    if (body.status === undefined) {
+      return res.status(400).json({ ok: false, message: '缺少 status 参数（1 启用 / 0 停用）' });
+    }
+    const share = await aiShares.toggleShare(req.params.id, body.status);
+    await audit.log(req, 'ai.share.update', {
+      targetType: 'ai_share', targetId: share.id, detail: { status: share.status },
+    });
+    res.json({ ok: true, data: share, message: share.status === 1 ? '已启用' : '已停用' });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
+/** 删除分享 */
+router.delete('/ai/shares/:id', auth.requirePerm('ai:use'), async (req, res, next) => {
+  try {
+    await aiShares.deleteShare(req.params.id);
+    await audit.log(req, 'ai.share.delete', { targetType: 'ai_share', targetId: req.params.id });
+    res.json({ ok: true, message: '分享已删除' });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
   }
@@ -2761,6 +2975,22 @@ router.get('/crm/board/detail', auth.requirePerm('report:read'), async (req, res
     res.json({ ok: true, data });
   } catch (err) {
     console.error('[crm/board/detail]', err);
+    res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+/**
+ * V7.1：单个客户的完整详情。
+ * 供看板「客户明细」表点击连锁名称时打开详情抽屉使用。
+ */
+router.get('/crm/board/client/:id', auth.requirePerm('report:read'), async (req, res) => {
+  try {
+    const crmboard = require('../crmboard');
+    const data = await crmboard.buildClientDetail(req.params.id);
+    if (!data) return res.status(404).json({ ok: false, message: '未找到该客户' });
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error('[crm/board/client]', err);
     res.status(500).json({ ok: false, message: err.message });
   }
 });

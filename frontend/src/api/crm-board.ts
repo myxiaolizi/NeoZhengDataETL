@@ -283,16 +283,29 @@ export interface FlowNodeItem {
   avgHours?: number;
   /** V7：该节点是否有「耗时」概念（销售签约 / 流程结束 为 false） */
   hasTime?: boolean;
-  /** V7：正常家数（当前节点时长 ≤ 7 天） */
+  /** V7：正常家数（工作日口径，见 overdueThreshold） */
   normal?: number;
-  /** V7：超期家数（当前节点时长 > 7 天） */
+  /** V7：超期家数（工作日口径） */
   overdue?: number;
+  /* ── V7.1 工作日超期口径 ── */
+  /** 该节点的超期阈值（工作日）；销售签约/流程结束为 null */
+  overdueThreshold?: number | null;
+  /** 超期判定说明，如「超过 5 个工作日」 */
+  overdueRule?: string;
+  /** 该节点超期客户的平均超出工作日 */
+  avgOverdueDays?: number;
+  /** V7.1：该节点南区连锁数 */
+  south?: number;
+  /** V7.1：该节点北区连锁数 */
+  north?: number;
   byRole: { role: string; count: number }[];
   rows: DetailRow[];
 }
 
 export interface Row2Data {
   nodes: FlowNodeItem[];
+  /** V7.1：超期口径说明（弹窗底部展示） */
+  overdueNote?: string;
 }
 
 /* ══════════════ 第 3 排：类型汇总 + 排行榜 ══════════════ */

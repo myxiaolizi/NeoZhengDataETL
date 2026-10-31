@@ -65,6 +65,12 @@ export const ROUTES: RouteConf[] = [
   { path: '/reports/:id/view', name: '报表查看', permission: 'report:read', hideInMenu: true, group: 'analysis', component: 'reports/View', mobile: true },
   { path: '/shares', name: '分享管理', icon: 'ShareAltOutlined', permission: 'share:read', group: 'analysis', component: 'shares', mobile: true },
   { path: '/ai', name: 'AI 问数', icon: 'RobotOutlined', permission: 'ai:read', group: 'analysis', component: 'ai', mobile: true },
+  /**
+   * V8：AI 问数**公开分享页**（无需登录，独立布局不套 BasicLayout）。
+   * hideInMenu：不进左侧菜单；mobile：标记需移动端适配。
+   * 实际路由由 App.tsx 挂在 `<Routes>` 顶部的公开路由区（/a/:token）。
+   */
+  { path: '/a/:token', name: 'AI 问数分享', icon: 'ShareAltOutlined', hideInMenu: true, group: 'analysis', component: 'ai-share', mobile: true },
 
   // ---------- 数据治理 ----------
   { path: '/governance', name: '治理总览', icon: 'SafetyOutlined', permission: 'governance:read', group: 'governance', component: 'governance' },
@@ -84,5 +90,21 @@ export const ROUTES: RouteConf[] = [
 /** 需要移动端适配的路由集合 */
 export const MOBILE_ROUTES = new Set(ROUTES.filter((r) => r.mobile).map((r) => r.path));
 
-/** 公开路由（无需登录） */
+/**
+ * 公开路由（无需登录）
+ * App.tsx 用 `startsWith` 匹配，因此登记的是前缀。
+ *
+ * 注意：`/s/`、`/f/`、`/a/` 这类带 token 的公开页故意**不**放进来——
+ * 它们需要「完全不探测登录态」（不能发 /me），由 App.tsx 单独的
+ * PUBLIC_PREFIXES 常量判断，避免这里被误解为「可以探测」。
+ */
 export const PUBLIC_ROUTES = ['/login', '/register', '/forgot-password', '/reset-password'];
+
+/**
+ * 完全不探测登录态的路径前缀（未登录访客直接打开，不能发 /api/me）。
+ *
+ * - `/s/`：报表 / 看板公开分享
+ * - `/f/`：表单公开填写
+ * - `/a/`：V8 AI 问数公开分享（手机扫码/微信打开的主要入口）
+ */
+export const PUBLIC_PREFIXES = ['/s/', '/f/', '/a/'];

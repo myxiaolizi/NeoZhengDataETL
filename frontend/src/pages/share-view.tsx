@@ -8,7 +8,7 @@
  * 支持：链接失效提示、图表 + 明细表、看板整页渲染、移动端单列
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Button, Card, Empty, Grid, Result, Space, Spin, Statistic, Table, Tag, Typography } from 'antd';
+import { Button, Card, Empty, Grid, Input, Result, Space, Spin, Statistic, Table, Tag, Typography } from 'antd';
 import { BarChartOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useParams } from 'react-router-dom';
 import Chart from '@/components/Chart';
@@ -99,6 +99,16 @@ export default function ShareView() {
     return new URLSearchParams(window.location.search).get('pwd') || '';
   }, []);
 
+  /* V7.1：手动输入密码（原实现只支持 ?pwd= 直达，访客没有任何输入入口） */
+  const [pwdInput, setPwdInput] = useState('');
+  const [pwdErr, setPwdErr] = useState('');
+  const [pwdLoading, setPwdLoading] = useState(false);
+  /** 用户提交成功后生效的密码（优先于 URL 参数） */
+  const [manualPwd, setManualPwd] = useState('');
+
+  /** 实际用于请求的密码：手输优先，其次 URL 里的 ?pwd */
+  const activePwd = manualPwd || urlPwd;
+
   const load = useCallback(async () => {
     if (!token) {
       setError('分享链接无效');
@@ -108,7 +118,7 @@ export default function ShareView() {
     setLoading(true);
     setError('');
     try {
-      const r = await fetchPublicShare(token, urlPwd || undefined);
+      const r = await fetchPublicShare(token, activePwd || undefined);
       setData(r);
       if (!r.ok) setError(r.message || '分享链接不可用');
     } catch (e) {
@@ -116,7 +126,32 @@ export default function ShareView() {
     } finally {
       setLoading(false);
     }
-  }, [token, urlPwd]);
+  }, [token, activePwd]);
+
+  /** V7.1：提交手输密码 → 重新校验并拉取 */
+  const submitPwd = useCallback(async () => {
+    const v = pwdInput.trim();
+    if (!v) {
+      setPwdErr('请输入密码');
+      return;
+    }
+    setPwdLoading(true);
+    setPwdErr('');
+    try {
+      const r = await fetchPublicShare(token || '', v);
+      if (r.ok) {
+        setManualPwd(v);
+        setData(r);
+        setError('');
+      } else {
+        setPwdErr(r.message || '密码不正确，请重试');
+      }
+    } catch (e) {
+      setPwdErr(e instanceof Error ? e.message : '密码校验失败，请重试');
+    } finally {
+      setPwdLoading(false);
+    }
+  }, [pwdInput, token]);
 
   useEffect(() => {
     load();
@@ -138,7 +173,7 @@ export default function ShareView() {
     let alive = true;
     (async () => {
       try {
-        const r = await fetch(`/api/public/board?token=${encodeURIComponent(token || '')}${urlPwd ? `&pwd=${encodeURIComponent(urlPwd)}` : ''}`, {
+        const r = await fetch(`/api/public/board?token=${encodeURIComponent(token || '')}${activePwd ? `&pwd=${encodeURIComponent(activePwd)}` : ''}`, {
           credentials: 'same-origin',
         });
         const j = await r.json().catch(() => ({}));
@@ -150,7 +185,7 @@ export default function ShareView() {
       }
     })();
     return () => { alive = false; };
-  }, [isBoardShare, token]);
+  }, [isBoardShare, token, activePwd]);
 
   const tableColumns = useMemo(() => {
     if (!rows.length) return [];
@@ -170,6 +205,50 @@ export default function ShareView() {
 
   /* 错误页（过期 / 停用 / 不存在 / 不支持的类型） */
   if (!loading && (!data?.ok || error)) {
+    /* V7.1：需要密码时，给出输入框（而不是只说「密码不正确」） */
+    const needPwd = data?.code === 'password' || /密码/.test(error || data?.message || '');
+    if (needPwd) {
+      return (
+        <Shell title="需要访问密码">
+          <Card
+            style={{
+              maxWidth: 420, margin: isMobile ? '32px auto' : '72px auto',
+              borderRadius: 16, border: `1px solid ${NEUTRAL.border}`,
+            }}
+            styles={{ body: { padding: isMobile ? 20 : 28 } }}
+          >
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <div style={{ fontSize: 40, lineHeight: 1, marginBottom: 12 }}>🔒</div>
+              <Title level={4} style={{ margin: 0, marginBottom: 6 }}>该分享已设置访问密码</Title>
+              <Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
+                请输入分享者提供的密码后查看内容
+              </Paragraph>
+            </div>
+            <Input.Password
+              value={pwdInput}
+              onChange={(e) => setPwdInput(e.target.value)}
+              onPressEnter={submitPwd}
+              placeholder="请输入访问密码"
+              size="large"
+              autoFocus
+              style={{ marginBottom: 12 }}
+            />
+            {pwdErr && (
+              <div style={{ color: PALETTE.red, fontSize: 13, marginBottom: 10 }}>{pwdErr}</div>
+            )}
+            <Button
+              type="primary"
+              size="large"
+              block
+              loading={pwdLoading}
+              onClick={submitPwd}
+            >
+              查看内容
+            </Button>
+          </Card>
+        </Shell>
+      );
+    }
     return (
       <Shell title="无法访问">
         <Result

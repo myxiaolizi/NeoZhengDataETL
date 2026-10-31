@@ -75,9 +75,57 @@ const NODE_TIME_COL = {
 };
 
 /**
- * 原始节点名（flow_current_node / widget_1791533061604）→ 9 节点之一。
- * 依据实测 13 种旧值 + 7 种当前节点值。
+ * V7.1 超期口径：按「工作日」计算。
+ *
+ * 定义：**上一节点结束时间** 到 **现在** 之间经过的**工作日**数，超过该节点阈值即超期。
+ * 工作日 = 排除周六日（不含法定节假日调整，业务上可接受）。
+ *
+ * 实测数据事实（96 条客户）：
+ *   w_1793094135522_p 销售签约完成 95 条
+ *   w_1793094135524_p 策略开通完成 95 条
+ *   w_1793094135538_p 实施对接完成 53 条
+ *   w_1793094135578_p 对接审核完成 10 条
+ *   w_1793094135592_p 客服处理完成 24 条
+ *   w_1793094135593_p 客户培训完成 19 条
+ *   w_1793094135594_p 连锁使用完成  4 条
+ *   w_1793094135608_p 策略审核完成  5 条
  */
+const NODE_OVERDUE_RULE = {
+  销售签约: { days: null, prevCol: null },                      // 起点，不算超期
+  策略开通: { days: 2, prevCol: 'tSubmit' },                    // 上一节点=销售签约完成
+  实施对接: { days: 5, prevCol: 'tStrategyOpen' },              // 上一节点=策略开通完成
+  对接审核: { days: 2, prevCol: 'tImplement' },                 // 上一节点=实施对接完成
+  客服处理: { days: 10, prevCol: 'tImplAudit' },                // 上一节点=对接审核完成
+  客户培训: { days: 3, prevCol: 'tService' },                   // 上一节点=客服处理完成
+  连锁使用: { days: 5, prevCol: 'tTrain' },                     // 上一节点=客户培训完成
+  策略审核: { days: 2, prevCol: 'tChainUse' },                  // 上一节点=连锁使用完成
+  流程结束: { days: null, prevCol: 'tStrategyAudit' },          // 终点，不算超期
+};
+
+/**
+ * 计算两个日期之间的工作日天数（排除周六日）。
+ * 结束时间晚于开始时间；只数 (start, end] 区间内的工作日。
+ *
+ * @param {Date} start 起始（上一节点结束）
+ * @param {Date} end 结束（通常为 now）
+ * @returns {number} 工作日数（>=0）
+ */
+function workdaysBetween(start, end) {
+  if (!start || !end) return 0;
+  const s = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const e = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  if (e <= s) return 0;
+  let count = 0;
+  const cur = new Date(s);
+  let guard = 0;
+  while (cur < e && guard < 3650) {
+    cur.setDate(cur.getDate() + 1);
+    const wd = cur.getDay();
+    if (wd !== 0 && wd !== 6) count += 1;
+    guard += 1;
+  }
+  return count;
+}
 const NODE_ALIAS = {
   开始: '销售签约',
   销售签约: '销售签约',
@@ -571,6 +619,16 @@ function normalizeClient(raw, staff, runMap, now) {
   const nodeDays = daysSince(enterAt, now);
   const totalDays = daysSince(submitAt, now);
 
+  /**
+   * V7.1 超期：按工作日口径。
+   * 取「上一节点完成时间」，算到现在的**工作日**数，超过该节点阈值即超期。
+   */
+  const overdueRule = NODE_OVERDUE_RULE[node] || { days: null, prevCol: null };
+  const prevDoneAt = !isCompleted && overdueRule.prevCol ? toDate(raw[C[overdueRule.prevCol]]) : null;
+  const workdays = prevDoneAt ? workdaysBetween(prevDoneAt, now) : 0;
+  const isOverdue = overdueRule.days !== null && prevDoneAt !== null && workdays > overdueRule.days;
+  const overdueDays = isOverdue ? workdays - overdueRule.days : 0;
+
   const run = runMap.get(chainId) || null;
 
   const signAt = toDate(raw[C.signTime]) || submitAt;
@@ -602,7 +660,16 @@ function normalizeClient(raw, staff, runMap, now) {
     enterAt,
     enterAtYmd: enterAt ? ymd(enterAt) : '',
     nodeDays,
-    status: nodeDays > OVERDUE_DAYS ? '超期' : '正常',
+    /* V7.1：工作日超期口径 */
+    status: isOverdue ? '超期' : '正常',
+    isOverdue,
+    workdays,
+    overdueDays,
+    overdueThreshold: overdueRule.days,
+    overdueRule: overdueRule.days !== null ? `超过 ${overdueRule.days} 个工作日` : '',
+    /** 上一节点完成时间（超期计算的基准） */
+    prevDoneAt,
+    prevDoneAtYmd: prevDoneAt ? ymd(prevDoneAt) : '',
     submitAt,
     signAt,
     totalDays,
@@ -987,9 +1054,18 @@ function buildRow2(clients) {
       ? round((list.reduce((sum, c) => sum + c.nodeDays, 0) / list.length) * 24, 1)
       : 0;
 
-    // 正常 / 超期（超期 = 当前节点时长 > OVERDUE_DAYS）
-    const overdue = list.filter((c) => c.nodeDays > OVERDUE_DAYS).length;
+    /* V7.1：正常/超期改用「工作日」口径（c.isOverdue 已在 normalizeClient 算好） */
+    const overdue = list.filter((c) => c.isOverdue).length;
     const normal = list.length - overdue;
+    /** 该节点超期客户的平均超出工作日（用于展示「平均超期 X 个工作日」） */
+    const overdueList = list.filter((c) => c.isOverdue);
+    const avgOverdueDays = overdueList.length
+      ? round(overdueList.reduce((s2, c) => s2 + c.overdueDays, 0) / overdueList.length, 1)
+      : 0;
+
+    /* V7.1：该节点南/北区连锁数 */
+    const south = list.filter((c) => c.region === '南区').length;
+    const north = list.filter((c) => c.region === '北区').length;
 
     // 按岗位汇总
     const roleMap = new Map();
@@ -1001,6 +1077,8 @@ function buildRow2(clients) {
       .map(([role, count]) => ({ role, count }))
       .sort((a, b) => b.count - a.count);
 
+    const rule = NODE_OVERDUE_RULE[name] || { days: null };
+
     return {
       key: name,
       name,
@@ -1010,14 +1088,29 @@ function buildRow2(clients) {
       avgDays,
       avgHours,
       hasTime: !NO_TIME_NODES.includes(name),
+      /* V7.1 超期（工作日口径） */
       normal,
       overdue,
+      avgOverdueDays,
+      overdueThreshold: rule.days,
+      overdueRule: rule.days !== null ? `超过 ${rule.days} 个工作日` : '',
+      /* V7.1 南北区连锁数 */
+      south,
+      north,
       byRole,
       rows: list.map(toDetailRow),
     };
   });
 
-  return { nodes };
+  return {
+    nodes,
+    /** V7.1：超期口径说明（前端弹窗底部展示） */
+    overdueNote: [
+      '超期口径：上一节点结束后在本节点的工作日超过阈值即视为超期。',
+      '策略开通 2 个工作日 · 实施对接 5 个工作日 · 对接审核 2 个工作日 · ',
+      '客服处理 10 个工作日 · 客户培训 3 个工作日 · 连锁使用 5 个工作日 · 策略审核 2 个工作日',
+    ].join(''),
+  };
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1258,22 +1351,36 @@ function buildRow6(clients, flowEvents, now) {
     byChainType,
   };
 
-  // ── 流程处理：最近 5 个工作日 ──
-  const workdays = [];
-  let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  let guard = 0;
-  while (workdays.length < 5 && guard < 30) {
-    if (isWorkday(cursor)) workdays.unshift(ymd(cursor));
-    cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() - 1);
-    guard += 1;
-  }
+  /**
+   * ── 流程处理：V7.1 改为「近 7 个自然日」+「近 30 个自然日」双窗口 ──
+   *
+   * V7 原为「最近 5 个工作日」（跳过周末）。V7.1 需求要求：
+   *   - 卡片正文显示最近 7 日
+   *   - 「更多」弹窗显示最近 30 日
+   * 改为自然日连续窗口，避免周末空洞、更直观。
+   */
+  const buildWindow = (n2) => {
+    const arr = [];
+    for (let i = n2 - 1; i >= 0; i -= 1) {
+      arr.push(ymd(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i)));
+    }
+    return arr;
+  };
+  const workdays = buildWindow(7);     // 卡片正文：7 日
+  const days30 = buildWindow(30);      // 弹窗：30 日
 
   const nodeList = FLOW_NODES.slice();
-  const matrix = nodeList.map(() => new Array(workdays.length).fill(0));
-  /** V7：按区域分别累计，供「流程处理」的区域筛选使用 */
-  const matrixSouth = nodeList.map(() => new Array(workdays.length).fill(0));
-  const matrixNorth = nodeList.map(() => new Array(workdays.length).fill(0));
+  const mkMatrix = (len) => nodeList.map(() => new Array(len).fill(0));
+
+  const matrix = mkMatrix(workdays.length);
+  const matrixSouth = mkMatrix(workdays.length);
+  const matrixNorth = mkMatrix(workdays.length);
+  const matrix30 = mkMatrix(days30.length);
+  const matrix30South = mkMatrix(days30.length);
+  const matrix30North = mkMatrix(days30.length);
+
   const wdIdx = new Map(workdays.map((d, i) => [d, i]));
+  const idx30 = new Map(days30.map((d, i) => [d, i]));
   const nodeIdx = new Map(nodeList.map((nm, i) => [nm, i]));
 
   // 事件实例 → 连锁区域：parsed_102.event_instance_id === parsed_16.jdy_data_id
@@ -1288,33 +1395,53 @@ function buildRow6(clients, flowEvents, now) {
     if (done <= 0) return;
     const at = toDate(e.header_created_at_p) || toDate(e.header_created_at);
     if (!at) return;
-    const i = wdIdx.get(ymd(at));
-    if (i === undefined) return;
+    const key = ymd(at);
     const nodeName = mapNode(e.event_flow_name);
     const j = nodeIdx.get(nodeName);
     if (j === undefined) return;
-    matrix[j][i] += done;
-    // 区域维度
     const instId = s(e.event_instance_id);
     const reg = instId ? instanceRegion.get(instId) : '';
-    if (reg === '南区') matrixSouth[j][i] += done;
-    else if (reg === '北区') matrixNorth[j][i] += done;
+
+    // 7 日窗口
+    const i = wdIdx.get(key);
+    if (i !== undefined) {
+      matrix[j][i] += done;
+      if (reg === '南区') matrixSouth[j][i] += done;
+      else if (reg === '北区') matrixNorth[j][i] += done;
+    }
+    // 30 日窗口
+    const k = idx30.get(key);
+    if (k !== undefined) {
+      matrix30[j][k] += done;
+      if (reg === '南区') matrix30South[j][k] += done;
+      else if (reg === '北区') matrix30North[j][k] += done;
+    }
   });
 
   const flowProgress = {
+    /* 卡片正文：近 7 日 */
     days: workdays.map((d) => md(d)),
     daysCn: workdays.map((d) => mdCn(d)),
     nodes: nodeList,
     matrix,
-    /** V7：区域拆分（frontend 的区域筛选用） */
     byRegion: {
       全部: { matrix },
       南区: { matrix: matrixSouth },
       北区: { matrix: matrixNorth },
     },
-    /** V7：兼容扁平字段 */
     matrixSouth,
     matrixNorth,
+    /* V7.1：「更多」弹窗：近 30 日 */
+    days30: days30.map((d) => md(d)),
+    daysCn30: days30.map((d) => mdCn(d)),
+    matrix30,
+    byRegion30: {
+      全部: { matrix: matrix30 },
+      南区: { matrix: matrix30South },
+      北区: { matrix: matrix30North },
+    },
+    matrix30South,
+    matrix30North,
   };
 
   // ── 有开通策略的客户数（按南北区）──
@@ -1419,10 +1546,16 @@ function aggregateRow7(rows, chainRegion) {
   rows.forEach((r) => {
     const chainId = s(r[M.chainId]);
     const region = chainRegion.get(chainId) || '';
+    /**
+     * V7.1：需求「未知的数据不纳入计算，直接在数据源排除」。
+     * 匹配不到区域（南区/北区）的连锁行**直接跳过**，不计入任何桶。
+     * 实测 mail_31 最新日 18 个连锁中有 3 个（15442/15676/15813）匹配不到，会被排除。
+     */
+    if (region !== '南区' && region !== '北区') return;
+
     const keys = ['t'];
     if (region === '南区') keys.push('s');
-    else if (region === '北区') keys.push('n');
-    else keys.push('u'); // 未知区域（未签约连锁）
+    else keys.push('n');
 
     const opened = n(r[M.openedStrategies]);
     const running = n(r[M.runningStrategies]);
@@ -1919,9 +2052,131 @@ async function buildDetailPage(query, page, pageSize) {
   };
 }
 
+/**
+ * V7.1：单个客户的完整详情（供明细表「点击客户名称」查看）。
+ *
+ * @param {string|number} chainId 连锁ID
+ * @returns {Promise<Object|null>} 找不到返回 null
+ */
+async function buildClientDetail(chainId) {
+  const id = s(chainId);
+  if (!id) return null;
+
+  const now = new Date();
+  const [staff, run30, allClients] = await Promise.all([
+    loadStaff(),
+    loadRunSummary(),
+    loadClients(),
+  ]);
+  // 运行数据按连锁ID 建索引（与 buildBoard 保持一致）
+  const runMap = new Map();
+  (run30.rows || []).forEach((r) => {
+    const id = s(r[M.chainId]);
+    if (id) runMap.set(id, r);
+  });
+  const clients = (allClients || []).map((raw) => normalizeClient(raw, staff, runMap, now));
+  const c = clients.find((x) => x.chainId === id);
+  if (!c) return null;
+
+  /** 9 个节点的完成时间与该节点停留时长 */
+  const NODE_COLS = [
+    { name: '销售签约', col: C.tSubmit },
+    { name: '策略开通', col: C.tStrategyOpen },
+    { name: '实施对接', col: C.tImplement },
+    { name: '对接审核', col: C.tImplAudit },
+    { name: '客服处理', col: C.tService },
+    { name: '客户培训', col: C.tTrain },
+    { name: '连锁使用', col: C.tChainUse },
+    { name: '策略审核', col: C.tStrategyAudit },
+  ];
+  const raw = c.runRaw || {};
+  const doneAt = NODE_COLS.map((x) => ({ name: x.name, at: toDate(raw[x.col]) }));
+
+  const timeline = doneAt.map((x, i) => {
+    const prev = i > 0 ? doneAt[i - 1].at : null;
+    const isCurrent = !c.isCompleted && c.node === x.name;
+    const isNodeDone = !!x.at;
+    let durationLabel = '';
+    if (x.at && prev) {
+      const hrs = (x.at.getTime() - prev.getTime()) / 3600000;
+      durationLabel = hrs < 24 ? `${round(hrs, 1)}时` : `${round(hrs / 24, 1)}天`;
+    } else if (x.at && i === 0) {
+      durationLabel = '起点';
+    }
+    return {
+      name: x.name,
+      doneAt: x.at ? x.at.toISOString() : '',
+      doneAtLabel: x.at ? `${mdCn(x.at)} ${String(x.at.getHours()).padStart(2, '0')}:${String(x.at.getMinutes()).padStart(2, '0')}` : '',
+      done: isNodeDone,
+      isCurrent,
+      /** 相对上一节点的耗时 */
+      durationLabel,
+    };
+  });
+  // 当前节点（未完成时）补一条「进行中」：替换该节点原本的「未开始」
+  if (!c.isCompleted && c.node) {
+    const idx = FLOW_NODES.indexOf(c.node);
+    const curDur = c.nodeDays < 1 ? `${round(c.nodeDays * 24, 1)}时` : `${round(c.nodeDays, 1)}天`;
+    const curNode = {
+      name: c.node,
+      doneAt: '',
+      doneAtLabel: '',
+      done: false,
+      isCurrent: true,
+      durationLabel: curDur,
+    };
+    const exist = timeline.findIndex((x) => x.name === c.node);
+    if (exist >= 0) timeline[exist] = curNode;
+    else if (idx >= 0) timeline.splice(idx, 0, curNode);
+  }
+
+  return {
+    client: {
+      chainId: c.chainId,
+      chainName: c.chainName,
+      chainType: c.chainType,
+      region: c.region,
+      province: c.province,
+      stores: c.stores,
+      signType: c.signType,
+      sales: c.sales,
+      service: c.service,
+      solution: c.solution,
+      trainer: c.trainer,
+      version: c.version,
+      connectResult: c.connectResult,
+      trainResult: c.trainResult,
+    },
+    progress: {
+      node: c.node,
+      nodeRaw: c.nodeRaw,
+      isCompleted: c.isCompleted,
+      owner: c.owner,
+      ownerRoles: c.ownerRoles,
+      enterAtLabel: c.enterAt ? mdCn(c.enterAt) : '',
+      nodeDays: round(c.nodeDays, 1),
+      currentNodeDuration: c.nodeDays < 1 ? `${round(c.nodeDays * 24, 1)}时` : `${round(c.nodeDays, 1)}天`,
+      totalDays: round(c.totalDays, 1),
+      status: c.status,
+      isOverdue: c.isOverdue,
+      /** 超期时：已超出阈值多少个工作日 */
+      overdueDays: c.overdueDays,
+      overdueThreshold: c.overdueThreshold,
+      overdueRule: c.overdueRule,
+      workdays: c.workdays,
+      prevDoneAtLabel: c.prevDoneAt ? mdCn(c.prevDoneAt) : '',
+    },
+    timeline,
+    run: c.run || null,
+    signAtLabel: c.signAt ? mdCn(c.signAt) : '',
+    submitAtLabel: c.submitAt ? mdCn(c.submitAt) : '',
+  };
+}
+
 module.exports = {
   buildBoard,
   buildDetailPage,
+  buildClientDetail,
   // 导出内部件便于单测
   _internal: {
     resolveDateRange,

@@ -26,7 +26,12 @@ interface Props {
 }
 
 /** 后端可能已补 normal/overdue（Lead 负责），缺失时用明细行状态兜底 */
-type FlowNodeExt = FlowNodeItem & { normal?: number; overdue?: number };
+type FlowNodeExt = FlowNodeItem & {
+  normal?: number; overdue?: number;
+  /** V7.1：工作日超期阈值与南北区连锁数 */
+  overdueThreshold?: number | null; overdueRule?: string; avgOverdueDays?: number;
+  south?: number; north?: number;
+};
 
 /** 占比分母排除的节点（与后端 RATIO_EXCLUDED 一致）：这两个节点不参与占比 */
 const RATIO_EXCLUDED = ['销售签约', '流程结束'];
@@ -152,10 +157,26 @@ const CSS = `
 .v7flow .fm-node[role="button"]{cursor:pointer}
 .v7flow .fm-node[role="button"]:hover{background:var(--panel2);border-color:var(--brand3);transform:translateY(-3px);box-shadow:0 10px 22px color-mix(in srgb,var(--brand) 16%,transparent)}
 .v7flow .fm-node[role="button"]:focus-visible{outline:2px solid var(--brand3);outline-offset:2px}
-.v7flow .fm-node.off{cursor:default;opacity:.62}
+.v7flow .fm-node.off{cursor:default}
 .v7flow .fm-node.off:hover{background:transparent;border-color:transparent;transform:none;box-shadow:none}
 
-.v7flow .fm-name{font-size:11.5px;font-weight:700;color:var(--text2);letter-spacing:.2px;white-space:nowrap;line-height:1.2}
+.v7flow .fm-name{font-size:11.5px;font-weight:700;color:var(--text2);letter-spacing:.2px;white-space:nowrap;line-height:1.2;display:flex;align-items:center;justify-content:center;gap:5px}
+/* V7.1 D2：名称前的图标 */
+.v7flow .fm-nameico{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:var(--brand)}
+.v7flow .fm-nameico svg{width:15px;height:15px}
+/* V7.1 D5：卡片内南/北区连锁数 */
+.v7flow .fm-region{display:flex;align-items:center;justify-content:center;gap:8px;font-size:10px;color:var(--text3);line-height:1.3;font-variant-numeric:tabular-nums;white-space:nowrap}
+.v7flow .fm-rg{display:inline-flex;align-items:center;gap:3px}
+.v7flow .fm-rg i{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.v7flow .fm-rg.s i{background:var(--brand)}
+.v7flow .fm-rg.n i{background:var(--green)}
+.v7flow .fm-rg.s b{color:var(--brand);font-weight:750}
+.v7flow .fm-rg.n b{color:var(--green);font-weight:750}
+/* V7.1 D7：超期口径说明（弹窗明细表格下方） */
+.fm-overdue-note{margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);line-height:1.7}
+.fm-overdue-note .fm-on-title{font-size:12px;font-weight:700;color:var(--text2);margin-bottom:3px}
+.fm-overdue-note .fm-on-rules{font-size:11.5px;color:var(--text3)}
+.fm-overdue-note b{color:var(--brand);font-weight:750;font-variant-numeric:tabular-nums}
 
 /* C4 图标+客户数+占比同框：蓝底白字（固定高度，9 卡等高不换行） */
 .v7flow .fm-sum{width:100%;height:50px;display:flex;align-items:center;justify-content:center;gap:5px;padding:0 4px;border-radius:10px;color:#fff;box-shadow:0 4px 12px color-mix(in srgb,var(--brand) 24%,transparent);overflow:hidden}
@@ -352,6 +373,9 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
                   const noDuration = NO_DURATION.includes(nd.name);
                   const { normal, overdue } = normalOverdue(nd);
                   const roles = Array.isArray(nd.byRole) ? nd.byRole : [];
+                  /* V7.1 D5：该节点南/北区连锁数（后端已提供） */
+                  const south = Number.isFinite(Number(nd.south)) ? Number(nd.south) : 0;
+                  const north = Number.isFinite(Number(nd.north)) ? Number(nd.north) : 0;
                   const ratioText = RATIO_EXCLUDED.includes(nd.name)
                     ? '—'
                     : fmtPct(nd.ratio, 1);
@@ -379,7 +403,11 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
                             : `${nd.name} · 当前无客户，不可点击`
                         }
                       >
-                        <div className="fm-name">{nd.name}</div>
+                        {/* V7.1 D2：图标显示在卡片名称前方（同一行） */}
+                        <div className="fm-name">
+                          <span className="fm-nameico">{NODE_ICON[nd.name] ?? ICON_FALLBACK}</span>
+                          {nd.name}
+                        </div>
 
                         {/* C4：图标 + 客户数 + 占比 同框，蓝底白字 */}
                         <div className="fm-sum" style={{ background: sumGradient(nd) }}>
@@ -393,7 +421,7 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
                           </span>
                         </div>
 
-                        {/* C5：正常 / 超期 */}
+                        {/* V7.1 D6：正常 / 超期（工作日口径） */}
                         <div className="fm-od">
                           <span className="fm-ok">正常 {fmtNum(normal)} 家</span>
                           <span className="fm-bad">超期 {fmtNum(overdue)} 家</span>
@@ -407,6 +435,16 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
                             /每客户
                           </div>
                         )}
+
+                        {/* V7.1 D5：当前节点南/北区连锁数（显示在卡片中） */}
+                        <div className="fm-region">
+                          <span className="fm-rg s">
+                            <i />南 <b>{fmtNum(south)}</b>
+                          </span>
+                          <span className="fm-rg n">
+                            <i />北 <b>{fmtNum(north)}</b>
+                          </span>
+                        </div>
 
                         {/* C7：门店数；销售签约/流程结束单独一行强调 */}
                         <div className={`fm-store${noDuration ? ' strong' : ''}`}>
@@ -522,6 +560,18 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
               }}
               rowClassName={(r) => (r.status === '超期' ? 'board-row-overdue' : '')}
             />
+
+            {/* V7.1 D7：超期口径说明（放在明细表格下方） */}
+            <div className="fm-overdue-note">
+              <div className="fm-on-title">
+                超期口径：上一节点结束后在本节点的工作日超过阈值即视为超期。
+              </div>
+              <div className="fm-on-rules">
+                策略开通 <b>2</b> 个工作日 · 实施对接 <b>5</b> 个工作日 · 对接审核 <b>2</b> 个工作日 ·
+                客服处理 <b>10</b> 个工作日 · 客户培训 <b>3</b> 个工作日 · 连锁使用 <b>5</b> 个工作日 ·
+                策略审核 <b>2</b> 个工作日
+              </div>
+            </div>
           </>
         ) : (
           <Empty description="暂无明细" />

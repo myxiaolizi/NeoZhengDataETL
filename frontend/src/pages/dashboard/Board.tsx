@@ -128,36 +128,6 @@ function themeVars(dark: boolean, primary: string): React.CSSProperties {
   return (dark ? darkVars : light) as React.CSSProperties;
 }
 
-/** 排区标题（V6：对齐参考站 — 更细的分隔与更克制的字重） */
-function SectionTitle({ children, extra }: { children: React.ReactNode; extra?: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        margin: '18px 0 10px', gap: 12,
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <span
-          style={{
-            width: 6, height: 6, borderRadius: 2, background: 'var(--brand)', flexShrink: 0,
-            boxShadow: '0 0 0 3px color-mix(in srgb, var(--brand) 16%, transparent)',
-          }}
-        />
-        <span
-          style={{
-            fontSize: 13.5, fontWeight: 680, color: 'var(--text)',
-            whiteSpace: 'nowrap', letterSpacing: 0.2,
-          }}
-        >
-          {children}
-        </span>
-      </div>
-      {extra}
-    </div>
-  );
-}
-
 export default function Board() {
   const screens = useBreakpoint();
   const isMobile = !screens.md;
@@ -340,23 +310,23 @@ export default function Board() {
         </div>
       ) : data ? (
         <>
-          {/* 第 1 排：签约卡片区（V7：按需求取消板块标题，卡片自身带标题） */}
+          {/* 第 1 排：签约卡片区（卡片自身带标题） */}
           <SigningCards data={data} loading={loading} isMobile={isMobile} />
 
-          {/* 第 2 排：流程状态分布（V7：同样取消板块标题） */}
+          {/* 第 2 排：流程状态分布（卡片自身带标题） */}
           <div style={{ marginTop: isMobile ? 12 : 14 }}>
             <FlowPipeline data={data} loading={loading} isMobile={isMobile} />
           </div>
 
-          {/* 第 3 排：类型汇总 + 排行榜 */}
-          <SectionTitle>类型汇总与排行</SectionTitle>
+          {/* 第 3 排：类型汇总 + 排行榜（各卡片自带标题） */}
           <div
             className="board-row3"
             style={{
               display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1fr) minmax(0, 2fr)',
+              gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 0.85fr) minmax(0, 2.15fr)',
               gap: 12,
-              alignItems: 'stretch',
+              alignItems: 'start',
+              marginTop: isMobile ? 12 : 14,
             }}
           >
             <TypeSummary data={data} loading={loading} isMobile={isMobile} />
@@ -365,41 +335,44 @@ export default function Board() {
 
           {/* 第 4-5 排：签约数据同环比（仅本周/上周/本月/上月显示） */}
           {data.compare && (
-            <>
-              <SectionTitle>签约数据同环比</SectionTitle>
+            <div style={{ marginTop: isMobile ? 12 : 14 }}>
               <ComparePanel data={data} loading={loading} isMobile={isMobile} />
-            </>
+            </div>
           )}
 
-          {/* 第 6 排：签约趋势 + 流程处理（V7 改名） */}
-          <SectionTitle>签约趋势与流程处理</SectionTitle>
+          {/* 第 6 排：签约趋势 + 流程处理（各卡片自带标题） */}
           <div
             style={{
               display: 'grid',
               gridTemplateColumns: isMobile ? '1fr' : 'minmax(0, 1.45fr) minmax(0, 1fr)',
               gap: 12,
-              alignItems: 'stretch',
+              alignItems: 'start',
+              marginTop: isMobile ? 12 : 14,
             }}
           >
             <SignTrend data={data} loading={loading} isMobile={isMobile} />
             <FlowProgress data={data} loading={loading} isMobile={isMobile} />
           </div>
 
-          {/* 第 7 排：客户运行情况 */}
-          <SectionTitle>客户运行情况</SectionTitle>
-          <RunMetrics data={data} loading={loading} isMobile={isMobile} />
+          {/* 第 7 排：客户运行情况（卡片自带标题「客户运行情况」） */}
+          <div style={{ marginTop: isMobile ? 12 : 14 }}>
+            <RunMetrics data={data} loading={loading} isMobile={isMobile} />
+          </div>
 
-          {/* 第 8 排：按策略模型 × 策略类型 */}
-          <SectionTitle>策略模型 / 类型 · 分区域运行情况</SectionTitle>
-          <RunBreakdown data={data} loading={loading} isMobile={isMobile} />
+          {/* 第 8 排：策略运行情况（名称由卡片标题承载） */}
+          <div style={{ marginTop: isMobile ? 12 : 14 }}>
+            <RunBreakdown data={data} loading={loading} isMobile={isMobile} />
+          </div>
 
-          {/* 第 9 排：近 30 日趋势 */}
-          <SectionTitle>客户运行趋势（近 30 日）</SectionTitle>
-          <RunTrend data={data} loading={loading} isMobile={isMobile} />
+          {/* 第 9 排：策略运行趋势（名称由卡片标题承载） */}
+          <div style={{ marginTop: isMobile ? 12 : 14 }}>
+            <RunTrend data={data} loading={loading} isMobile={isMobile} />
+          </div>
 
-          {/* 第 10 排：客户明细表 */}
-          <SectionTitle>客户明细</SectionTitle>
-          <DetailTable data={data} loading={loading} isMobile={isMobile} />
+          {/* 第 10 排：客户明细表（卡片自带标题「客户明细」） */}
+          <div style={{ marginTop: isMobile ? 12 : 14 }}>
+            <DetailTable data={data} loading={loading} isMobile={isMobile} />
+          </div>
         </>
       ) : (
         <div style={{ marginTop: 16, padding: 40, background: 'var(--panel)', borderRadius: 16, border: '1px solid var(--line)' }}>

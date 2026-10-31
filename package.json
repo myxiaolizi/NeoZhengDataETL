@@ -1,6 +1,6 @@
 {
   "name": "neo-zheng-dataetl",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "private": true,
   "description": "Neo Zheng DataETL - 企业多系统数据整合平台",
   "main": "src/server.js",
