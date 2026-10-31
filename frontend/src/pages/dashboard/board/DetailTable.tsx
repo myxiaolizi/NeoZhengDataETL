@@ -160,15 +160,15 @@ const CSS = `
 .vb11-cd-hero .hm{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}
 .vb11-cd-hero h3{margin:0;font-size:16px;font-weight:750;color:var(--text);line-height:1.3;letter-spacing:.2px;overflow-wrap:anywhere}
 .vb11-cd-chips{display:flex;flex-wrap:wrap;gap:6px}
-.vb11-cd-chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border-radius:6px;font-size:11px;font-weight:650;line-height:1;white-space:nowrap;border:1px solid currentColor;background:color-mix(in srgb,currentColor 12%,transparent)}
+.vb11-cd-chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border-radius:6px;font-size:12px;font-weight:650;line-height:1;white-space:nowrap;border:1px solid currentColor;background:color-mix(in srgb,currentColor 12%,transparent)}
 .vb11-cd-chip.mute{color:var(--text2);border-color:var(--line);background:var(--panel2)}
 /* 超期 / 正常 徽章 */
 .vb11-cd-badge{flex-shrink:0;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:96px;padding:8px 12px;border-radius:10px;color:#fff;text-align:center;box-shadow:0 4px 14px color-mix(in srgb,var(--danger) 30%,transparent);background:linear-gradient(135deg,#ef4444,#f97316)}
 .vb11-cd-badge.ok{background:linear-gradient(135deg,#10b981,#34d399);box-shadow:0 4px 14px rgba(16,185,129,.28)}
 .vb11-cd-badge b{font-size:13px;font-weight:800;letter-spacing:.3px;line-height:1.2}
-.vb11-cd-badge span{font-size:10px;font-weight:600;opacity:.92;line-height:1.2}
+.vb11-cd-badge span{font-size:12px;font-weight:600;opacity:.92;line-height:1.2}
 /* 超期提示条 */
-.vb11-cd-warn{display:flex;align-items:flex-start;gap:8px;margin-top:2px;padding:9px 11px;border-radius:9px;font-size:11.5px;line-height:1.55;color:var(--danger);background:color-mix(in srgb,var(--danger) 9%,transparent);border:1px solid color-mix(in srgb,var(--danger) 30%,transparent)}
+.vb11-cd-warn{display:flex;align-items:flex-start;gap:8px;margin-top:2px;padding:9px 11px;border-radius:9px;font-size:12px;line-height:1.55;color:var(--danger);background:color-mix(in srgb,var(--danger) 9%,transparent);border:1px solid color-mix(in srgb,var(--danger) 30%,transparent)}
 .vb11-cd-warn b{font-weight:800}
 .vb11-cd-warn .ic{flex-shrink:0;font-weight:800;line-height:1.3}
 
@@ -176,14 +176,14 @@ const CSS = `
 .vb11-cd-sec{border:1px solid var(--line);border-radius:12px;background:var(--panel2);overflow:hidden}
 .vb11-cd-sec-h{display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,color-mix(in srgb,var(--panel) 75%,transparent),transparent)}
 .vb11-cd-sec-h .ic{width:20px;height:20px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--brandSoft);color:var(--brand);font-size:12px;line-height:1}
-.vb11-cd-sec-h .t{font-size:12.5px;font-weight:750;color:var(--text);letter-spacing:.2px}
-.vb11-cd-sec-h .n{margin-left:auto;font-size:10.5px;font-weight:650;color:var(--text3);font-variant-numeric:tabular-nums}
+.vb11-cd-sec-h .t{font-size:13px;font-weight:750;color:var(--text);letter-spacing:.2px}
+.vb11-cd-sec-h .n{margin-left:auto;font-size:12px;font-weight:650;color:var(--text3);font-variant-numeric:tabular-nums}
 .vb11-cd-sec-b{padding:11px 12px}
 /* 3 列字段网格 */
 .vb11-cd-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px 14px}
 .vb11-cd-f{display:flex;flex-direction:column;gap:2px;min-width:0}
-.vb11-cd-f dt{font-size:10.5px;font-weight:600;color:var(--text2);letter-spacing:.2px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.vb11-cd-f dd{margin:0;font-size:12.5px;font-weight:680;color:var(--text);line-height:1.45;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.vb11-cd-f dt{font-size:12px;font-weight:600;color:var(--text2);letter-spacing:.2px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vb11-cd-f dd{margin:0;font-size:13px;font-weight:680;color:var(--text);line-height:1.45;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
 .vb11-cd-f dd.dim{color:var(--text2);font-weight:600;opacity:.8}
 .vb11-cd-f dd.hi{color:var(--brand);font-weight:750}
 .vb11-cd-f dd.ok{color:var(--green)}
@@ -207,17 +207,17 @@ const CSS = `
 .vb11-tl li.done .nm{color:var(--text)}
 .vb11-tl li.cur .nm{color:var(--warn);font-weight:750}
 .vb11-tl li.todo .nm{color:var(--text2);opacity:.85}
-.vb11-tl li .st{color:var(--text2);font-variant-numeric:tabular-nums;font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vb11-tl li .st{color:var(--text2);font-variant-numeric:tabular-nums;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vb11-tl li.done .st{color:var(--text2)}
-.vb11-tl li .du{text-align:right;color:var(--text2);font-variant-numeric:tabular-nums;font-weight:700;font-size:11.5px;white-space:nowrap}
+.vb11-tl li .du{text-align:right;color:var(--text2);font-variant-numeric:tabular-nums;font-weight:700;font-size:12px;white-space:nowrap}
 .vb11-tl li.cur .du{color:var(--warn)}
-.vb11-tl-tip{margin-top:9px;padding-top:8px;border-top:1px dashed var(--line);font-size:10.5px;color:var(--text2);line-height:1.6}
+.vb11-tl-tip{margin-top:9px;padding-top:8px;border-top:1px dashed var(--line);font-size:12px;color:var(--text2);line-height:1.6}
 
 .vb11-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease;min-width:0}
 .vb11-h{padding:13px 16px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent);flex-wrap:wrap}
 .vb11-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
 .vb11-dot{width:6px;height:6px;border-radius:2px;background:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 16%,transparent);flex-shrink:0}
-.vb11-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap;font-variant-numeric:tabular-nums}
+.vb11-hint{font-size:12px;color:var(--text3);font-weight:550;white-space:nowrap;font-variant-numeric:tabular-nums}
 .vb11-tools{display:flex;align-items:center;gap:7px;flex-shrink:0}
 .vb11-btn{height:30px;padding:0 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:12px;font-weight:550;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:all .15s;white-space:nowrap;font-family:inherit}
 .vb11-btn:hover{border-color:var(--brand3);color:var(--brand)}
@@ -235,7 +235,7 @@ const CSS = `
 
 /* 表格：表头 panel2 / 斑马纹 / hover brandSoft / 超期左竖条 */
 /* V7.2：表格容器与行背景强制跟随主题（深色下 antd 默认白底会导致浅色文字不可见） */
-.board-root .vb11-wrap .ant-table{background:transparent!important;font-size:12.5px}
+.board-root .vb11-wrap .ant-table{background:transparent!important;font-size:13px}
 .board-root .vb11-wrap .ant-table-container,
 .board-root .vb11-wrap .ant-table-content,
 .board-root .vb11-wrap .ant-table-body,
@@ -256,7 +256,7 @@ const CSS = `
 .board-root .vb11-wrap .ant-table-thead .ant-table-column-title,
 .board-root .vb11-wrap .ant-table-thead .ant-table-column-sorters{
   background:var(--panel2)!important;color:var(--text3)!important;
-  font-size:11.5px!important;font-weight:650!important;letter-spacing:.2px;
+  font-size:12px!important;font-weight:650!important;letter-spacing:.2px;
   border-bottom:1px solid var(--line)!important;
   padding:9px 10px!important;white-space:nowrap;
 }
@@ -320,7 +320,7 @@ const CSS = `
 .board-root .vb11-wrap .ant-pagination .ant-pagination-item a,
 .board-root .vb11-wrap .ant-pagination .ant-pagination-prev button,
 .board-root .vb11-wrap .ant-pagination .ant-pagination-next button{
-  color:var(--text2)!important;font-size:12.5px!important;font-weight:550;
+  color:var(--text2)!important;font-size:13px!important;font-weight:550;
 }
 .board-root .vb11-wrap .ant-pagination .ant-pagination-item:hover,
 .board-root .vb11-wrap .ant-pagination .ant-pagination-prev:hover .ant-pagination-item-link,

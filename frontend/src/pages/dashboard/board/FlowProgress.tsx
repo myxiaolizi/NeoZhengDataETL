@@ -189,90 +189,129 @@ const MODAL_VARS: Record<'light' | 'dark', React.CSSProperties> = {
   } as React.CSSProperties,
 };
 
-/* ══════════════ 局部样式（vb8- 前缀） ══════════════ */
+/* ══════════════ 局部样式（vb8- 前缀）— V9.2 视觉优化 ══════════════ */
 const CSS = `
-.vb8-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;height:100%;min-width:0}
-.vb8-card:hover{border-color:var(--brand3);box-shadow:var(--shadow2);transform:translateY(-1px)}
+.vb8-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease;height:100%;min-width:0}
 
-/* 标题栏一行：名称 + 筛选 + 更多 */
-.vb8-h{padding:10px 16px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:8px;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent);flex-wrap:wrap}
-.vb8-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap;flex-shrink:0;line-height:1}
-.vb8-dot{width:6px;height:6px;border-radius:2px;background:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 16%,transparent);flex-shrink:0}
-.vb8-hfilter{display:flex;align-items:center;gap:4px;flex-shrink:0;margin-left:2px}
-.vb8-hint{font-size:10.5px;color:var(--text3);font-weight:550;white-space:nowrap;margin-left:auto}
-.vb8-more{display:inline-flex;align-items:center;gap:3px;height:22px;padding:0 9px;border-radius:6px;border:1px dashed var(--line);background:var(--panel);color:var(--brand);font-size:10.5px;font-weight:600;cursor:pointer;transition:all .15s;white-space:nowrap;font-family:inherit;line-height:1;flex-shrink:0}
-.vb8-more:hover{background:var(--brandSoft);border-color:var(--brand3)}
+/* ── 卡头：标题 + 区域分段控件 + 更多 ── */
+.vb8-h{padding:12px 16px 10px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;min-width:0}
+.vb8-title{display:flex;align-items:center;gap:8px;min-width:0;flex-shrink:0}
+.vb8-dot{width:6px;height:6px;border-radius:2px;background:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 15%,transparent);flex-shrink:0}
+.vb8-title h3{font-size:var(--fs-sm,13px);font-weight:700;color:var(--text);margin:0;letter-spacing:.2px;white-space:nowrap;line-height:1}
+.vb8-hint{font-size:var(--fs-2xs,11px);color:var(--text3);font-weight:500;white-space:nowrap}
 
-.vb8-seg{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:6px;cursor:pointer;user-select:none;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:11px;font-weight:600;transition:all .15s;white-space:nowrap;font-family:inherit;line-height:1}
-.vb8-seg:hover{border-color:var(--brand3);color:var(--brand)}
-.vb8-seg.on{color:#fff;border-color:transparent;box-shadow:0 3px 9px color-mix(in srgb,var(--brand) 26%,transparent)}
-.vb8-seg .sw{width:6px;height:6px;border-radius:2px;margin-right:4px;flex-shrink:0}
-.vb8-seg.on .sw{background:#fff!important}
+/* 区域分段控件（与签约趋势同款，统一观感） */
+.vb8-seg{display:inline-flex;align-items:center;padding:2px;gap:2px;border-radius:8px;background:color-mix(in srgb,var(--panel2) 85%,var(--line2));border:1px solid var(--line2);flex-shrink:0}
+.vb8-seg button{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 11px;border:0;border-radius:6px;background:transparent;color:var(--text2);font-size:var(--fs-2xs,11px);font-weight:600;cursor:pointer;transition:background .16s ease,color .16s ease,box-shadow .16s ease;white-space:nowrap;font-family:inherit;line-height:1}
+.vb8-seg button:hover{color:var(--text)}
+.vb8-seg button.on{background:var(--panel);color:var(--text);box-shadow:0 1px 2px rgba(15,23,42,.10);font-weight:700}
+.vb8-seg button .sw{width:6px;height:6px;border-radius:2px;flex-shrink:0}
+
+.vb8-more{display:inline-flex;align-items:center;gap:4px;height:26px;padding:0 11px;border-radius:7px;border:1px solid var(--line);background:var(--panel);color:var(--text2);font-size:var(--fs-2xs,11px);font-weight:600;cursor:pointer;transition:all .16s ease;white-space:nowrap;font-family:inherit;line-height:1;flex-shrink:0;margin-left:auto}
+.vb8-more:hover{background:var(--brandSoft);border-color:var(--brand3);color:var(--brand)}
 
 .vb8-b{padding:0;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
 
-/* ── F1 表格 ── */
-.vb8-scroll{width:100%;overflow-x:auto;overflow-y:visible;min-width:0;flex:1}
-.vb8-tb{width:100%;border-collapse:separate;border-spacing:0;font-size:11.5px;font-variant-numeric:tabular-nums}
+/* ── 表格 ── */
+.vb8-scroll{width:100%;overflow-x:auto;overflow-y:hidden;min-width:0;flex:1;display:flex;flex-direction:column}
+.vb8-tb{
+  width:100%;height:100%;border-collapse:separate;border-spacing:0;
+  font-size:var(--fs-xs,12px);
+  font-variant-numeric:tabular-nums;   /* 数字等宽，保证竖直对齐 */
+  table-layout:fixed;                   /* 列宽稳定：日期定宽 + 节点等分 */
+  /* 窄屏保底宽度：日期 104 + 9×52 + 合计 76 ≈ 648，避免节点列被压成 19px */
+  min-width:648px;
+}
+
+/* 表头：12px/700 --text2，panel2 底 + 1px --line 下边 */
 .vb8-tb thead th{
   position:sticky;top:0;z-index:3;
-  padding:8px 6px;text-align:right;white-space:nowrap;
-  font-size:10.5px;font-weight:700;color:var(--text2);letter-spacing:.2px;
+  padding:9px 8px;text-align:right;white-space:nowrap;
+  font-size:var(--fs-xs,12px);font-weight:700;color:var(--text2);letter-spacing:.2px;
   background:var(--panel2);border-bottom:1px solid var(--line);
 }
-.vb8-tb thead th.first{text-align:left;padding-left:14px;position:sticky;left:0;z-index:4}
-.vb8-tb thead th.tot{color:var(--brand);padding-right:14px}
-.vb8-tb thead th .cd{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px;vertical-align:middle}
+.vb8-tb thead th.first{width:104px;text-align:left;padding-left:16px;position:sticky;left:0;z-index:4}
+.vb8-tb thead th.tot{width:76px;color:var(--brand);padding-right:16px}
+.vb8-tb thead th .cd{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;vertical-align:middle}
 
+/* 日期列 */
 .vb8-tb tbody th{
   position:sticky;left:0;z-index:2;
-  padding:7px 8px 7px 14px;text-align:left;white-space:nowrap;
-  font-size:11.5px;font-weight:650;color:var(--text);
-  background:var(--panel);border-bottom:1px solid var(--line2);
+  width:104px;padding:10px 8px 10px 16px;text-align:left;white-space:nowrap;
+  font-size:var(--fs-xs,12px);font-weight:600;color:var(--text2);
+  background:var(--panel);border-bottom:0;
+  font-variant-numeric:tabular-nums;
 }
+/* 节点列：右对齐等宽数字 */
 .vb8-tb tbody td{
-  padding:7px 6px;text-align:right;white-space:nowrap;
-  font-size:12px;font-weight:650;color:var(--text);
-  border-bottom:1px solid var(--line2);
+  padding:10px 8px;text-align:right;white-space:nowrap;
+  font-size:var(--fs-xs,12px);font-weight:600;color:var(--text);
+  border-bottom:0;
+  font-variant-numeric:tabular-nums;
+  letter-spacing:.2px;
 }
-/* 斑马纹 */
-.vb8-tb tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--panel2) 58%,transparent)}
-.vb8-tb tbody tr:nth-child(even) th{background:color-mix(in srgb,var(--panel2) 58%,var(--panel))}
-/* hover */
-.vb8-tb tbody tr:hover td{background:var(--brandSoft)}
-.vb8-tb tbody tr:hover th{background:var(--brandSoft)}
-/* 0 值淡化 */
-.vb8-tb tbody td.zero{color:var(--text2);font-weight:500;opacity:.62}
-/* 当日合计列 */
-.vb8-tb tbody td.rowtot{color:var(--brand);font-weight:800;padding-right:14px;background:color-mix(in srgb,var(--brand) 5%,transparent)}
-.vb8-tb tbody tr:hover td.rowtot{background:color-mix(in srgb,var(--brand) 12%,transparent)}
-/* 最新一行强调 */
-.vb8-tb tbody tr.newest th,.vb8-tb tbody tr.newest td{border-top:2px solid color-mix(in srgb,var(--brand) 26%,transparent)}
-/* 合计行 */
-.vb8-tb tfoot th,.vb8-tb tfoot td{
-  padding:8px 6px;text-align:right;white-space:nowrap;
-  font-size:11.5px;font-weight:800;color:var(--brand);
-  background:color-mix(in srgb,var(--brand) 7%,var(--panel));
-  border-top:1px solid var(--line);position:sticky;bottom:0;z-index:2;
-}
-.vb8-tb tfoot th{text-align:left;padding-left:14px;color:var(--text2);position:sticky;left:0;bottom:0;z-index:3}
-.vb8-tb tfoot td.zero{color:var(--text3);font-weight:600}
-.vb8-tb tfoot td.tot{padding-right:14px;font-size:13px}
 
-.vb8-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 14px;border-top:1px dashed var(--line);flex-wrap:wrap;flex-shrink:0}
-.vb8-foot .k{font-size:10.5px;color:var(--text3);font-weight:600;white-space:nowrap}
-.vb8-foot .k b{font-size:14px;color:var(--text);font-weight:750;font-variant-numeric:tabular-nums;margin:0 2px}
+/* 斑马纹：仅极淡交替底色，不加行描边 */
+.vb8-tb tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--panel2) 40%,transparent)}
+.vb8-tb tbody tr:nth-child(even) th{background:color-mix(in srgb,var(--panel2) 40%,var(--panel))}
+
+/* hover 整行高亮 */
+.vb8-tb tbody tr:hover td{background:color-mix(in srgb,var(--brand) 6%,transparent)}
+.vb8-tb tbody tr:hover th{background:color-mix(in srgb,var(--brand) 6%,var(--panel))}
+
+/* 0 值：视觉退后但仍可读 */
+.vb8-tb tbody td.zero{color:var(--text3);font-weight:500;opacity:.55}
+
+/* 最新日行：左侧 3px 品牌色条 + 极淡品牌底 */
+.vb8-tb tbody tr.newest th{
+  box-shadow:inset 3px 0 0 var(--brand);
+  color:var(--text);font-weight:700;
+  background:color-mix(in srgb,var(--brand) 4%,var(--panel));
+}
+.vb8-tb tbody tr.newest td{background:color-mix(in srgb,var(--brand) 4%,transparent)}
+.vb8-tb tbody tr.newest:hover td{background:color-mix(in srgb,var(--brand) 9%,transparent)}
+.vb8-tb tbody tr.newest:hover th{background:color-mix(in srgb,var(--brand) 9%,var(--panel))}
+
+/* 当日合计列 */
+.vb8-tb tbody td.rowtot{
+  color:var(--brand);font-weight:700;padding-right:16px;width:76px;
+  background:color-mix(in srgb,var(--brand) 3%,transparent);
+}
+.vb8-tb tbody tr:nth-child(even) td.rowtot{background:color-mix(in srgb,var(--brand) 6%,transparent)}
+.vb8-tb tbody tr:hover td.rowtot{background:color-mix(in srgb,var(--brand) 11%,transparent)}
+
+/* 合计行：13px/750 --text，顶部 1.5px --line，panel2 底 */
+.vb8-tb tfoot th,.vb8-tb tfoot td{
+  padding:11px 8px;text-align:right;white-space:nowrap;
+  font-size:var(--fs-sm,13px);font-weight:750;color:var(--text);
+  background:var(--panel2);
+  border-top:1.5px solid var(--line);
+  position:sticky;bottom:0;z-index:2;
+  font-variant-numeric:tabular-nums;
+}
+.vb8-tb tfoot th{
+  text-align:left;padding-left:16px;width:104px;
+  color:var(--text2);font-weight:700;
+  position:sticky;left:0;bottom:0;z-index:3;
+}
+.vb8-tb tfoot td.zero{color:var(--text3);font-weight:600;opacity:.7}
+.vb8-tb tfoot td.tot{padding-right:16px;width:76px;font-size:var(--fs-lg,17px);font-weight:750;color:var(--brand)}
+
+/* 底部统计 */
+.vb8-foot{display:flex;align-items:center;gap:18px;padding:11px 16px;border-top:1px solid var(--line2);flex-wrap:wrap;flex-shrink:0;background:color-mix(in srgb,var(--panel2) 45%,transparent)}
+.vb8-foot .k{font-size:var(--fs-2xs,11px);color:var(--text3);font-weight:500;white-space:nowrap;display:inline-flex;align-items:baseline;gap:5px}
+.vb8-foot .k b{font-size:var(--fs-lg,17px);color:var(--text);font-weight:750;font-variant-numeric:tabular-nums;line-height:1}
 .vb8-empty{padding:34px 0}
 
 /* 弹窗表格（变量由外层字面色值提供） */
 .vb8-pop{color:var(--text)}
-.vb8-pop .vb8-scroll{max-height:60vh;overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
-.vb8-pop .vb8-tb{font-size:11.5px}
-.vb8-pop .vb8-tb thead th{padding:7px 8px}
-.vb8-pop .vb8-tb tbody td{padding:6px 8px}
-.vb8-pop .vb8-tb tbody th{padding:6px 10px}
-.vb8-pop .vb8-tb thead th.first{min-width:96px}
-.vb8-popnote{font-size:11px;color:var(--text2);margin-top:9px;line-height:1.6}
+.vb8-pop .vb8-scroll{max-height:60vh;overflow:auto;flex:none}
+.vb8-pop .vb8-tb{font-size:var(--fs-2xs,11px)}
+.vb8-pop .vb8-tb thead th{padding:8px 7px;font-size:var(--fs-2xs,11px)}
+.vb8-pop .vb8-tb tbody th,.vb8-pop .vb8-tb tbody td{padding:7px;font-size:var(--fs-2xs,11px)}
+.vb8-pop .vb8-tb thead th.first,.vb8-pop .vb8-tb tbody th{width:92px;padding-left:12px}
+.vb8-pop .vb8-tb thead th.tot,.vb8-pop .vb8-tb tbody td.rowtot{width:64px;padding-right:12px}
+.vb8-popnote{font-size:var(--fs-2xs,11px);color:var(--text3);margin-top:10px;line-height:1.7}
 `;
 
 export default function FlowProgress({ data, loading, isMobile }: FlowProgressProps) {
@@ -324,11 +363,6 @@ export default function FlowProgress({ data, loading, isMobile }: FlowProgressPr
     { key: 'north', label: '北区' },
   ];
   const regionColor = (k: RegionKey) => (k === 'south' ? '#2563eb' : k === 'north' ? '#10b981' : 'var(--brand)');
-  const regionGrad = (k: RegionKey) => (
-    k === 'south' ? 'linear-gradient(135deg,#2563eb,#3b82f6)'
-      : k === 'north' ? 'linear-gradient(135deg,#10b981,#34d399)'
-        : 'linear-gradient(135deg,var(--brand),var(--brand2))'
-  );
   const regionName = region === 'all' ? '全部区域' : region === 'south' ? '南区' : '北区';
 
   /** 表格主体（卡片与弹窗共用，仅列头详细程度不同） */
@@ -380,26 +414,27 @@ export default function FlowProgress({ data, loading, isMobile }: FlowProgressPr
     <>
       <style>{CSS}</style>
       <div className="vb8-card">
+        {/* 卡头：标题 + 区域分段控件 + 更多 */}
         <div className="vb8-h">
-          <h3>
+          <div className="vb8-title">
             <span className="vb8-dot" />
-            流程处理
-          </h3>
+            <h3>流程处理</h3>
+            <span className="vb8-hint">最近 {BODY_DAYS} 天</span>
+          </div>
 
-          <div className="vb8-hfilter">
+          <div className="vb8-seg" role="group" aria-label="区域筛选">
             {regionOpts.map((o) => {
               const on = region === o.key;
               return (
                 <button
                   key={o.key}
                   type="button"
-                  className={`vb8-seg${on ? ' on' : ''}`}
-                  style={on ? { background: regionGrad(o.key) } : undefined}
+                  className={on ? 'on' : undefined}
                   aria-pressed={on}
                   onClick={() => setRegion(o.key)}
                 >
                   {o.key !== 'all' && (
-                    <span className="sw" style={{ background: on ? '#fff' : regionColor(o.key) }} />
+                    <span className="sw" style={{ background: regionColor(o.key) }} />
                   )}
                   {o.label}
                 </button>
@@ -407,9 +442,8 @@ export default function FlowProgress({ data, loading, isMobile }: FlowProgressPr
             })}
           </div>
 
-          <span className="vb8-hint">最近 {BODY_DAYS} 天</span>
           <button type="button" className="vb8-more" onClick={() => setMoreOpen(true)}>
-            更多 ›
+            近 30 日明细 ›
           </button>
         </div>
 

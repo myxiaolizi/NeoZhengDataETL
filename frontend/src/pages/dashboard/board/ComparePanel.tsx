@@ -27,15 +27,15 @@ const CSS = `
 .vb5-h{padding:13px 16px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent)}
 .vb5-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .vb5-dot{width:6px;height:6px;border-radius:2px;background:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 16%,transparent);flex-shrink:0}
-.vb5-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap;flex-shrink:0;font-variant-numeric:tabular-nums}
+.vb5-hint{font-size:12px;color:var(--text3);font-weight:550;white-space:nowrap;flex-shrink:0;font-variant-numeric:tabular-nums}
 .vb5-b{padding:14px 16px;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
 .vb5-empty{padding:22px 0}
 
 /* 表格 */
 .vb5-scroll{width:100%;overflow-x:auto;min-width:0}
-.vb5-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px;white-space:nowrap}
+.vb5-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:13px;white-space:nowrap}
 .vb5-tbl thead th{
-  background:var(--panel2);color:var(--text3);font-weight:650;font-size:11.5px;
+  background:var(--panel2);color:var(--text3);font-weight:650;font-size:12px;
   padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);
   position:sticky;top:0;z-index:2;letter-spacing:.2px;
 }

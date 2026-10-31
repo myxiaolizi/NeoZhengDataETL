@@ -77,13 +77,20 @@ export default function ProvinceMapModal({ items, open, onClose, dark, isMobile 
 
   const option = useMemo<EChartsOption>(() => {
     const isDark = dark;
-    const areaColor = isDark ? '#1b2b47' : '#eef4ff';
-    const borderColor = isDark ? '#2f4468' : '#c7d9f5';
-    const textColor = isDark ? '#e2e8f0' : '#16253d';
+    /* V9.2：配色对齐新令牌 —— 无数据省份 / 边界 / 文字，全部用令牌色值（字面量，因 portal 拿不到变量） */
+    const areaColor = isDark ? '#1d2a47' : '#eef2f9';   /* --line2 / --bg 派生 */
+    const borderColor = isDark ? '#243356' : '#ffffff'; /* --line / --panel */
+    const textColor = isDark ? '#e8eef8' : '#0f172a';   /* --text */
+    const subColor = isDark ? '#6d81a3' : '#8494ab';    /* --text3 */
     return {
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'item',
+        backgroundColor: isDark ? '#141e33' : '#ffffff',  /* --panel */
+        borderColor: isDark ? '#243356' : '#e3e9f2',      /* --line */
+        borderWidth: 1,
+        textStyle: { color: textColor, fontSize: 12 },
+        extraCssText: 'box-shadow:0 4px 16px rgba(15,23,42,.09);border-radius:10px;',
         formatter: (params: unknown) => {
           const pp = params as { name: string; value?: number; data?: { raw?: RankItem } };
           const raw = pp.data?.raw;
@@ -100,16 +107,20 @@ export default function ProvinceMapModal({ items, open, onClose, dark, isMobile 
       visualMap: {
         min: 0,
         max: maxV,
-        left: 14,
-        bottom: 14,
-        text: ['多', '少'],
-        calculable: true,
+        left: 10,
+        bottom: 10,
+        orient: 'vertical',
+        itemWidth: 10,
+        itemHeight: 90,
+        text: [`${maxV} 家`, '0 家'],
+        calculable: false,
+        /* 只在 brand 一个色相内由浅到深，与页面热力格一致 */
         inRange: {
           color: isDark
-            ? ['#1e3a5f', '#2563eb', '#60a5fa']
-            : ['#e0e9fc', '#93b4f5', '#2563eb'],
+            ? ['#1e3a8a', '#2563eb', '#60a5fa', '#93c5fd']
+            : ['#dbeafe', '#93c5fd', '#3b82f6', '#1d4ed8'],
         },
-        textStyle: { color: textColor, fontSize: 11 },
+        textStyle: { color: subColor, fontSize: 11 },
       },
       series: [
         {
@@ -120,18 +131,24 @@ export default function ProvinceMapModal({ items, open, onClose, dark, isMobile 
           center: [104, 36],
           label: {
             show: true,
-            fontSize: isMobile ? 8 : 10,
+            fontSize: isMobile ? 10 : 11,
+            fontWeight: 'bold',
             color: textColor,
+            textBorderColor: isDark ? 'rgba(0,0,0,.6)' : 'rgba(255,255,255,.95)',
+            textBorderWidth: 2,
             formatter: (p: unknown) => {
               const q = p as { name: string; value?: number };
-              return q.value === undefined || q.value === null ? '' : `${q.name}\n${q.value}`;
+              /* 值为 0 / 无值时留空，不再显示「0」 */
+              if (!q.value) return '';
+              return `${q.name}\n${q.value}`;
             },
           },
           itemStyle: { areaColor, borderColor, borderWidth: 0.8 },
           emphasis: {
-            label: { show: true, color: '#ffffff', fontWeight: 700 },
-            itemStyle: { areaColor: '#f59e0b', borderColor: '#ffffff', borderWidth: 1.4 },
+            label: { show: true, color: isDark ? '#0b1120' : '#ffffff', fontWeight: 700, fontSize: 11 },
+            itemStyle: { areaColor: isDark ? '#93c5fd' : '#1d4ed8', borderColor: '#ffffff', borderWidth: 1.2 },
           },
+          select: { disabled: true },
           data,
         },
       ],
@@ -179,7 +196,7 @@ export default function ProvinceMapModal({ items, open, onClose, dark, isMobile 
       ) : (
         <>
           <EChart option={option} height={isMobile ? 320 : 520} />
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8, textAlign: 'center' }}>
+          <div style={{ fontSize: 11, color: '#8494ab', marginTop: 10, textAlign: 'center', fontWeight: 600 }}>
             颜色越深客户数越多 · 悬停查看客户/门店/销售 · 可滚轮缩放、拖动
           </div>
         </>

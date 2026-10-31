@@ -103,12 +103,12 @@ const CSS = `
 .vb7-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
 .vb7-dot{width:6px;height:6px;border-radius:2px;background:var(--cyan);box-shadow:0 0 0 3px color-mix(in srgb,var(--cyan) 16%,transparent);flex-shrink:0}
 .vb7-hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
-.vb7-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap}
+.vb7-hint{font-size:12px;color:var(--text3);font-weight:550;white-space:nowrap}
 .vb7-hint b{color:var(--brand);font-weight:700}
 .vb7-b{padding:12px 16px;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
 
 /* I2 标签开关 */
-.vb7-tgl{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
+.vb7-tgl{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
 .vb7-tgl:hover{border-color:var(--brand3);color:var(--brand)}
 .vb7-tgl.on{background:color-mix(in srgb,var(--brand) 12%,transparent);border-color:var(--brand);color:var(--brand)}
 .vb7-tgl .dot{width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.5}
@@ -116,18 +116,18 @@ const CSS = `
 
 /* I4 图例式 chip：色块常显，选中/未选中都可辨色 */
 .vb7-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:9px}
-.vb7-chips .lb{font-size:11.5px;color:var(--text3);font-weight:600;margin-right:2px;white-space:nowrap}
-.vb7-chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:8px;cursor:pointer;user-select:none;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:11.5px;font-weight:550;transition:all .15s;white-space:nowrap;font-family:inherit}
+.vb7-chips .lb{font-size:12px;color:var(--text3);font-weight:600;margin-right:2px;white-space:nowrap}
+.vb7-chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:8px;cursor:pointer;user-select:none;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:12px;font-weight:550;transition:all .15s;white-space:nowrap;font-family:inherit}
 .vb7-chip:hover{border-color:var(--c);color:var(--c)}
 .vb7-chip .sw{width:8px;height:8px;border-radius:2px;flex-shrink:0;background:var(--c);transition:box-shadow .15s}
 .vb7-chip.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 12%,transparent);color:var(--text);font-weight:650}
 .vb7-chip.on .sw{box-shadow:0 0 0 2px color-mix(in srgb,var(--c) 30%,transparent)}
 .vb7-chip.off{opacity:.6}
 .vb7-chip.off .sw{background:transparent;border:1.5px solid var(--c)}
-.vb7-chip .ax{font-size:9px;opacity:.65;font-weight:600}
-.vb7-chip .tp{font-size:9px;opacity:.55;font-weight:700}
+.vb7-chip .ax{font-size:12px;opacity:.65;font-weight:600}
+.vb7-chip .tp{font-size:12px;opacity:.55;font-weight:700}
 .vb7-sep{width:1px;height:14px;background:var(--line);display:inline-block;margin:0 2px}
-.vb7-all{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:8px;border:1px dashed var(--line);background:transparent;color:var(--text3);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
+.vb7-all{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:8px;border:1px dashed var(--line);background:transparent;color:var(--text3);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
 .vb7-all:hover{color:var(--brand);border-color:var(--brand3)}
 .vb7-empty{padding:40px 0;display:flex;align-items:center;justify-content:center}
 

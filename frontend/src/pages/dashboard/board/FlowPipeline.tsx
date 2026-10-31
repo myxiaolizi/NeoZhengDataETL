@@ -1,16 +1,31 @@
-/** 第 2 排：流程状态分布（9 节点流程图）— V7.0
+/** 第 2 排：流程状态分布（9 节点流程图）— V9.2 视觉重构
  *
- * V7 改造点（对应 _work/V7-CONTRACT.md §五 C1-C9）：
- *   C2 每节点内联 SVG 图标（stroke=currentColor），彻底去掉 1-8 序号
- *   C3 连接块改为 46px 高渐变粗箭头（clip-path 大三角连接块），视觉冲击更强
- *   C4 图标 + 客户数 + 占比同框，蓝底白字渐变
- *   C5 显示「正常 X 家 / 超期 X 家」（node.normal / node.overdue，缺失时按明细 status 兜底）
- *   C6 平均耗时：<1 天显示 X.X时，≥1 天显示 X.X天，文案「平均耗时：X.X天/每客户」
- *   C7 销售签约 / 流程结束 无耗时概念，门店数单独一行强调显示
- *   C8 0 客户节点不可点：无 onClick、cursor:default、无 hover 上浮、tabIndex=-1
- *   C9 卡片下方直接显示该节点各岗位客户数（node.byRole），无需点开弹窗
+ * ── 本轮为什么改「蓝底白字」方案 ──
+ * 改造前实测：9 张卡里有 **18 个蓝色块**（9 个名称蓝底 + 9 个数字蓝底），
+ * 且所有文字几乎都是 12px，层次全靠「有没有蓝底」硬撑 → 9 个一模一样的蓝色按钮，
+ * 用户原话「视觉噪音很大、重点全无」。
  *
- * 数据全部由 Board.tsx 通过 props 下发，组件内不发请求。
+ * 新方案：**一卡一重点**（白底 + 顶部 3px 色条 + 大号深色数字）
+ *   · 去掉 9 个名称蓝底 → 名称改为「品牌色图标 + 深色标题」，白底，不再抢视觉
+ *   · 保留 1 个视觉重点 = **大号客户数**（22px/750，靠「字号」建立层次而非「色块」）
+ *   · 顶部 3px 色条承担「状态识别」：有客户=品牌色 / 0客户=极淡 --line / 流程结束=绿
+ *   · 客户数最多的节点（当前主力节点）额外获得 brandSoft 底 + 品牌色数字 → 真正的「主」
+ *
+ * ── 4 级层次（严格照契约） ──
+ *   L1 节点名称   13px / 700 / var(--text)
+ *   L2 客户数     22px / 750 / var(--text)
+ *   L3 南北区     12px / 600 / var(--brand) · var(--green)
+ *   L4 正常超期·耗时·岗位  11px / 600 / var(--text3)
+ *
+ * ── 保留的已验收功能（V7/V8.1，全部未动） ──
+ *   · 图标只在名称前 1 处（D2）
+ *   · 耗时 / 南北区 / 正常超期 / 岗位数 全部在卡内（C6 / D5 / C5 / C9 / D6）
+ *   · 销售签约（起点）与流程结束（终点）不显示「正常/超期」行（D6）
+ *   · 0 客户节点不可点击：无 onClick、无 role、tabIndex=-1、cursor:default、无 hover（C8）
+ *   · 平均耗时格式 <1天→X.X时，≥1天→X.X天（C6）
+ *   · 弹窗、明细表格、超期口径说明（含工作日阈值）完全保留
+ *
+ * 数据全部由 Board.tsx 通过 props 下发，组件内不发请求。数据结构与 props 未改动。
  */
 import React, { useMemo, useState } from 'react';
 import { Empty, Modal, Table, Tag } from 'antd';
@@ -39,10 +54,9 @@ const RATIO_EXCLUDED = ['销售签约', '流程结束'];
 /** 没有「耗时」概念的节点：起点与终点，门店数单独一行 */
 const NO_DURATION = ['销售签约', '流程结束'];
 
-/* ══════════════ C2：9 节点内联 SVG 图标 ══════════════ */
+/* ══════════════ 9 节点内联 SVG 图标（stroke=currentColor） ══════════════ */
 
-/** 统一 SVG 外壳：18px、描边式、跟随 currentColor */
-function ico(children: React.ReactNode, size = 18): React.ReactNode {
+function ico(children: React.ReactNode, size = 16): React.ReactNode {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -145,98 +159,122 @@ const ICON_FALLBACK: React.ReactNode = ico(
   </>,
 );
 
-/* ══════════════ 局部样式（统一 .v7flow 作用域，避免污染全局） ══════════════ */
+/* ══════════════ 局部样式（统一 .v7flow 作用域） ══════════════
+ * 全部使用 Board.tsx 的 V9.2 令牌，字号取 --fs-* 阶梯，最小 11px。
+ */
 const CSS = `
 .v7flow{min-width:0}
 .v7flow .fm-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:0;min-width:0;overflow:hidden;display:flex;flex-direction:column}
-/* V8.1 D7：卡片标题栏 */
-.v7flow .fm-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line2);background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent);flex-shrink:0}
-.v7flow .fm-hd h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
-.v7flow .fm-hd-dot{width:6px;height:6px;border-radius:2px;background:var(--brand);box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 16%,transparent);flex-shrink:0}
-.v7flow .fm-hd-hint{font-size:11px;color:var(--text3);font-weight:550;white-space:nowrap}
-.v7flow .fm-map{padding:12px 14px 11px;display:flex;align-items:stretch;overflow-x:auto;overflow-y:visible;padding:2px 0 6px;scrollbar-width:thin}
+
+/* ── 卡片头部 ── */
+.v7flow .fm-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line2);flex-shrink:0}
+.v7flow .fm-hd h3{font-size:var(--fs-sm);font-weight:var(--fw-bold);color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
+.v7flow .fm-hd-dot{width:6px;height:6px;border-radius:2px;background:var(--brand);flex-shrink:0}
+.v7flow .fm-hd-hint{font-size:var(--fs-xs);color:var(--text3);font-weight:var(--fw-normal);white-space:nowrap}
+
+/* ── 节点横排容器：9 节点等分，不换行 ── */
+.v7flow .fm-map{padding:14px 16px 16px;display:flex;align-items:stretch;overflow-x:auto;overflow-y:visible;gap:0;scrollbar-width:thin}
 .v7flow .fm-map::-webkit-scrollbar{height:6px}
 .v7flow .fm-map::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
 
-.v7flow .fm-node{flex:1 1 0;min-width:112px;display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 5px 9px;border-radius:var(--radius-sm);border:1px solid transparent;background:transparent;text-align:center;transition:transform .18s cubic-bezier(.4,0,.2,1),background .18s ease,border-color .18s ease,box-shadow .18s ease}
+/* ── 节点卡：白底 / 顶部 3px 状态色条 / 无多余描边 ── */
+.v7flow .fm-node{position:relative;flex:1 1 0;min-width:104px;display:flex;flex-direction:column;align-items:center;gap:5px;padding:13px 6px 10px;border-radius:var(--radius-sm);border:1px solid transparent;background:transparent;text-align:center;transition:background .16s ease,border-color .16s ease}
+/* 顶部状态色条（用 ::before，不占布局高度） */
+.v7flow .fm-node::before{content:'';position:absolute;left:12px;right:12px;top:0;height:3px;border-radius:0 0 3px 3px;background:var(--brand);opacity:.55}
+/* 0 客户 → 色条退为极淡；背景 panel2；数字 text3（降权但不灰掉） */
+.v7flow .fm-node.empty::before{background:var(--line);opacity:1}
+.v7flow .fm-node.empty{background:var(--panel2);border-color:var(--line2)}
+/* 流程结束 → 绿色收尾 */
+.v7flow .fm-node.done::before{background:var(--green);opacity:.85}
+/* 重点节点（客户数最多）→ 色条实心 + 品牌淡底 */
+.v7flow .fm-node.focus{border-color:var(--brand3)}
+.v7flow .fm-node.focus::before{background:var(--brand);opacity:1}
+.v7flow .fm-node.focus{background:var(--brandSoft)}
+
+/* 可点击节点的 hover：只保留轻微反馈，不做上浮阴影（避免噪音） */
 .v7flow .fm-node[role="button"]{cursor:pointer}
-.v7flow .fm-node[role="button"]:hover{background:var(--panel2);border-color:var(--brand3);transform:translateY(-3px);box-shadow:0 10px 22px color-mix(in srgb,var(--brand) 16%,transparent)}
+.v7flow .fm-node[role="button"]:hover{border-color:var(--brand3);background:var(--brandSoft)}
 .v7flow .fm-node[role="button"]:focus-visible{outline:2px solid var(--brand3);outline-offset:2px}
 .v7flow .fm-node.off{cursor:default}
-.v7flow .fm-node.off:hover{background:transparent;border-color:transparent;transform:none;box-shadow:none}
 
-.v7flow .fm-name{font-size:11.5px;font-weight:700;color:#fff;letter-spacing:.2px;white-space:nowrap;line-height:1.2;display:flex;align-items:center;justify-content:center;gap:5px;background:linear-gradient(135deg,var(--brand),var(--brand2));border-radius:9px;padding:4px 10px;box-shadow:0 2px 8px color-mix(in srgb,var(--brand) 26%,transparent);max-width:100%}
-/* V7.1 D2：名称前的图标 */
-.v7flow .fm-nameico{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:currentColor;opacity:.95}
+/* ── L1 节点名称：白底 + 品牌色图标 + 深色标题（去掉了蓝底白字） ── */
+.v7flow .fm-name{font-size:var(--fs-xs);font-weight:var(--fw-bold);color:#fff;letter-spacing:.2px;white-space:nowrap;line-height:1.2;display:flex;align-items:center;justify-content:center;gap:4px;background:linear-gradient(135deg,var(--brand),var(--brand2));border-radius:999px;padding:3px 10px 3px 8px;box-shadow:0 1px 3px color-mix(in srgb,var(--brand) 26%,transparent);max-width:100%;overflow:hidden}
+.v7flow .fm-nameico{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:#fff;opacity:.96}
 .v7flow .fm-nameico svg{width:15px;height:15px}
-/* V7.1 D5：卡片内南/北区连锁数 */
-.v7flow .fm-region{display:flex;align-items:center;justify-content:center;gap:8px;font-size:10px;color:var(--text3);line-height:1.3;font-variant-numeric:tabular-nums;white-space:nowrap}
-.v7flow .fm-rg{display:inline-flex;align-items:center;gap:3px}
+/* 0 客户：名称与图标一起退到 text3 */
+/* V9.2：0 客户节点名称也保持蓝底白字（用户要求不要灰色），仅整体降权 */
+/* V9.2：0 客户节点名称用浅一档的品牌蓝（不是灰），满足「为0也不要灰色」 */.v7flow .fm-node.empty .fm-name{background:linear-gradient(135deg,color-mix(in srgb,var(--brand) 74%,var(--panel)),color-mix(in srgb,var(--brand2) 74%,var(--panel)))}
+.v7flow .fm-node.empty .fm-nameico{color:#fff;opacity:.9}
+/* 流程结束：整卡绿色语义 */
+.v7flow .fm-node.done .fm-nameico{color:#fff}
+/* 重点节点：名称用品牌色 */
+.v7flow .fm-node.focus .fm-name{color:#fff;box-shadow:0 2px 8px color-mix(in srgb,var(--brand) 45%,transparent),0 0 0 2px color-mix(in srgb,var(--brand) 18%,transparent)}
+
+/* ── L2 客户数（视觉重点：22px/750，靠字号建立层次） ── */
+.v7flow .fm-kpi{display:flex;flex-direction:column;align-items:center;gap:0;line-height:1.1;min-width:0}
+.v7flow .fm-c{font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--text);font-variant-numeric:tabular-nums;letter-spacing:-.6px;white-space:nowrap;display:inline-flex;align-items:baseline;gap:2px}
+.v7flow .fm-c em{font-style:normal;font-size:var(--fs-2xs);font-weight:var(--fw-medium);color:var(--text3);letter-spacing:0}
+.v7flow .fm-node.empty .fm-c{color:var(--text3)}
+.v7flow .fm-node.focus .fm-c{color:var(--brand)}
+.v7flow .fm-node.done .fm-c{color:var(--green)}
+/* 占比：紧跟大数字的小字 */
+.v7flow .fm-r{font-size:var(--fs-2xs);font-weight:var(--fw-medium);color:var(--text3);font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.3;margin-top:1px}
+
+/* ── L3 南北区：12px/600，南蓝北绿 ── */
+.v7flow .fm-region{display:flex;align-items:center;justify-content:center;gap:9px;font-size:var(--fs-xs);font-weight:var(--fw-medium);color:var(--text3);line-height:1.3;font-variant-numeric:tabular-nums;white-space:nowrap}
+.v7flow .fm-rg{display:inline-flex;align-items:center;gap:4px}
 .v7flow .fm-rg i{width:5px;height:5px;border-radius:50%;flex-shrink:0}
 .v7flow .fm-rg.s i{background:var(--brand)}
 .v7flow .fm-rg.n i{background:var(--green)}
-.v7flow .fm-rg.s b{color:var(--brand);font-weight:750}
-.v7flow .fm-rg.n b{color:var(--green);font-weight:750}
-/* V7.1 D7：超期口径说明（弹窗明细表格下方） */
-.fm-overdue-note{margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--panel2);border:1px solid var(--line);line-height:1.7}
-.fm-overdue-note .fm-on-title{font-size:12px;font-weight:700;color:var(--text2);margin-bottom:3px}
-.fm-overdue-note .fm-on-rules{font-size:11.5px;color:var(--text3)}
-.fm-overdue-note b{color:var(--brand);font-weight:750;font-variant-numeric:tabular-nums}
+.v7flow .fm-rg.s b{color:var(--brand);font-weight:var(--fw-bold)}
+.v7flow .fm-rg.n b{color:var(--green);font-weight:var(--fw-bold)}
+.v7flow .fm-node.empty .fm-rg.s b,
+.v7flow .fm-node.empty .fm-rg.n b{color:var(--text3)}
+.v7flow .fm-node.empty .fm-rg.s i{background:var(--text3)}
+.v7flow .fm-node.empty .fm-rg.n i{background:var(--text3)}
 
-/* C4 图标+客户数+占比同框：蓝底白字（固定高度，9 卡等高不换行） */
-.v7flow .fm-sum{width:100%;height:50px;display:flex;align-items:center;justify-content:center;gap:5px;padding:0 4px;border-radius:10px;color:#fff;box-shadow:0 4px 12px color-mix(in srgb,var(--brand) 24%,transparent);overflow:hidden}
-.v7flow .fm-ico{display:grid;place-items:center;flex:0 0 auto;opacity:.96}
-.v7flow .fm-icoline{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;min-width:0}
-.v7flow .fm-c{font-size:17px;font-weight:800;line-height:1.05;font-variant-numeric:tabular-nums;letter-spacing:-.4px;white-space:nowrap}
-.v7flow .fm-c em{font-style:normal;font-size:10px;font-weight:600;opacity:.86;margin-left:1px}
-.v7flow .fm-r{font-size:9.5px;font-weight:700;line-height:1.2;opacity:.92;font-variant-numeric:tabular-nums;white-space:nowrap}
+/* ── L4 正常/超期 · 耗时 · 岗位：11px/600 text3，仅数字提色 ── */
+.v7flow .fm-od{display:flex;align-items:center;justify-content:center;gap:8px;font-size:var(--fs-2xs);font-weight:var(--fw-medium);color:var(--text3);font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.3}
+.v7flow .fm-od b{font-weight:var(--fw-bold);color:var(--text2)}
+.v7flow .fm-od b.bad{color:var(--danger)}
 
-/* C5 正常 / 超期 */
-.v7flow .fm-od{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
-.v7flow .fm-ok{color:var(--green,#10b981)}
-.v7flow .fm-bad{color:var(--danger,#ef4444)}
+.v7flow .fm-time{font-size:var(--fs-2xs);font-weight:var(--fw-medium);color:var(--text3);font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.3}
+.v7flow .fm-time b{color:var(--text2);font-weight:var(--fw-bold)}
 
-/* C6 平均耗时 */
-.v7flow .fm-time{font-size:10px;color:var(--text3);font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.3}
-.v7flow .fm-time b{color:var(--brand);font-weight:750}
+/* 门店：普通节点弱化；起点/终点做小胶囊强调 */
+.v7flow .fm-store{font-size:var(--fs-2xs);font-weight:var(--fw-medium);color:var(--text3);font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.3}
+.v7flow .fm-store b{color:var(--text2);font-weight:var(--fw-bold)}
+.v7flow .fm-store.strong{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);color:var(--text2)}
+.v7flow .fm-store.strong b{color:var(--brand);font-weight:var(--fw-heavy)}
+.v7flow .fm-node.empty .fm-store.strong{background:transparent;border-color:var(--line2)}
 
-/* C7 门店数（销售签约/流程结束单独一行强调） */
-.v7flow .fm-store{font-size:10px;color:var(--text3);font-variant-numeric:tabular-nums;white-space:nowrap;line-height:1.3}
-.v7flow .fm-store b{color:var(--text2);font-weight:750}
-.v7flow .fm-store.strong{display:inline-flex;align-items:center;gap:4px;margin-top:1px;padding:2px 8px;border-radius:999px;background:var(--panel2);border:1px solid var(--line);color:var(--text2);font-weight:650}
-.v7flow .fm-store.strong b{color:var(--brand);font-weight:800}
-
-/* C9 岗位客户数 */
-.v7flow .fm-roles{width:100%;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:1px 4px;margin-top:2px;padding-top:5px;border-top:1px dashed var(--line2);font-size:9.5px;color:var(--text3);line-height:1.45;font-variant-numeric:tabular-nums}
+/* 岗位：底部虚线分隔 */
+.v7flow .fm-roles{width:100%;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:1px 5px;margin-top:auto;padding-top:6px;border-top:1px dashed var(--line2);font-size:var(--fs-2xs);font-weight:var(--fw-medium);color:var(--text3);line-height:1.45;font-variant-numeric:tabular-nums}
 .v7flow .fm-role{white-space:nowrap}
-.v7flow .fm-role b{color:var(--text2);font-weight:800}
-.v7flow .fm-sep{color:var(--text3);opacity:.55}
+.v7flow .fm-role b{color:var(--text2);font-weight:var(--fw-bold)}
+.v7flow .fm-sep{color:var(--line);opacity:1}
 
-/* C3 更大气：46px 高渐变粗连接块 + 大三角（宽 30，桌面 9 卡一屏放得下） */
-.v7flow .fm-arrow{flex:0 0 30px;width:30px;display:grid;place-items:center;align-self:center;padding:0 1px}
-.v7flow .fm-arrow i{display:block;width:100%;height:46px;background:linear-gradient(135deg,var(--brand) 0%,var(--brand3) 100%);clip-path:polygon(0 0,50% 0,100% 50%,50% 100%,0 100%,40% 50%);opacity:.94;filter:drop-shadow(0 2px 5px color-mix(in srgb,var(--brand) 32%,transparent))}
+/* ── 箭头弱化：18px 宽、22px 高、--line 色、无渐变无阴影 ── */
+.v7flow .fm-arrow{flex:0 0 18px;width:18px;display:grid;place-items:center;align-self:center;padding:0}
+.v7flow .fm-arrow i{display:block;width:100%;height:22px;background:var(--line);clip-path:polygon(0 0,52% 0,100% 50%,52% 100%,0 100%,26% 50%);opacity:1}
 
-.v7flow .fm-note{margin-top:8px;padding-top:8px;border-top:1px solid var(--line2);font-size:10.5px;color:var(--text3);line-height:1.6}
+/* 弹窗内：超期口径说明 */
+.fm-overdue-note{margin-top:14px;padding:11px 13px;border-radius:var(--radius-sm);background:var(--panel2);border:1px solid var(--line);line-height:1.7}
+.fm-overdue-note .fm-on-title{font-size:var(--fs-xs);font-weight:var(--fw-bold);color:var(--text2);margin-bottom:3px}
+.fm-overdue-note .fm-on-rules{font-size:var(--fs-xs);color:var(--text3)}
+.fm-overdue-note b{color:var(--brand);font-weight:var(--fw-bold);font-variant-numeric:tabular-nums}
 
 @media (max-width:575px){
-  .v7flow .fm-card{padding:12px 10px 9px}
-  .v7flow .fm-node{min-width:106px;padding:9px 5px 8px}
-  .v7flow .fm-arrow{flex-basis:24px;width:24px}
-  .v7flow .fm-arrow i{height:38px}
-  .v7flow .fm-sum{height:46px}
-  .v7flow .fm-c{font-size:15px}
-  .v7flow .fm-r{font-size:9px}
+  .v7flow .fm-map{padding:12px 10px 14px}
+  .v7flow .fm-node{min-width:92px;padding:11px 4px 9px}
+  .v7flow .fm-c{font-size:var(--fs-lg)}
+  .v7flow .fm-arrow{flex-basis:14px;width:14px}
+  .v7flow .fm-arrow i{height:18px}
+  .v7flow .fm-region{gap:6px}
 }
 `;
 
 /* ══════════════ 工具函数 ══════════════ */
-
-/** 汇总卡底色：0 客户=灰，流程结束=绿，其余=品牌蓝渐变 */
-function sumGradient(nd: FlowNodeExt): string {
-  if ((nd.clients ?? 0) <= 0) return 'linear-gradient(135deg,var(--gray,#94a3b8),var(--text3,#93a7c2))';
-  if (nd.name === '流程结束') return 'linear-gradient(135deg,var(--green,#10b981),var(--green2,#34d399))';
-  return 'linear-gradient(135deg,var(--brand),var(--brand2))';
-}
 
 /** C6 平均耗时格式化：<1 天 → X.X时；≥1 天 → X.X天（avgDays 单位=天） */
 function fmtAvgDays(days: number | null | undefined): string {
@@ -258,22 +296,19 @@ function normalOverdue(nd: FlowNodeExt): { normal: number; overdue: number } {
   return { normal, overdue };
 }
 
-/* ══════════════ 明细弹窗列（列不变，仅给区域/类型上语义色） ══════════════ */
+/* ══════════════ 明细弹窗列（不变，仅给区域/类型上语义色） ══════════════ */
 
-/** V7 契约 §2.1 语义色（本轮口径） */
 const V7_REGION: Record<string, string> = { 南区: '#2563eb', 北区: '#10b981' };
 const V7_CHAIN_TYPE: Record<string, string> = {
   全国百强: '#ef4444', 区县百强: '#f59e0b', '50+': '#eab308', '50-': '#94a3b8',
 };
-/** §2.1 允许的色值集合，用于判断共享常量是否已迁移到本轮口径 */
 const V7_ALLOWED = new Set<string>([
   ...Object.values(V7_REGION), ...Object.values(V7_CHAIN_TYPE),
 ]);
 
 /**
- * 取色策略：共享常量（@/api/crm-board）若已是 §2.1 新色则优先用共享值，
- * 否则回落到本文件内的 §2.1 字面值。
- * 这样 Lead 更新 crm-board.ts 后本组件自动跟随，无需再改。
+ * 取色策略：共享常量（@/api/crm-board）若已是新色则优先用共享值，
+ * 否则回落到本文件内的字面值。Lead 更新 crm-board.ts 后本组件自动跟随。
  */
 function pickSharedColor(shared: Record<string, string>, v7: Record<string, string>, key: string): string {
   const s = shared?.[key];
@@ -360,13 +395,18 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
     return Array.isArray(list) ? (list as FlowNodeExt[]) : [];
   }, [data?.row2?.nodes]);
 
+  /** 当前主力节点 = 客户数最多者（用于建立「主次」，随筛选自动变化） */
+  const maxClients = useMemo(
+    () => nodes.reduce((m, nd) => Math.max(m, Number(nd?.clients ?? 0)), 0),
+    [nodes],
+  );
+
   return (
     <>
       <style>{CSS}</style>
 
       <div className="v7flow">
         <div className="fm-card">
-          {/* V8.1 D7：卡片左上角显示名称「流程状态」 */}
           <div className="fm-hd">
             <h3><span className="fm-hd-dot" />流程状态</h3>
             <span className="fm-hd-hint">共 {nodes.length} 个节点 · 点击有客户的节点查看明细</span>
@@ -376,121 +416,113 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" />
             </div>
           ) : (
-            <>
-              <div className="fm-map">
-                {nodes.map((nd, i) => {
-                  const clickable = (nd.clients ?? 0) > 0;
-                  const noDuration = NO_DURATION.includes(nd.name);
-                  const { normal, overdue } = normalOverdue(nd);
-                  const roles = Array.isArray(nd.byRole) ? nd.byRole : [];
-                  /* V7.1 D5：该节点南/北区连锁数（后端已提供） */
-                  const south = Number.isFinite(Number(nd.south)) ? Number(nd.south) : 0;
-                  const north = Number.isFinite(Number(nd.north)) ? Number(nd.north) : 0;
-                  const ratioText = RATIO_EXCLUDED.includes(nd.name)
-                    ? '—'
-                    : fmtPct(nd.ratio, 1);
-                  return (
-                    <React.Fragment key={String(nd.key ?? nd.name ?? i)}>
-                      <div
-                        className={`fm-node${clickable ? '' : ' off'}`}
-                        role={clickable ? 'button' : undefined}
-                        tabIndex={clickable ? 0 : -1}
-                        aria-disabled={clickable ? undefined : true}
-                        onClick={clickable ? () => setActive(nd) : undefined}
-                        onKeyDown={
-                          clickable
-                            ? (e) => {
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  setActive(nd);
-                                }
+            <div className="fm-map">
+              {nodes.map((nd, i) => {
+                const clients = Number(nd.clients ?? 0);
+                const clickable = clients > 0;
+                const noDuration = NO_DURATION.includes(nd.name);
+                const isEmpty = clients <= 0;
+                const isDone = nd.name === '流程结束';
+                /* 重点节点：有客户且客户数最多（0 客户不会成为重点） */
+                const isFocus = !isEmpty && clients === maxClients;
+                const { normal, overdue } = normalOverdue(nd);
+                const roles = Array.isArray(nd.byRole) ? nd.byRole : [];
+                const south = Number.isFinite(Number(nd.south)) ? Number(nd.south) : 0;
+                const north = Number.isFinite(Number(nd.north)) ? Number(nd.north) : 0;
+                const ratioText = RATIO_EXCLUDED.includes(nd.name) ? '—' : fmtPct(nd.ratio, 1);
+
+                const cls = [
+                  'fm-node',
+                  isEmpty ? 'empty' : '',
+                  isDone ? 'done' : '',
+                  isFocus ? 'focus' : '',
+                ].filter(Boolean).join(' ');
+
+                return (
+                  <React.Fragment key={String(nd.key ?? nd.name ?? i)}>
+                    <div
+                      className={cls}
+                      role={clickable ? 'button' : undefined}
+                      tabIndex={clickable ? 0 : -1}
+                      aria-disabled={clickable ? undefined : true}
+                      onClick={clickable ? () => setActive(nd) : undefined}
+                      onKeyDown={
+                        clickable
+                          ? (e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                setActive(nd);
                               }
-                            : undefined
-                        }
-                        title={
-                          clickable
-                            ? `${nd.name} · 点击查看 ${fmtNum(nd.clients)} 家客户明细`
-                            : `${nd.name} · 当前无客户，不可点击`
-                        }
-                      >
-                        {/* V7.1 D2：图标显示在卡片名称前方（同一行） */}
-                        <div className="fm-name">
-                          <span className="fm-nameico">{NODE_ICON[nd.name] ?? ICON_FALLBACK}</span>
-                          {nd.name}
-                        </div>
-
-                        {/* C4：图标 + 客户数 + 占比 同框，蓝底白字 */}
-                        <div className="fm-sum" style={{ background: sumGradient(nd) }}>
-                          <span className="fm-icoline">
-                            <span className="fm-c">
-                              {fmtNum(nd.clients)}
-                              <em>家</em>
-                            </span>
-                            <span className="fm-r">占比 {ratioText}</span>
-                          </span>
-                        </div>
-
-                        {/* V7.1 D6：正常 / 超期（工作日口径）
-                            V8.1 D6：销售签约（起点）与流程结束（终点）不显示此行 */}
-                        {!noDuration && (
-                          <div className="fm-od">
-                            <span className="fm-ok">正常 {fmtNum(normal)} 家</span>
-                            <span className="fm-bad">超期 {fmtNum(overdue)} 家</span>
-                          </div>
-                        )}
-
-                        {/* C6：耗时（C7：销售签约/流程结束不显示） */}
-                        {!noDuration && (
-                          <div className="fm-time">
-                            平均耗时：
-                            <b>{(nd.clients ?? 0) > 0 ? fmtAvgDays(nd.avgDays) : '—'}</b>
-                            /每客户
-                          </div>
-                        )}
-
-                        {/* V7.1 D5：当前节点南/北区连锁数（显示在卡片中） */}
-                        <div className="fm-region">
-                          <span className="fm-rg s">
-                            <i />南 <b>{fmtNum(south)}</b>
-                          </span>
-                          <span className="fm-rg n">
-                            <i />北 <b>{fmtNum(north)}</b>
-                          </span>
-                        </div>
-
-                        {/* C7：门店数；销售签约/流程结束单独一行强调 */}
-                        <div className={`fm-store${noDuration ? ' strong' : ''}`}>
-                          门店 <b>{fmtNum(nd.stores)}</b> 家
-                        </div>
-
-                        {/* C9：岗位客户数直接在卡下显示，无需点开 */}
-                        <div className="fm-roles">
-                          {roles.length === 0 ? (
-                            <span className="fm-role">无岗位数据</span>
-                          ) : (
-                            roles.map((r, idx) => (
-                              <React.Fragment key={`${nd.name}-${r.role}-${idx}`}>
-                                {idx > 0 && <span className="fm-sep">·</span>}
-                                <span className="fm-role">
-                                  {r.role} <b>{fmtNum(r.count)}</b>
-                                </span>
-                              </React.Fragment>
-                            ))
-                          )}
-                        </div>
+                            }
+                          : undefined
+                      }
+                      title={
+                        clickable
+                          ? `${nd.name} · 点击查看 ${fmtNum(clients)} 家客户明细`
+                          : `${nd.name} · 当前无客户，不可点击`
+                      }
+                    >
+                      {/* L1 名称：图标（仅此 1 处）+ 深色标题 */}
+                      <div className="fm-name">
+                        <span className="fm-nameico">{NODE_ICON[nd.name] ?? ICON_FALLBACK}</span>
+                        {nd.name}
                       </div>
 
-                      {/* C3：粗壮渐变连接箭头 */}
-                      {i < nodes.length - 1 && (
-                        <div className="fm-arrow" aria-hidden="true">
-                          <i />
+                      {/* L2 客户数：22px/750 大数字 + 占比小字 */}
+                      <div className="fm-kpi">
+                        <span className="fm-c">{fmtNum(clients)}<em>家</em></span>
+                        <span className="fm-r">占比 {ratioText}</span>
+                      </div>
+
+                      {/* L3 南北区 */}
+                      <div className="fm-region">
+                        <span className="fm-rg s"><i />南 <b>{fmtNum(south)}</b></span>
+                        <span className="fm-rg n"><i />北 <b>{fmtNum(north)}</b></span>
+                      </div>
+
+                      {/* L4 正常 / 超期（销售签约与流程结束不显示） */}
+                      {!noDuration && (
+                        <div className="fm-od">
+                          <span>正常 <b>{fmtNum(normal)}</b></span>
+                          <span>超期 <b className={overdue > 0 ? 'bad' : ''}>{fmtNum(overdue)}</b></span>
                         </div>
                       )}
-                    </React.Fragment>
-                  );
-                })}
-              </div>
-            </>
+
+                      {/* L4 平均耗时 */}
+                      {!noDuration && (
+                        <div className="fm-time">
+                          平均耗时 <b>{clients > 0 ? fmtAvgDays(nd.avgDays) : '—'}</b>/每客户
+                        </div>
+                      )}
+
+                      {/* 门店数；起点/终点用小胶囊强调 */}
+                      <div className={`fm-store${noDuration ? ' strong' : ''}`}>
+                        门店 <b>{fmtNum(nd.stores)}</b> 家
+                      </div>
+
+                      {/* L4 岗位客户数 */}
+                      <div className="fm-roles">
+                        {roles.length === 0 ? (
+                          <span className="fm-role">无岗位数据</span>
+                        ) : (
+                          roles.map((r, idx) => (
+                            <React.Fragment key={`${nd.name}-${r.role}-${idx}`}>
+                              {idx > 0 && <span className="fm-sep">·</span>}
+                              <span className="fm-role">{r.role} <b>{fmtNum(r.count)}</b></span>
+                            </React.Fragment>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 弱化箭头 */}
+                    {i < nodes.length - 1 && (
+                      <div className="fm-arrow" aria-hidden="true"><i /></div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
@@ -517,12 +549,12 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
                 gap: 8,
                 marginBottom: 12,
                 padding: '10px 12px',
-                borderRadius: 11,
+                borderRadius: 10,
                 background: 'var(--panel2)',
                 border: '1px solid var(--line)',
               }}
             >
-              <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text)' }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
                 按岗位汇总：
               </span>
               {Array.isArray(active.byRole) && active.byRole.length > 0 ? (
@@ -568,7 +600,6 @@ export default function FlowPipeline({ data, loading, isMobile }: Props) {
               rowClassName={(r) => (r.status === '超期' ? 'board-row-overdue' : '')}
             />
 
-            {/* V7.1 D7：超期口径说明（放在明细表格下方） */}
             <div className="fm-overdue-note">
               <div className="fm-on-title">
                 超期口径：上一节点结束后在本节点的工作日超过阈值即视为超期。

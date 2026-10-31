@@ -20,52 +20,92 @@ import type {
 
 const { RangePicker } = DatePicker;
 
-/* ══════════════ V6.0 紧凑顶栏样式（参考 zk2.zhengl.vip/pc4.html）══════════════ */
+/* ══════════════ V9.2 筛选 chip 样式（精致化） ══════════════ */
 
-/** 筛选按钮基础样式：32px 高、9px 圆角、描边幽灵按钮 */
+/** 筛选 chip 基础样式：30px 高、8px 圆角、白底 + 细边框，保证与浮动条有清晰边界 */
 const BTN_BASE: React.CSSProperties = {
-  height: 32,
-  padding: '0 12px',
-  borderRadius: 9,
+  height: 30,
+  padding: '0 10px',
+  borderRadius: 8,
+  // --panel2(#f8fafd) 与 --panel(#fff) 仅差 7 个色阶，实测肉眼无法分辨（会「糊」），
+  // 故用 --line(#e3e9f2) 的 1px 实边 + 白底，让 chip 从浮动条上明确「浮」出来。
   border: '1px solid var(--line)',
-  background: 'var(--panel2)',
+  background: 'var(--panel)',
   color: 'var(--text2)',
-  fontSize: 12.5,
-  fontWeight: 550,
+  fontSize: 'var(--fs-xs)',
+  fontWeight: 500,
   display: 'inline-flex',
   alignItems: 'center',
   gap: 6,
   cursor: 'pointer',
-  transition: 'all .15s',
+  transition: 'background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease',
   userSelect: 'none',
   whiteSpace: 'nowrap',
   lineHeight: 1,
+  flexShrink: 0,
 };
 
-/** 已激活：品牌渐变实心 */
+/** 已激活：品牌色实心 + 白字 + 轻微阴影（明显但克制） */
 const BTN_ON: React.CSSProperties = {
   ...BTN_BASE,
-  background: 'linear-gradient(135deg, var(--brand), var(--brand2))',
-  borderColor: 'transparent',
+  background: 'var(--brand)',
+  borderColor: 'var(--brand)',
   color: '#fff',
-  boxShadow: '0 3px 9px color-mix(in srgb, var(--brand) 28%, transparent)',
+  fontWeight: 600,
+  boxShadow: '0 2px 6px color-mix(in srgb, var(--brand) 26%, transparent)',
 };
 
-/** 计数徽标 */
+/** 计数徽标（字号 ≥11px） */
 function CountBadge({ n, on }: { n: number; on?: boolean }) {
   return (
     <span
       style={{
-        fontSize: 10,
+        fontSize: 'var(--fs-2xs)',
         fontWeight: 700,
         padding: '0 5px',
-        borderRadius: 6,
-        lineHeight: '15px',
-        background: on ? 'rgba(255,255,255,.26)' : 'var(--brandSoft)',
+        borderRadius: 5,
+        lineHeight: '16px',
+        minWidth: 16,
+        textAlign: 'center',
+        background: on ? 'rgba(255,255,255,.24)' : 'color-mix(in srgb, var(--brand) 12%, transparent)',
         color: on ? '#fff' : 'var(--brand)',
       }}
     >
       {n}
+    </span>
+  );
+}
+
+/** 分组之间的竖向细分隔线 */
+function VSep() {
+  return (
+    <span
+      aria-hidden
+      style={{
+        width: 1,
+        height: 18,
+        background: 'var(--line)',
+        flexShrink: 0,
+        margin: '0 2px',
+      }}
+    />
+  );
+}
+
+/** 组标签：11px/700 --text3，做「大写感」的小标题 */
+function GroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        fontSize: 'var(--fs-2xs)',
+        fontWeight: 700,
+        color: 'var(--text3)',
+        letterSpacing: '.8px',
+        whiteSpace: 'nowrap',
+        flexShrink: 0,
+      }}
+    >
+      {children}
     </span>
   );
 }
@@ -224,10 +264,16 @@ function MultiSelect({
         onClick={openPanel}
         style={active ? BTN_ON : BTN_BASE}
         onMouseEnter={(e) => {
-          if (!active) { e.currentTarget.style.borderColor = 'var(--brand3)'; e.currentTarget.style.color = 'var(--brand)'; }
+          if (active) return;
+          e.currentTarget.style.background = 'var(--brandSoft)';
+          e.currentTarget.style.color = 'var(--brand)';
+          e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--brand) 26%, transparent)';
         }}
         onMouseLeave={(e) => {
-          if (!active) { e.currentTarget.style.borderColor = 'var(--line)'; e.currentTarget.style.color = 'var(--text2)'; }
+          if (active) return;
+          e.currentTarget.style.background = 'var(--panel)';
+          e.currentTarget.style.color = 'var(--text2)';
+          e.currentTarget.style.borderColor = 'var(--line)';
         }}
       >
         {icon}
@@ -402,10 +448,16 @@ function DateFilter({ filters, onChange, isMobile }: {
         onClick={openPanel}
         style={active ? BTN_ON : BTN_BASE}
         onMouseEnter={(e) => {
-          if (!active) { e.currentTarget.style.borderColor = 'var(--brand3)'; e.currentTarget.style.color = 'var(--brand)'; }
+          if (active) return;
+          e.currentTarget.style.background = 'var(--brandSoft)';
+          e.currentTarget.style.color = 'var(--brand)';
+          e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--brand) 26%, transparent)';
         }}
         onMouseLeave={(e) => {
-          if (!active) { e.currentTarget.style.borderColor = 'var(--line)'; e.currentTarget.style.color = 'var(--text2)'; }
+          if (active) return;
+          e.currentTarget.style.background = 'var(--panel)';
+          e.currentTarget.style.color = 'var(--text2)';
+          e.currentTarget.style.borderColor = 'var(--line)';
         }}
       >
         {ICON.calendar}
@@ -567,10 +619,16 @@ function AllFilters({ filters, onChange, options, counts }: AllFilterProps) {
         onClick={openPanel}
         style={activeCount ? BTN_ON : BTN_BASE}
         onMouseEnter={(e) => {
-          if (!activeCount) { e.currentTarget.style.borderColor = 'var(--brand3)'; e.currentTarget.style.color = 'var(--brand)'; }
+          if (activeCount) return;
+          e.currentTarget.style.background = 'var(--brandSoft)';
+          e.currentTarget.style.color = 'var(--brand)';
+          e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--brand) 26%, transparent)';
         }}
         onMouseLeave={(e) => {
-          if (!activeCount) { e.currentTarget.style.borderColor = 'var(--line)'; e.currentTarget.style.color = 'var(--text2)'; }
+          if (activeCount) return;
+          e.currentTarget.style.background = 'var(--panel)';
+          e.currentTarget.style.color = 'var(--text2)';
+          e.currentTarget.style.borderColor = 'var(--line)';
         }}
       >
         {ICON.filter}
@@ -598,10 +656,10 @@ function AllFilters({ filters, onChange, options, counts }: AllFilterProps) {
           if (!opts.length) {
             return (
               <div key={String(g.key)} style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-main)', marginBottom: 8 }}>
+                <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
                   {g.title}
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-mute)' }}>暂无可选项</div>
+                <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--text3)' }}>暂无可选项</div>
               </div>
             );
           }
@@ -682,21 +740,25 @@ export default function FilterBar({
       style={{
         display: 'flex',
         flexWrap: 'nowrap',
-        gap: 8,
+        gap: 6,
         alignItems: 'center',
-        // 窄屏横向滚动而不是撑爆顶栏
+        // 不换行 → 所有 chip 永远同一基线、同一高度；
+        // 窄屏走内滚，绝不撑破顶栏。
         overflowX: 'auto',
         overflowY: 'hidden',
         minWidth: 0,
-        // 隐藏滚动条（视觉更干净）
         scrollbarWidth: 'none',
       }}
       className="board-filterbar"
     >
-      {/* 1. 日期 */}
+      {/* ── 组 1：时间 ── */}
+      {!isMobile && <GroupLabel>时间</GroupLabel>}
       <DateFilter filters={filters} onChange={onChange} isMobile={isMobile} />
 
-      {/* 2. 区域 */}
+      <VSep />
+
+      {/* ── 组 2：维度 ── */}
+      {!isMobile && <GroupLabel>维度</GroupLabel>}
       <MultiSelect
         label="区域"
         icon={ICON.region}
@@ -705,8 +767,6 @@ export default function FilterBar({
         counts={counts.region}
         onApply={(v) => onChange({ regions: v })}
       />
-
-      {/* 3. 连锁类型 */}
       <MultiSelect
         label="连锁类型"
         icon={ICON.type}
@@ -715,8 +775,6 @@ export default function FilterBar({
         counts={counts.chainType}
         onApply={(v) => onChange({ chainTypes: v })}
       />
-
-      {/* 4. 销售 */}
       <MultiSelect
         label="销售"
         icon={ICON.sales}
@@ -727,7 +785,10 @@ export default function FilterBar({
         searchable
       />
 
-      {/* 5. 全部筛选条件 */}
+      <VSep />
+
+      {/* ── 组 3：更多条件 + 重置 ── */}
+      {!isMobile && <GroupLabel>更多</GroupLabel>}
       <AllFilters
         filters={filters}
         onChange={onChange}
@@ -735,7 +796,7 @@ export default function FilterBar({
         counts={counts}
       />
 
-      {/* 6. 重置 */}
+      {/* 重置：与前面 chip 区分（无底、浅字，hover 才显危险色） */}
       <Tooltip title="清空所有筛选条件">
         <button
           type="button"
@@ -743,18 +804,23 @@ export default function FilterBar({
           disabled={!anyActive}
           style={{
             ...BTN_BASE,
-            opacity: anyActive ? 1 : 0.45,
+            border: '1px solid transparent',
+            background: 'transparent',
+            color: anyActive ? 'var(--text2)' : 'var(--text3)',
+            opacity: anyActive ? 1 : 0.6,
             cursor: anyActive ? 'pointer' : 'not-allowed',
           }}
           onMouseEnter={(e) => {
             if (!anyActive) return;
-            e.currentTarget.style.borderColor = 'var(--brand3)';
-            e.currentTarget.style.color = 'var(--brand)';
+            e.currentTarget.style.background = 'color-mix(in srgb, var(--danger) 7%, transparent)';
+            e.currentTarget.style.color = 'var(--danger)';
+            e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--danger) 24%, transparent)';
           }}
           onMouseLeave={(e) => {
             if (!anyActive) return;
-            e.currentTarget.style.borderColor = 'var(--line)';
+            e.currentTarget.style.background = 'transparent';
             e.currentTarget.style.color = 'var(--text2)';
+            e.currentTarget.style.borderColor = 'transparent';
           }}
         >
           {ICON.reset}

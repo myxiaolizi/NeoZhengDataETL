@@ -32,7 +32,7 @@ interface Props {
   isMobile: boolean;
 }
 
-/** 32×32 图标按钮基础样式 */
+/** 32×32 幽灵图标按钮：无底色、无边框，比筛选 chip 更轻，突出「操作」属性 */
 const BTN: React.CSSProperties = {
   width: 32,
   height: 32,
@@ -40,13 +40,26 @@ const BTN: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  borderRadius: 9,
-  border: '1px solid var(--line)',
-  background: 'var(--panel2)',
+  borderRadius: 8,
+  border: '1px solid transparent',
+  background: 'transparent',
   color: 'var(--text2)',
   cursor: 'pointer',
-  transition: 'all .15s',
+  transition: 'background .16s ease, color .16s ease, border-color .16s ease',
   flexShrink: 0,
+};
+
+/** 幽灵按钮 hover：浅品牌底 + 品牌字 */
+const HOVER_ON = (el: HTMLElement) => {
+  el.style.background = 'var(--brandSoft)';
+  el.style.color = 'var(--brand)';
+  el.style.borderColor = 'color-mix(in srgb, var(--brand) 20%, transparent)';
+};
+
+const HOVER_OFF = (el: HTMLElement) => {
+  el.style.background = 'transparent';
+  el.style.color = 'var(--text2)';
+  el.style.borderColor = 'transparent';
 };
 
 /** 内联 SVG（16px，stroke 风格，与参考站一致） */
@@ -175,7 +188,7 @@ export default function ActionBar({
     window.setTimeout(() => setSpin(false), 900);
   };
 
-  /** 带 hover 反馈的图标按钮 */
+  /** 带 hover 反馈的幽灵图标按钮 */
   const IconBtn = ({
     icon, tip, onClick, active, activeStyle,
   }: {
@@ -193,15 +206,11 @@ export default function ActionBar({
         style={{ ...BTN, ...(active ? activeStyle : null) }}
         onMouseEnter={(e) => {
           if (active) return;
-          e.currentTarget.style.borderColor = 'var(--brand3)';
-          e.currentTarget.style.color = 'var(--brand)';
-          e.currentTarget.style.background = 'var(--brandSoft)';
+          HOVER_ON(e.currentTarget);
         }}
         onMouseLeave={(e) => {
           if (active) return;
-          e.currentTarget.style.borderColor = 'var(--line)';
-          e.currentTarget.style.color = 'var(--text2)';
-          e.currentTarget.style.background = 'var(--panel2)';
+          HOVER_OFF(e.currentTarget);
         }}
       >
         {icon}
@@ -215,8 +224,13 @@ export default function ActionBar({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'flex-end',
-        gap: 6,
+        gap: 2,
         flexShrink: 0,
+        // 操作区成组：轻量底 + 细边框，与筛选浮动条区分
+        background: 'var(--panel2)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--radius-sm)',
+        padding: 3,
       }}
     >
       {/* 1. 有效数据 */}
@@ -240,16 +254,8 @@ export default function ActionBar({
           onClick={doRefresh}
           aria-label="刷新"
           style={BTN}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.borderColor = 'var(--brand3)';
-            e.currentTarget.style.color = 'var(--brand)';
-            e.currentTarget.style.background = 'var(--brandSoft)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.borderColor = 'var(--line)';
-            e.currentTarget.style.color = 'var(--text2)';
-            e.currentTarget.style.background = 'var(--panel2)';
-          }}
+          onMouseEnter={(e) => HOVER_ON(e.currentTarget)}
+          onMouseLeave={(e) => HOVER_OFF(e.currentTarget)}
         >
           <span
             style={{
@@ -306,16 +312,8 @@ export default function ActionBar({
             type="button"
             aria-label="主题色"
             style={BTN}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = 'var(--brand3)';
-              e.currentTarget.style.color = 'var(--brand)';
-              e.currentTarget.style.background = 'var(--brandSoft)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = 'var(--line)';
-              e.currentTarget.style.color = 'var(--text2)';
-              e.currentTarget.style.background = 'var(--panel2)';
-            }}
+            onMouseEnter={(e) => HOVER_ON(e.currentTarget)}
+            onMouseLeave={(e) => HOVER_OFF(e.currentTarget)}
           >
             {ICON.theme}
           </button>
@@ -384,7 +382,7 @@ export default function ActionBar({
             <button
               type="button"
               onClick={copyLink}
-              style={{ ...BTN, width: 'auto', padding: '0 14px', height: 32, fontSize: 12.5, fontWeight: 550 }}
+              style={{ ...BTN, width: 'auto', padding: '0 14px', height: 32, fontSize: 'var(--fs-sm)', fontWeight: 500 }}
             >
               <CopyOutlined style={{ marginRight: 6 }} />复制链接
             </button>

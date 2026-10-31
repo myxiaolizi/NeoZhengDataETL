@@ -29,8 +29,6 @@ interface Props {
 }
 
 const BRAND = '#2563eb';
-/** 名次奖牌（前三名徽章底） */
-const MEDAL = ['#ef4444', '#f59e0b', '#eab308'];
 
 /* ══════════════ 语义色 ══════════════ */
 
@@ -42,47 +40,50 @@ function shortType(name: string): string {
   return CHAIN_TYPE_SHORT[name] || name;
 }
 
-/* ══════════════ E4：前三名卡片皮肤 ══════════════ */
+/* ══════════════ 名次徽章：TOP3 金银铜，4+ 中性灰（只用令牌，无彩虹色） ══════════════ */
 
-interface RowSkin {
-  background: string;
-  borderColor: string;
-  /** 条形/环形/强调色 */
-  accent: string;
-}
-
-const PODIUM = [
-  { bg: '#fde8ef', border: '#f9a8c8', accent: '#d94f8a' },
-  { bg: '#fdeee0', border: '#f5c08a', accent: '#c9761b' },
-  { bg: '#fdf6dd', border: '#e8d48a', accent: '#a8860f' },
-];
-
-function rowSkin(no: number, dark: boolean): RowSkin {
-  if (no >= 1 && no <= 3) {
-    const p = PODIUM[no - 1];
-    if (!dark) return { background: p.bg, borderColor: p.border, accent: p.accent };
-    /* 暗色：把浅色按低比例混入深色面板，保持色相但文字仍用 --text（浅色）可读 */
-    return {
-      background: `color-mix(in srgb, ${p.border} 16%, var(--panel2))`,
-      borderColor: `color-mix(in srgb, ${p.border} 42%, var(--line))`,
-      accent: p.border,
-    };
-  }
-  return { background: 'var(--panel2)', borderColor: 'var(--line)', accent: BRAND };
-}
-
-/** 名次徽章：1/2/3 白字 + 压深奖牌底；4 名起浅底 + 正文色（永不用白字压在浅底上） */
+/**
+ * V9.2：徽章配色收敛到「金 / 银 / 铜 + 中性灰」四档，全部由令牌混出：
+ *   1 金  var(--warn)
+ *   2 银  color-mix(--text3 78%, --text)
+ *   3 铜  color-mix(--warn 52%, --text3)
+ *   4+   var(--line2) 底 + --text2 字（永不用白字压在浅底上）
+ */
 function badgeStyle(no: number): React.CSSProperties {
-  if (no >= 1 && no <= 3) {
-    const c = MEDAL[no - 1];
+  /**
+   * V9.2：TOP3 徽章原来用白字压在金色/银色底上，实测对比度仅 1.67，几乎看不清。
+   * 改为「金属渐变底 + 同色系深字」，对比度 6~8，同时更有质感。
+   */
+  if (no === 1) {
     return {
-      background: `color-mix(in srgb, ${c} 46%, #000000)`,
-      color: '#ffffff',
-      textShadow: '0 1px 1px rgba(0, 0, 0, .55)',
-      boxShadow: `0 2px 7px color-mix(in srgb, ${c} 40%, transparent), inset 0 1px 0 rgba(255, 255, 255, .22)`,
+      background: 'linear-gradient(135deg,#fbbf24,#f59e0b)',
+      color: '#452a03',
+      boxShadow: '0 1px 3px rgba(245,158,11,.42)',
     };
   }
-  return { background: 'var(--line2)', color: 'var(--text)', boxShadow: 'none' };
+  if (no === 2) {
+    return {
+      background: 'linear-gradient(135deg,#cbd5e1,#94a3b8)',
+      color: '#1e293b',
+      boxShadow: '0 1px 3px rgba(148,163,184,.42)',
+    };
+  }
+  if (no === 3) {
+    return {
+      background: 'linear-gradient(135deg,#fdba74,#f97316)',
+      color: '#431407',
+      boxShadow: '0 1px 3px rgba(249,115,22,.38)',
+    };
+  }
+  return { background: 'var(--line2)', color: 'var(--text2)', boxShadow: 'none' };
+}
+
+/** 占比条颜色：与徽章同阶（TOP3 用金银铜，4+ 用 brand），低饱和避免抢眼 */
+function accentOf(no: number): string {
+  if (no === 1) return 'var(--warn)';
+  if (no === 2) return 'color-mix(in srgb, var(--text3) 80%, var(--text))';
+  if (no === 3) return 'color-mix(in srgb, var(--warn) 52%, var(--text3))';
+  return 'var(--brand)';
 }
 
 /* ══════════════ 弹窗令牌重声明（portal → body，取不到 .board-root 变量） ══════════════ */
@@ -135,90 +136,116 @@ function shortProvince(name: string): string {
   return n.replace(/(省|市|自治区)$/u, '');
 }
 
-/* ══════════════ 局部样式（vb4- 前缀） ══════════════ */
+/* ══════════════ 局部样式（vb4- 前缀） — V9.2 视觉改版 ══════════════ */
 const CSS = `
-/* E5：三张卡各自按内容撑开，底部不留空白 */
-.vb4-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:stretch;min-width:0;height:100%}
-/* 768~1279px：让 3 张卡直接成为外层第 3 排 2×2 网格的子项（列宽由 TypeSummary 侧定义） */
+/* 三张卡等高铺满：网格 stretch + 卡片 height:100% + 正文 flex:1 */
+.vb4-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:stretch;min-width:0;height:100%}
+/* 768~1279px：3 张卡直接成为外层第 3 排 2×2 网格的子项（列宽由 TypeSummary 侧定义） */
 @media(min-width:768px) and (max-width:1279.98px){.vb4-grid{display:contents!important}}
-/* ≤767px：外层是 1 列（Board.tsx 内联），3 张卡也各占 1 列，否则会挤成 ~108px 宽 */
+/* ≤767px：外层是 1 列，3 张卡也各占 1 列，否则会挤成 ~108px 宽 */
 @media(max-width:767.98px){.vb4-grid{grid-template-columns:1fr!important}}
 
-.vb4-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease,transform .2s ease;height:100%;min-width:0}
-.vb4-card:hover{border-color:var(--brand3);box-shadow:var(--shadow2);transform:translateY(-1px)}
-.vb4-h{padding:12px 14px;border-bottom:1px solid var(--line2);display:flex;align-items:center;justify-content:space-between;gap:6px 8px;flex-wrap:wrap;flex-shrink:0;background:linear-gradient(180deg,color-mix(in srgb,var(--panel2) 60%,transparent),transparent)}
-.vb4-h h3{font-size:13px;font-weight:680;color:var(--text);display:flex;align-items:center;gap:8px;margin:0;letter-spacing:.2px;white-space:nowrap}
-.vb4-sub{font-size:10.5px;color:var(--text2);font-weight:600;white-space:nowrap}
-.vb4-more{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:600;color:var(--brand);background:transparent;border:0;cursor:pointer;padding:2px 4px;border-radius:6px;transition:background .15s;white-space:nowrap}
+.vb4-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s ease,box-shadow .2s ease;height:100%;min-width:0}
+.vb4-card:hover{border-color:var(--brand3);box-shadow:var(--shadow2)}
+
+/* 卡头统一结构：色点 + 标题 13/700 + 右侧「共 N 位」11 + 更多 */
+.vb4-h{padding:13px 14px;border-bottom:1px solid var(--line2);display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.vb4-h h3{font-size:var(--fs-sm);font-weight:700;color:var(--text);display:flex;align-items:center;gap:7px;margin:0;letter-spacing:.2px;white-space:nowrap;min-width:0}
+.vb4-dot{width:6px;height:6px;border-radius:2px;flex-shrink:0}
+.vb4-sub{font-size:var(--fs-2xs);color:var(--text3);font-weight:600;white-space:nowrap}
+.vb4-more{margin-left:auto;display:inline-flex;align-items:center;gap:3px;font-size:var(--fs-2xs);font-weight:600;color:var(--brand);background:transparent;border:0;cursor:pointer;padding:3px 6px;border-radius:6px;transition:background .15s;white-space:nowrap}
 .vb4-more:hover{background:var(--brandSoft)}
-.vb4-more svg{font-size:9px}
-.vb4-b{padding:11px 12px;display:flex;flex-direction:column;justify-content:flex-start;gap:7px;min-width:0;min-height:150px;flex:1}
-.vb4-empty{padding:14px 0}
+.vb4-more svg{font-size:var(--fs-2xs)}
 
-/* 名次徽章（三卡共用） */
-.vb4-no{width:22px;height:22px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1;letter-spacing:0}
+/* 正文：条目均分剩余高度（space-between），保证铺满且条目间有呼吸感 */
+.vb4-b{padding:12px 14px;display:flex;flex-direction:column;justify-content:space-between;gap:0;min-width:0;flex:1}
+.vb4-empty{padding:16px 0}
 
-/* 类型标签（三卡共用；色点 + 简写 + 家数。标签文字用 var(--text) 保证明暗都可读） */
+/* 名次徽章：统一 22×22 圆形，TOP3 金银铜（--warn / 中性灰阶），4+ 中性浅底 */
+.vb4-no{width:22px;height:22px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:var(--fs-2xs);font-weight:750;font-variant-numeric:tabular-nums;line-height:1;letter-spacing:0}
+
+/* 类型标签：11px，中性底色 + 色点，避免与名次徽章抢色 */
 .vb4-tags{display:flex;gap:4px;flex-wrap:wrap;min-width:0}
-.vb4-tags .tt{display:inline-flex;align-items:center;gap:3px;padding:0 5px;height:16px;border-radius:5px;border:1px solid var(--line);background:var(--panel);font-size:9.5px;line-height:1;white-space:nowrap}
-.vb4-tags .tt .d{width:5px;height:5px;border-radius:2px;flex-shrink:0}
-.vb4-tags .tt .n{color:var(--text);font-weight:650}
-.vb4-tags .tt .v{color:var(--text);font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.2px}
+.vb4-tags .tt{display:inline-flex;align-items:center;gap:4px;padding:0 6px;height:19px;border-radius:6px;border:1px solid var(--line2);background:color-mix(in srgb,var(--text) 3%,transparent);font-size:var(--fs-2xs);line-height:1;white-space:nowrap;max-width:100%}
+.vb4-tags .tt .d{width:6px;height:6px;border-radius:2px;flex-shrink:0}
+.vb4-tags .tt .n{color:var(--text2);font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.vb4-tags .tt .v{color:var(--text);font-weight:750;font-variant-numeric:tabular-nums;flex-shrink:0}
 
-/* ══════ A. 客户数排行榜：横向条形风 ══════ */
-.vb4a-row{display:grid;grid-template-columns:22px minmax(0,1fr);align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--line);border-radius:var(--radius-sm);transition:transform .16s ease,box-shadow .16s ease;min-width:0}
-.vb4a-row:hover{transform:translateX(2px);box-shadow:var(--shadow)}
-.vb4a-main{min-width:0;display:flex;flex-direction:column;gap:4px}
-.vb4a-top{display:flex;align-items:baseline;gap:5px;min-width:0}
-.vb4a-top .nm{font-size:12.5px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.vb4a-top .sn{font-size:10px;font-weight:600;color:var(--text2);flex-shrink:0}
-.vb4a-top .v{margin-left:auto;font-size:14px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--text);flex-shrink:0;letter-spacing:-.3px}
-.vb4a-top .u{font-size:9px;font-weight:650;color:var(--text2);flex-shrink:0}
-.vb4a-bar{height:6px;border-radius:3px;background:color-mix(in srgb,var(--text) 9%,transparent);overflow:hidden}
-.vb4a-bar i{display:block;height:100%;border-radius:3px;transition:width .5s cubic-bezier(.4,0,.2,1)}
+/* ── 排行条目共用骨架：徽章 | 主区（名称+副信息+占比条+标签） | 数值列 ──
+   条目之间用极淡分隔线（不用交替底色，二者只选其一） */
+.vb4-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px;min-width:0;transition:background .16s ease;border-radius:8px}
+.vb4-row+.vb4-row{box-shadow:inset 0 1px 0 var(--line2)}
+.vb4-row:hover{background:var(--brandSoft)}
+.vb4-main{min-width:0;display:flex;flex-direction:column;gap:5px}
 
-/* ══════ B. 门店数排行榜：数据卡风（大数字 + 环形刻度） ══════ */
-.vb4b-row{display:grid;grid-template-columns:22px minmax(0,1fr) 34px;align-items:center;gap:8px;padding:6px 9px;border:1px solid var(--line);border-radius:var(--radius-sm);transition:transform .16s ease,box-shadow .16s ease;min-width:0}
-.vb4b-row:hover{transform:translateX(2px);box-shadow:var(--shadow)}
-.vb4b-main{min-width:0;display:flex;flex-direction:column;gap:1px}
-/* align-items:center + 显式 line-height：避免 baseline 对齐在窄卡里产生 2px 的行盒溢出 */
-.vb4b-num{display:flex;align-items:center;gap:3px;min-width:0;line-height:1.3;min-height:25px}
-.vb4b-num b{font-size:19px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.8px;color:var(--text);line-height:1.3;display:inline-block}
-.vb4b-num span{font-size:9px;font-weight:700;color:var(--text2);letter-spacing:.3px}
-.vb4b-name{display:flex;align-items:baseline;gap:4px;min-width:0;line-height:1.2}
-.vb4b-name .nm{font-size:11.5px;font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.vb4b-name .sn{font-size:9.5px;font-weight:600;color:var(--text2);flex-shrink:0}
-.vb4b-ring{width:34px;height:34px;border-radius:50%;flex-shrink:0;position:relative;display:flex;align-items:center;justify-content:center}
-.vb4b-ring>i{position:absolute;inset:4px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-style:normal;font-size:8.5px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--text2);letter-spacing:-.3px}
-.vb4b-tags{margin-top:1px}
+/* 名称行：名称 13/700 + 副信息 11/--text3 */
+.vb4-nm{display:flex;align-items:baseline;gap:6px;min-width:0;line-height:1.25}
+.vb4-nm .nm{font-size:var(--fs-sm);font-weight:700;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.vb4-nm .sn{font-size:var(--fs-2xs);font-weight:600;color:var(--text3);flex-shrink:0;white-space:nowrap}
 
-/* ══════ C. 省份排行榜：热力网格（俯瞰地图风） ══════ */
-.vb4c-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(56px,1fr));gap:5px;min-width:0;flex:1;align-content:stretch}
-.vb4c-cell{position:relative;border:1px solid var(--line);border-radius:9px;padding:5px 4px 4px;cursor:pointer;text-align:center;line-height:1.15;transition:transform .14s ease,box-shadow .14s ease,filter .14s ease;font-family:inherit;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:56px}
-.vb4c-cell:hover{transform:translateY(-2px) scale(1.03);box-shadow:var(--shadow2);filter:brightness(1.06);z-index:1}
-.vb4c-cell:active{transform:translateY(0) scale(.99)}
-.vb4c-cell .pn{display:block;font-size:10px;font-weight:700;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.vb4c-cell .cv{display:block;font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-.4px;margin-top:1px}
-.vb4c-cell .st{display:block;font-size:8px;font-weight:650;opacity:.72;margin-top:1px}
-.vb4c-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:9.5px;font-weight:650;color:var(--text2);padding-top:2px}
+/* 数值列：17/750 右对齐 + 单位 11 */
+.vb4-val{display:flex;flex-direction:column;align-items:flex-end;gap:1px;flex-shrink:0;min-width:50px}
+.vb4-val b{font-size:var(--fs-lg);font-weight:750;color:var(--text);font-variant-numeric:tabular-nums;line-height:1.05;letter-spacing:-.4px}
+.vb4-val span{font-size:var(--fs-2xs);font-weight:600;color:var(--text3);letter-spacing:.3px}
+
+/* 占比条：相对榜首的横向长度，视觉化排序 */
+.vb4-track{height:6px;border-radius:4px;background:color-mix(in srgb,var(--text) 8%,transparent);overflow:hidden}
+.vb4-track i{display:block;height:100%;border-radius:4px;transition:width .55s cubic-bezier(.4,0,.2,1)}
+
+/* ── A. 客户数排行榜（横向条形风） ── */
+.vb4a-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-2xs);font-weight:600;color:var(--text3);padding-top:8px;border-top:1px solid var(--line2);flex-shrink:0}
+.vb4a-foot b{color:var(--text);font-weight:750;font-variant-numeric:tabular-nums}
+
+/* ── B. 门店数排行榜（数据卡风：大数字主导） ── */
+.vb4b-row{grid-template-columns:22px minmax(0,1fr);gap:10px}
+.vb4b-num{display:flex;align-items:baseline;gap:5px;min-width:0;line-height:1.1}
+.vb4b-num b{font-size:var(--fs-xl);font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.8px;color:var(--text);line-height:1.1}
+.vb4b-num span{font-size:var(--fs-2xs);font-weight:600;color:var(--text3)}
+.vb4b-side{display:flex;align-items:center;gap:6px;flex-shrink:0}
+
+/* ── C. 省份排行榜：5 格等宽等高 + 门店占比条（两段合起来铺满正文） ──
+   repeat(5,1fr) 保证 5 格等宽；统一 auto-rows 保证等高。
+   ≤767px（卡片只有 ~351px 宽）时改为 2 行布局，避免每格被压到 48px 导致文字溢出 */
+.vb4c-wrap{flex:1;display:flex;flex-direction:column;justify-content:space-between;gap:12px;min-width:0}
+.vb4c-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-auto-rows:104px;gap:8px;min-width:0;flex:0 0 auto}
+@media(max-width:767.98px){
+  .vb4c-grid{grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:88px}
+}
+.vb4c-cell{position:relative;border:1px solid var(--line);border-radius:var(--radius-sm);cursor:pointer;text-align:center;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;font-family:inherit;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:10px 4px;line-height:1.15;min-width:0}
+.vb4c-cell:hover{transform:translateY(-2px);box-shadow:var(--shadow2);border-color:var(--brand2)}
+.vb4c-cell:active{transform:translateY(0)}
+.vb4c-cell .rk{position:absolute;top:6px;left:7px;font-size:var(--fs-2xs);font-weight:750;opacity:.5;line-height:1}
+.vb4c-cell .pn{font-size:var(--fs-xs);font-weight:650;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.vb4c-cell .cv{font-size:var(--fs-xl);font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.6px;line-height:1.05}
+/* 副信息用 --text2（--text3 在深色的深底块上对比度只有 1.87，不可读） */
+.vb4c-cell .st{font-size:var(--fs-2xs);font-weight:600;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+
+/* 门店占比条：同一批省份的第二个维度，把卡片下半部分填满（不与上方重复取数） */
+.vb4c-bars{display:flex;flex-direction:column;justify-content:space-evenly;gap:6px;flex:1;min-width:0}
+.vb4c-bar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0}
+.vb4c-bar .n{font-size:var(--fs-2xs);font-weight:600;color:var(--text2);white-space:nowrap}
+.vb4c-bar .t{height:6px;border-radius:4px;background:color-mix(in srgb,var(--text) 8%,transparent);overflow:hidden}
+.vb4c-bar .t i{display:block;height:100%;border-radius:4px;background:var(--green);transition:width .55s cubic-bezier(.4,0,.2,1)}
+.vb4c-bar .v{font-size:var(--fs-2xs);font-weight:750;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
+.vb4c-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:var(--fs-2xs);font-weight:600;color:var(--text3);flex-shrink:0}
 .vb4c-ramp{display:inline-flex;align-items:center;gap:2px}
-.vb4c-ramp i{width:14px;height:8px;border-radius:2px;display:block}
-.vb4c-foot .tip{color:var(--text3);font-weight:600;margin-left:auto;white-space:nowrap}
+.vb4c-ramp i{width:16px;height:8px;border-radius:2px;display:block}
+.vb4c-foot .tip{margin-left:auto;white-space:nowrap;color:var(--text3)}
 
-/* 下钻弹窗内的销售分布 chip */
+/* 下钻弹窗内 */
 .vb4d-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
-.vb4d-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 8px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);font-size:11px;font-weight:650;color:var(--text)}
-.vb4d-chip b{font-weight:800;font-variant-numeric:tabular-nums}
+.vb4d-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);font-size:var(--fs-xs);font-weight:600;color:var(--text)}
+.vb4d-chip b{font-weight:750;font-variant-numeric:tabular-nums}
 .vb4d-chip .bar{width:34px;height:4px;border-radius:2px;background:color-mix(in srgb,var(--text) 10%,transparent);overflow:hidden}
-.vb4d-chip .bar i{display:block;height:100%;background:${BRAND};border-radius:2px}
-.vb4d-sum{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:11.5px;font-weight:650;color:var(--text2);margin-bottom:10px}
-.vb4d-sum b{color:var(--text);font-weight:800;font-variant-numeric:tabular-nums}
-.vb4d-sec{font-size:11px;font-weight:750;color:var(--text2);margin:2px 0 6px;letter-spacing:.2px}
+.vb4d-chip .bar i{display:block;height:100%;background:var(--brand);border-radius:2px}
+.vb4d-sum{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:var(--fs-xs);font-weight:600;color:var(--text2);margin-bottom:10px}
+.vb4d-sum b{color:var(--text);font-weight:750;font-variant-numeric:tabular-nums}
+.vb4d-sec{font-size:var(--fs-xs);font-weight:700;color:var(--text2);margin:4px 0 8px;letter-spacing:.2px}
 
-/* 弹窗内表格/分页：颜色全部显式声明（portal 拿不到外层变量） */
-.v7d-modal{color:var(--text);font-size:12.5px}
+/* 弹窗内表格/分页：颜色显式声明（portal 拿不到外层变量） */
+.v7d-modal{color:var(--text);font-size:var(--fs-xs)}
 .v7d-modal .ant-table{background:transparent;color:var(--text)}
-.v7d-modal .ant-table-thead>tr>th{background:var(--panel2)!important;color:var(--text)!important;border-bottom:1px solid var(--line)!important;font-weight:680}
+.v7d-modal .ant-table-thead>tr>th{background:var(--panel2)!important;color:var(--text)!important;border-bottom:1px solid var(--line)!important;font-weight:700}
 .v7d-modal .ant-table-thead>tr>th::before{background-color:var(--line)!important}
 .v7d-modal .ant-table-tbody>tr>td{background:transparent!important;color:var(--text)!important;border-bottom:1px solid var(--line2)!important}
 .v7d-modal .ant-table-tbody>tr:hover>td{background:var(--brandSoft)!important}
@@ -340,20 +367,14 @@ function AllRankModal({
   );
 }
 
-/** 卡头（标题 + 计数 + 更多） */
+/** 卡头（统一结构：色点 + 标题 13/700 + 右侧「共 N 位」11 + 更多） */
 function CardHead({
-  title, sub, onMore, moreDisabled,
-}: { title: string; sub: string; onMore: () => void; moreDisabled?: boolean }) {
+  title, sub, onMore, moreDisabled, dotColor,
+}: { title: string; sub: string; onMore: () => void; moreDisabled?: boolean; dotColor: string }) {
   return (
     <div className="vb4-h">
       <h3>
-        <span
-          className="vb4-dot"
-          style={{
-            width: 6, height: 6, borderRadius: 2, background: 'var(--warn)',
-            boxShadow: '0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent)', flexShrink: 0,
-          }}
-        />
+        <span className="vb4-dot" style={{ background: dotColor }} />
         {title}
       </h3>
       <span className="vb4-sub">{sub}</span>
@@ -371,40 +392,51 @@ function ClientsRankCard({ items, isMobile }: { items: RankItem[]; isMobile: boo
   const [open, setOpen] = useState(false);
   const top = items.slice(0, 5);
   const max = useMemo(() => items.reduce((m, x) => Math.max(m, valueOf(x, 'clients')), 0) || 1, [items]);
+  const total = useMemo(() => items.reduce((s, x) => s + valueOf(x, 'clients'), 0), [items]);
 
   return (
     <>
       <div className="vb4-card">
-        <CardHead title="客户数排行榜" sub={`TOP 5 / 共 ${items.length} 位销售`} onMore={() => setOpen(true)} />
+        <CardHead
+          title="客户数排行榜"
+          sub={`共 ${items.length} 位`}
+          dotColor="var(--brand)"
+          onMore={() => setOpen(true)}
+        />
         <div className="vb4-b">
           {top.length === 0 ? (
             <div className="vb4-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" /></div>
           ) : top.map((r, i) => {
             const no = Number(r?.rank) || i + 1;
             const v = valueOf(r, 'clients');
-            const skin = rowSkin(no, dark);
-            const w = Math.max(6, Math.min(100, (v / max) * 100));
+            const w = Math.max(4, Math.min(100, (v / max) * 100));
+            const stores = Number(r?.stores) || 0;
             return (
-              <div
-                className="vb4a-row"
-                key={`c-${no}-${r?.name ?? i}`}
-                style={{ background: skin.background, borderColor: skin.borderColor }}
-              >
+              <div className="vb4-row" key={`c-${no}-${r?.name ?? i}`}>
                 <div className="vb4-no" style={badgeStyle(no)}>{no}</div>
-                <div className="vb4a-main">
-                  <div className="vb4a-top">
+                <div className="vb4-main">
+                  <div className="vb4-nm">
                     <span className="nm" title={String(r?.name ?? '')}>{String(r?.name ?? '') || '-'}</span>
-                    <span className="v">{fmtNum(v)}</span>
-                    <span className="u">客户</span>
+                    <span className="sn">{fmtNum(stores)} 门店</span>
                   </div>
-                  <div className="vb4a-bar">
-                    <i style={{ width: `${w}%`, background: skin.accent }} />
+                  <div className="vb4-track">
+                    <i style={{ width: `${w}%`, background: accentOf(no) }} />
                   </div>
                   <TypeTags tags={r?.tags} />
+                </div>
+                <div className="vb4-val">
+                  <b>{fmtNum(v)}</b>
+                  <span>客户</span>
                 </div>
               </div>
             );
           })}
+          {top.length > 0 && (
+            <div className="vb4a-foot">
+              <span>TOP 5 合计</span>
+              <span><b>{fmtNum(top.reduce((s, x) => s + valueOf(x, 'clients'), 0))}</b> / {fmtNum(total)} 家</span>
+            </div>
+          )}
         </div>
       </div>
       <AllRankModal
@@ -415,7 +447,7 @@ function ClientsRankCard({ items, isMobile }: { items: RankItem[]; isMobile: boo
   );
 }
 
-/* ══════════════ B. 门店数排行榜（数据卡风：大数字 + 环形刻度） ══════════════ */
+/* ══════════════ B. 门店数排行榜（数据卡风：大数字主导） ══════════════ */
 
 function StoresRankCard({ items, isMobile }: { items: RankItem[]; isMobile: boolean }) {
   const dark = useThemeMode() === 'dark';
@@ -426,39 +458,36 @@ function StoresRankCard({ items, isMobile }: { items: RankItem[]; isMobile: bool
   return (
     <>
       <div className="vb4-card">
-        <CardHead title="门店数排行榜" sub={`TOP 5 / 共 ${items.length} 位销售`} onMore={() => setOpen(true)} />
+        <CardHead
+          title="门店数排行榜"
+          sub={`共 ${items.length} 位`}
+          dotColor="var(--warn)"
+          onMore={() => setOpen(true)}
+        />
         <div className="vb4-b">
           {top.length === 0 ? (
             <div className="vb4-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" /></div>
           ) : top.map((r, i) => {
             const no = Number(r?.rank) || i + 1;
             const v = valueOf(r, 'stores');
-            const skin = rowSkin(no, dark);
-            const pct = Math.max(4, Math.min(100, Math.round((v / max) * 100)));
+            const w = Math.max(4, Math.min(100, (v / max) * 100));
+            const clients = Number(r?.clients) || 0;
             return (
-              <div
-                className="vb4b-row"
-                key={`s-${no}-${r?.name ?? i}`}
-                style={{ background: skin.background, borderColor: skin.borderColor }}
-              >
+              <div className="vb4-row vb4b-row" key={`s-${no}-${r?.name ?? i}`}>
                 <div className="vb4-no" style={badgeStyle(no)}>{no}</div>
-                <div className="vb4b-main">
+                <div className="vb4-main">
                   <div className="vb4b-num">
                     <b>{fmtNum(v)}</b>
                     <span>门店</span>
+                    <span className="vb4b-side" style={{ marginLeft: 'auto' }}>{fmtNum(clients)} 客户</span>
                   </div>
-                  <div className="vb4b-name">
+                  <div className="vb4-nm">
                     <span className="nm" title={String(r?.name ?? '')}>{String(r?.name ?? '') || '-'}</span>
                   </div>
-                  <div className="vb4b-tags"><TypeTags tags={r?.tags} /></div>
-                </div>
-                {/* 迷你环形刻度：外环 = 与榜首的比值 */}
-                <div
-                  className="vb4b-ring"
-                  style={{ background: `conic-gradient(${skin.accent} ${pct * 3.6}deg, color-mix(in srgb, var(--text) 12%, transparent) 0deg)` }}
-                  title={`占榜首 ${pct}%`}
-                >
-                  <i style={{ background: skin.background }}>{pct}%</i>
+                  <div className="vb4-track">
+                    <i style={{ width: `${w}%`, background: accentOf(no) }} />
+                  </div>
+                  <TypeTags tags={r?.tags} />
                 </div>
               </div>
             );
@@ -628,13 +657,16 @@ function ProvinceRankCard({
 
   const max = useMemo(() => items.reduce((m, x) => Math.max(m, valueOf(x, 'clients')), 0) || 1, [items]);
   const total = useMemo(() => items.reduce((s, x) => s + valueOf(x, 'clients'), 0), [items]);
+  const maxStores = useMemo(() => items.slice(0, 5).reduce((m, x) => Math.max(m, Number(x?.stores) || 0), 0) || 1, [items]);
+  const totalStores = useMemo(() => items.slice(0, 5).reduce((s, x) => s + (Number(x?.stores) || 0), 0), [items]);
 
   return (
     <>
       <div className="vb4-card">
         <CardHead
           title="省份排行榜"
-          sub={`${items.length} 个省 / ${fmtNum(total)} 家`}
+          sub={`共 ${items.length} 个省`}
+          dotColor="var(--green)"
           onMore={() => setListOpen(true)}
         />
         <div className="vb4-b">
@@ -642,48 +674,61 @@ function ProvinceRankCard({
             <div className="vb4-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" /></div>
           ) : (
             <>
-              <div className="vb4c-grid">
-                {items.slice(0, 5).map((r, i) => {
-                  const no = Number(r?.rank) || i + 1;
-                  const v = valueOf(r, 'clients');
-                  /* 热力：10%~50% 混入省份色（brand）——上限压到 50%，保证底色始终足够浅/深，
-                     正文一律用 var(--text)，明暗两种主题下对比度都达标（不用白字压在中间蓝上） */
-                  const heat = Math.round(10 + 40 * (v / max));
-                  return (
-                    <button
-                      type="button"
-                      key={`p-${no}-${r?.name ?? i}`}
-                      className="vb4c-cell"
-                      onClick={() => setDrill(r)}
-                      title={`${r?.name ?? ''}：${v} 家客户 / ${fmtNum(Number(r?.stores) || 0)} 门店${r?.salesName ? ` · 主销售 ${r.salesName}` : ''}（点击查看明细）`}
-                      style={{
-                        background: `color-mix(in srgb, ${BRAND} ${heat}%, var(--panel))`,
-                        borderColor: `color-mix(in srgb, ${BRAND} ${Math.min(64, heat + 16)}%, var(--line))`,
-                        color: 'var(--text)',
-                      }}
-                    >
-                      <span className="pn">{shortProvince(String(r?.name ?? ''))}</span>
-                      <span className="cv">{fmtNum(v)}</span>
-                      <span className="st">{r?.salesName ? String(r.salesName) : '—'}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="vb4c-foot">
-                <span>少</span>
-                <span className="vb4c-ramp">
-                  {[10, 20, 30, 40, 50].map((h) => (
-                    <i
-                      key={h}
-                      style={{
-                        background: `color-mix(in srgb, ${BRAND} ${h}%, var(--panel))`,
-                        border: '1px solid color-mix(in srgb, var(--text) 8%, transparent)',
-                      }}
-                    />
-                  ))}
-                </span>
-                <span>多</span>
-                <span className="tip">点击省份看销售/连锁明细</span>
+              {/* 5 格严格等宽等高 + 单色相（--brand）深浅 */}
+              <div className="vb4c-wrap">
+                <div className="vb4c-grid">
+                  {items.slice(0, 5).map((r, i) => {
+                    const no = Number(r?.rank) || i + 1;
+                    const v = valueOf(r, 'clients');
+                    const stores = Number(r?.stores) || 0;
+                    /* 12%~42% 混入 brand：只在一个色相内做深浅，正文一律 --text，明暗都达标 */
+                    const heat = Math.round(12 + 30 * (v / max));
+                    return (
+                      <button
+                        type="button"
+                        key={`p-${no}-${r?.name ?? i}`}
+                        className="vb4c-cell"
+                        onClick={() => setDrill(r)}
+                        title={`${r?.name ?? ''}：${v} 家客户 / ${fmtNum(stores)} 门店${r?.salesName ? ` · 主销售 ${r.salesName}` : ''}（点击查看明细）`}
+                        style={{
+                          background: `color-mix(in srgb, var(--brand) ${heat}%, var(--panel))`,
+                          borderColor: `color-mix(in srgb, var(--brand) ${Math.min(55, heat + 14)}%, var(--line))`,
+                          color: 'var(--text)',
+                        }}
+                      >
+                        <span className="rk">{no}</span>
+                        <span className="pn">{shortProvince(String(r?.name ?? ''))}</span>
+                        <span className="cv">{fmtNum(v)}</span>
+                        <span className="st">{fmtNum(stores)} 门店</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* 门店占比：同一批 5 个省的第二维度，把卡片下半部分填满 */}
+                <div className="vb4c-bars">
+                  {items.slice(0, 5).map((r, i) => {
+                    const no = Number(r?.rank) || i + 1;
+                    const stores = Number(r?.stores) || 0;
+                    const w = maxStores > 0 ? Math.max(3, Math.min(100, (stores / maxStores) * 100)) : 3;
+                    return (
+                      <div className="vb4c-bar" key={`sb-${no}-${r?.name ?? i}`}>
+                        <span className="n">{shortProvince(String(r?.name ?? ''))}</span>
+                        <span className="t"><i style={{ width: `${w}%` }} /></span>
+                        <span className="v">{fmtNum(stores)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="vb4c-foot">
+                  <span>客户 少</span>
+                  <span className="vb4c-ramp">
+                    {[12, 22, 32, 42].map((h) => (
+                      <i key={h} style={{ background: `color-mix(in srgb, var(--brand) ${h}%, var(--panel))` }} />
+                    ))}
+                  </span>
+                  <span>多</span>
+                  <span className="tip">门店 {fmtNum(totalStores)}</span>
+                </div>
               </div>
             </>
           )}
