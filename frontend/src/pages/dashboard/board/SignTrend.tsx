@@ -147,7 +147,7 @@ const CSS = `
 .vb6-lg .sw.line{width:12px;height:3px;border-radius:2px}
 .vb6-lg.off{opacity:.35;text-decoration:line-through}
 
-.vb6-b{padding:12px 16px 14px;flex:1;display:flex;flex-direction:column;justify-content:flex-start;min-width:0}
+.vb6-b{padding:12px 16px 14px;flex:1;display:flex;flex-direction:column;justify-content:stretch;min-width:0;gap:4px}
 .vb6-empty{padding:40px 0;display:flex;align-items:center;justify-content:center}
 `;
 
@@ -306,7 +306,7 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
       </div>
     );
   } else {
-    body = <EChart option={option} height={height} />;
+    body = <EChart option={option} height={height} style={{ flex: 1, minHeight: height }} />;
   }
 
   /** 图例点击 → 切换显隐（至少保留一条） */
