@@ -227,6 +227,74 @@ const NODE_TYPES = [
       { key: 'count', label: '保留行数', type: 'number', default: 100 },
     ],
   },
+  {
+    key: 'join', name: '关联', category: 'clean', icon: '⋈',
+    desc: '按关联键把左右两路数据合成一张宽表（left / inner）；右侧 1:N 数据先按组收敛成 1 行',
+    fields: [
+      { key: 'joinType', label: '关联方式', type: 'select', default: 'left', options: [
+        { value: 'left', label: '左关联（保留左表全部行）' },
+        { value: 'inner', label: '内关联（只保留能匹配上的行）' },
+      ] },
+      { key: 'leftKey', label: '左表关联键', type: 'text', required: true, hint: '例如 jdy_data_id / data_id' },
+      { key: 'rightKey', label: '右表关联键', type: 'text', required: true, hint: '例如 event_instance_id' },
+      { key: 'rightAgg', label: '右表收敛方式', type: 'select', default: 'first', options: [
+        { value: 'first', label: '每组取第一条' },
+        { value: 'last', label: '每组取最后一条' },
+        { value: 'pickCurrent', label: '每组取当前挂起待办（其后无完成/取消）' },
+      ] },
+      { key: 'timeColumn', label: '时间列（排序用）', type: 'field', hint: '右侧按此列升序后再取行；事件表建议填 jdy_op_time' },
+      { key: 'mode', label: 'pickCurrent 判定规则', type: 'select', default: 'pending', options: [
+        { value: 'pending', label: '挂起待办（推荐）' },
+        { value: 'simple', label: '简易（旧规则）' },
+      ] },
+      { key: 'cutoffTime', label: 'pickCurrent 快照切点', type: 'text', hint: '留空=当前时间；毫秒或 YYYY-MM-DD HH:mm:ss（北京时间）' },
+      { key: 'createdCountColumn', label: '新增待办数列（pickCurrent）', type: 'text', default: 'event_created_count' },
+      { key: 'completedCountColumn', label: '完成待办数列（pickCurrent）', type: 'text', default: 'event_completed_count' },
+      { key: 'canceledCountColumn', label: '取消待办数列（pickCurrent）', type: 'text', default: 'event_canceled_count' },
+      { key: 'nodeColumn', label: '节点名列（别名映射用）', type: 'text' },
+      { key: 'nodeAlias', label: '节点名映射', type: 'kv', hint: '每行一条：事件节点名=业务表节点名' },
+      { key: 'selfCancelDisqualifies', label: '「创建即取消」视为失效', type: 'switch', default: false,
+        hint: '默认为否：契约 C3 只判「其后」是否有完成/取消，不含它自己' },
+      { key: 'leftPrefix', label: '左表列前缀', type: 'text' },
+      { key: 'rightPrefix', label: '右表列前缀', type: 'text' },
+      { key: 'rightFields', label: '右侧保留列（逗号分隔，空=全部）', type: 'text' },
+      { key: 'rightColumns', label: '右侧列声明（右表为空时用于补空列）', type: 'text' },
+      { key: 'leftSource', label: '左表上游节点 ID（可选）', type: 'text', hint: '留空时按连线顺序：第一条进左，第二条进右' },
+      { key: 'rightSource', label: '右表上游节点 ID（可选）', type: 'text' },
+    ],
+  },
+  {
+    key: 'pick_current_task', name: '选取当前待办', category: 'clean', icon: '⌖',
+    desc: '按实例分组、按时间升序，取最后一条「创建了待办且其后无完成/取消」的事件，输出当前节点/当前负责人',
+    fields: [
+      { key: 'instanceKey', label: '实例分组键', type: 'text', required: true, hint: '例如 event_instance_id' },
+      { key: 'timeColumn', label: '时间列', type: 'field' },
+      { key: 'mode', label: '判定规则', type: 'select', default: 'pending', options: [
+        { value: 'pending', label: '挂起待办（推荐）：其后没有任何完成/取消' },
+        { value: 'simple', label: '简易：最后一条已创建且未取消（旧规则）' },
+      ] },
+      { key: 'cutoffTime', label: '快照切点', type: 'text', hint: '只取此刻之前的事件。留空=当前时间；毫秒时间戳或 YYYY-MM-DD HH:mm:ss（北京时间）' },
+      { key: 'createdCountColumn', label: '新增待办数列', type: 'text', default: 'event_created_count' },
+      { key: 'completedCountColumn', label: '完成待办数列', type: 'text', default: 'event_completed_count' },
+      { key: 'canceledCountColumn', label: '取消待办数列', type: 'text', default: 'event_canceled_count' },
+      { key: 'nodeColumn', label: '节点名列', type: 'text', default: 'event_flow_name' },
+      { key: 'ownerColumn', label: '负责人列', type: 'text', default: 'event_current_assignee' },
+      { key: 'nodeAlias', label: '节点名映射', type: 'kv', hint: '每行一条：事件里的节点名=业务表节点名，例如 开始=销售签约' },
+      { key: 'selfCancelDisqualifies', label: '「创建即取消」视为失效', type: 'switch', default: false,
+        hint: '默认为否：契约 C3 只判「其后」，不含它自己' },
+      { key: 'outputNodeName', label: '输出：节点列名', type: 'text', default: '当前节点' },
+      { key: 'outputOwnerName', label: '输出：负责人列名', type: 'text', default: '当前负责人' },
+      { key: 'extraFields', label: '额外带出的列（逗号分隔）', type: 'text' },
+    ],
+  },
+  {
+    key: 'computed', name: '计算列', category: 'clean', icon: '＋',
+    desc: '为每行派生新列：常量、复制其他列、取首个非空值、或按条件置空，用于补齐缺列与回退默认值',
+    fields: [
+      { key: 'assignments', label: '列定义', type: 'kv', hint: '每行一条：新列名=常量 / copy:源列 / coalesce:A,B / blankif:列:值1|值2' },
+      { key: 'onlyIfEmpty', label: '仅在目标列为空时写入', type: 'switch', default: false },
+    ],
+  },
 
   /* ---------- 输出 ---------- */
   {
@@ -375,6 +443,204 @@ function isEmpty(v) {
 }
 
 /* ══════════════════════════════════════════════════════════
+ *  关联 / 事件收敛 工具函数
+ *
+ *  背景：CRM表单推送(16) 是 1 行 1 单据，CRM流程推送(102) 是流程事件表
+ *  （1 个实例最多 19 条事件：创建/完成/取消/转交…）。要把两者合成宽表，
+ *  右侧必须先「收敛成 1 行」再关联，且不能简单取最后一条——
+ *  最后一条可能是「取消」事件（见 _work/V7R-CONTRACT.md §3.3）。
+ * ══════════════════════════════════════════════════════════ */
+
+/** 关联键归一化：null/undefined → ''（空键不参与匹配，与 SQL 的 NULL 语义一致） */
+function normKey(v) {
+  if (v === null || v === undefined) return '';
+  return String(v).trim();
+}
+
+/** 数值化（待办计数用）：空值/非数字 → 0 */
+function numOf(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** 时间可比值（毫秒）：支持毫秒时间戳与 'YYYY-MM-DD HH:mm:ss'；不可解析 → NaN */
+function timeOf(v) {
+  if (v === null || v === undefined || v === '') return NaN;
+  const n = Number(v);
+  if (Number.isFinite(n)) return n;
+  const t = Date.parse(String(v).replace(' ', 'T'));
+  return Number.isFinite(t) ? t : NaN;
+}
+
+/** 按时间列升序稳定排序；未给时间列时保持原始顺序 */
+function sortByTime(rows, column) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!column) return list.slice();
+  return list
+    .map((r, i) => ({ r, i, t: timeOf(r && r[column]) }))
+    .sort((a, b) => {
+      // 无法解析时间的行视为「最早」，避免它抢到「最后一条」
+      const ta = Number.isFinite(a.t) ? a.t : Number.NEGATIVE_INFINITY;
+      const tb = Number.isFinite(b.t) ? b.t : Number.NEGATIVE_INFINITY;
+      if (ta === tb) return a.i - b.i;
+      return ta < tb ? -1 : 1;
+    })
+    .map((x) => x.r);
+}
+
+/**
+ * 解析「切点时间」为毫秒
+ *
+ * 支持三种写法：
+ *   - 空值         → 用当前时间（等价于「只看已经发生的事件」，防时钟漂移产生的未来事件）
+ *   - 毫秒时间戳   → 直接用（jdy_op_time 就是毫秒）
+ *   - 'YYYY-MM-DD HH:mm:ss' → **按北京时间（UTC+8）**解析
+ *     （业务表导出时间、人工填写的都是北京时间；与 flow-state.toLocalString 的 +8 口径一致）
+ *
+ * @param {*} v 配置值
+ * @param {number} [now] 当前时间（测试注入）
+ * @returns {number} 毫秒
+ */
+function resolveCutoffTime(v, now) {
+  const fallback = Number.isFinite(now) ? now : Date.now();
+  if (v === null || v === undefined || String(v).trim() === '') return fallback;
+  const n = Number(v);
+  if (Number.isFinite(n) && n > 0) return n;
+
+  const s = String(v).trim();
+  // 'YYYY-MM-DD HH:mm(:ss)?' 或 'YYYY-MM-DDTHH:mm(:ss)?'（无时区后缀 → 按北京时间）
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (m) {
+    const t = Date.UTC(
+      Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+      Number(m[4]), Number(m[5]), Number(m[6] || '0')
+    ) - 8 * 3600 * 1000;   // 北京时间 → UTC 毫秒
+    if (Number.isFinite(t)) return t;
+  }
+  const parsed = Date.parse(s.replace(' ', 'T'));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/** 解析节点名别名映射：'开始=销售签约' 的 kv 文本 → { 开始: '销售签约' } */
+function nodeAliasMap(v) {
+  if (!v) return {};
+  if (typeof v === 'object') return v;
+  return parseKv(v);
+}
+
+/** 按别名映射节点名；无映射则原样返回 */
+function applyNodeAlias(name, alias) {
+  if (name === null || name === undefined) return name;
+  const map = alias || {};
+  const key = String(name);
+  return map[key] !== undefined ? map[key] : name;
+}
+
+/**
+ * 从一批事件里选出「当前挂起的待办事件」（契约 §3.5 C3，**默认规则**）
+ *
+ * 规则（mode='pending'，默认）：
+ *   在该实例「切点时间之前」的事件里，取**最后一条 created_count > 0、
+ *   且其后没有任何 completed_count > 0 或 canceled_count > 0 的事件**。
+ *   —— 「其后」指按时间升序排在它之后的事件（不含它自己）。
+ *
+ * 与旧规则（mode='simple'）的差异：
+ *   simple 只看「同一行没取消」，于是「创建后又被取消」的待办会被误选；
+ *   pending 要求「其后没有任何完成/取消」，能正确跳过这些已失效的待办。
+ *   实测：simple 95/96，pending 96/96（对业务表，见 scripts/v7-flow-pick-verify.js）。
+ *
+ * @param {Array} rows 事件行
+ * @param {object} [options]
+ * @param {string} [options.mode] 'pending'(默认) | 'simple'
+ * @param {string} [options.timeColumn] 时间列，默认 jdy_op_time
+ * @param {*} [options.cutoffTime] 切点，见 resolveCutoffTime；空=当前时间
+ * @param {number} [options.now] 当前时间（测试注入）
+ * @param {string} [options.createdCountColumn] 默认 event_created_count
+ * @param {string} [options.completedCountColumn] 默认 event_completed_count
+ * @param {string} [options.canceledCountColumn] 默认 event_canceled_count
+ * @param {boolean} [options.selfCancelDisqualifies] 同一行「创建即取消」是否也算失效
+ *        （默认 false = 严格按契约 §3.5 C3 的「其后」；置 true 更保守）
+ * @returns {object|null} 选中的事件行；没有挂起待办时返回 null
+ */
+function pickCurrentEvent(rows, options) {
+  const o = options || {};
+  const mode = String(o.mode || 'pending').toLowerCase() === 'simple' ? 'simple' : 'pending';
+  const timeCol = String(o.timeColumn || 'jdy_op_time');
+  const createdCol = String(o.createdCountColumn || 'event_created_count');
+  const completedCol = String(o.completedCountColumn || 'event_completed_count');
+  const canceledCol = String(o.canceledCountColumn || 'event_canceled_count');
+  const cutoff = resolveCutoffTime(o.cutoffTime, o.now);
+
+  // 1) 切点：只看「快照之前」的事件（事件按时间升序）
+  const sorted = sortByTime(rows, timeCol).filter((r) => {
+    if (!r) return false;
+    const t = timeOf(r[timeCol]);
+    // 时间不可解析的行保守保留（老数据可能没有 jdy_op_time），不因缺时间而丢事件
+    return !Number.isFinite(t) || t <= cutoff;
+  });
+
+  if (mode === 'simple') {
+    // 旧规则（保留为可选）：最后一条 created>0 且同一行没取消
+    let found = null;
+    sorted.forEach((r) => {
+      if (numOf(r[createdCol]) > 0 && numOf(r[canceledCol]) === 0) found = r;
+    });
+    return found;
+  }
+
+  // 2) pending：最后一条 created>0，且其后没有任何 completed>0 / canceled>0
+  const selfCancelDisq = o.selfCancelDisqualifies === true ||
+    String(o.selfCancelDisqualifies) === 'true';
+  let found = null;
+  for (let i = 0; i < sorted.length; i += 1) {
+    const cur = sorted[i];
+    if (numOf(cur[createdCol]) <= 0) continue;
+    // 可选口径：同一行「创建即取消」(created>0 && canceled>0) 视为已失效
+    // 默认关闭——契约 §3.5 C3 的原文只说「其后」，不含它自己
+    if (selfCancelDisq && numOf(cur[canceledCol]) > 0) continue;
+    let violated = false;
+    for (let j = i + 1; j < sorted.length; j += 1) {
+      const nxt = sorted[j];
+      if (numOf(nxt[completedCol]) > 0 || numOf(nxt[canceledCol]) > 0) {
+        violated = true;
+        break;
+      }
+    }
+    if (!violated) found = cur;
+  }
+  return found;
+}
+
+/** 按某列分组（保持首次出现顺序）；空键也成组，由调用方决定是否参与匹配 */
+function groupByColumn(rows, column) {
+  const map = new Map();
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    const k = normKey(r && r[column]);
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(r);
+  });
+  return map;
+}
+
+/** 取列集合：先取 ensure 指定的列，再按行出现顺序补全 */
+function columnsOf(rows, ensure) {
+  const seen = new Set();
+  const out = [];
+  const push = (c) => {
+    if (!c || seen.has(c)) return;
+    seen.add(c);
+    out.push(c);
+  };
+  (ensure || []).forEach(push);
+  (Array.isArray(rows) ? rows : []).forEach((r) => {
+    if (!r) return;
+    Object.keys(r).forEach(push);
+  });
+  return out;
+}
+
+/* ══════════════════════════════════════════════════════════
  *  节点执行器
  * ══════════════════════════════════════════════════════════ */
 
@@ -438,6 +704,265 @@ async function runSource(node, ctx) {
   }
 
   throw new Error(`未知的数据源节点：${node.type}`);
+}
+
+/**
+ * 关联（join）：左右两路按 key 合并成宽表
+ *
+ * 与 run() 既有的「多上游拼接（concat）」是两种语义，互不影响：
+ *   concat —— 纵向拼接（行变多、列不变）
+ *   join   —— 横向关联（行数由左表决定、列变宽）
+ *
+ * @param {object} node 节点（node.config 为配置）
+ * @param {Array} leftRows  左表行
+ * @param {Array} rightRows 右表行（允许 1:N）
+ */
+function runJoin(node, leftRows, rightRows) {
+  const cfg = node.config || {};
+  const left = Array.isArray(leftRows) ? leftRows : [];
+  const right = Array.isArray(rightRows) ? rightRows : [];
+
+  const joinType = cfg.joinType === 'inner' ? 'inner' : 'left';
+  const leftKey = String(cfg.leftKey || cfg.keyField || '').trim();
+  const rightKey = String(cfg.rightKey || cfg.leftKey || cfg.keyField || '').trim();
+  if (!leftKey) throw new Error('关联节点需要配置左表关联键');
+  if (!rightKey) throw new Error('关联节点需要配置右表关联键');
+
+  const agg = ['first', 'last', 'pickCurrent'].indexOf(String(cfg.rightAgg || '')) >= 0
+    ? String(cfg.rightAgg)
+    : 'first';
+
+  const splitList = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const rightFields = splitList(cfg.rightFields);
+  const declaredRightCols = splitList(cfg.rightColumns);
+
+  // 1) 右侧 1:N 收敛成每组 1 行
+  const converged = new Map();
+  const pickOpts = {
+    mode: cfg.mode || cfg.pickMode,
+    timeColumn: cfg.timeColumn,
+    cutoffTime: cfg.cutoffTime,
+    now: Number.isFinite(cfg.now) ? cfg.now : undefined,
+    createdCountColumn: cfg.createdCountColumn,
+    completedCountColumn: cfg.completedCountColumn,
+    canceledCountColumn: cfg.canceledCountColumn,
+    selfCancelDisqualifies: cfg.selfCancelDisqualifies,
+  };
+  const alias = nodeAliasMap(cfg.nodeAlias);
+  const aliasCol = String(cfg.nodeColumn || '').trim();
+
+  groupByColumn(right, rightKey).forEach((list, key) => {
+    const sorted = sortByTime(list, cfg.timeColumn);
+    let row = null;
+    if (agg === 'pickCurrent') row = pickCurrentEvent(sorted, pickOpts);
+    else if (agg === 'last') row = sorted.length ? sorted[sorted.length - 1] : null;
+    else row = sorted.length ? sorted[0] : null;
+    // 节点名别名只作用于显式声明的节点列，避免误改其他同名列
+    if (row && aliasCol && row[aliasCol] !== undefined) {
+      row = Object.assign({}, row, { [aliasCol]: applyNodeAlias(row[aliasCol], alias) });
+    }
+    if (row) converged.set(key, row);
+  });
+
+  // 2) 计算输出列名（前缀 + 冲突兜底）
+  const leftCols = columnsOf(left, [leftKey]);
+  const rawRightCols = declaredRightCols.length ? declaredRightCols : columnsOf(right, []);
+  const rightCols = rawRightCols.filter((c) => {
+    if (c === rightKey) return false;                    // 关联键只保留左侧一列
+    if (!rightFields.length) return true;
+    return rightFields.indexOf(c) >= 0;
+  });
+
+  const leftPrefix = String(cfg.leftPrefix || '');
+  const rightPrefix = String(cfg.rightPrefix || '');
+  const used = new Set();
+  const leftMap = leftCols.map((src) => {
+    const name = leftPrefix + src;
+    used.add(name);
+    return { src, name };
+  });
+  const rightMap = rightCols.map((src) => {
+    let name = rightPrefix + src;
+    if (used.has(name)) name = `${rightPrefix || 'right_'}${src}`;   // 仍冲突 → 加 right_ 兜底
+    let i = 2;
+    while (used.has(name)) { name = `${rightPrefix || 'right_'}${src}_${i}`; i += 1; }
+    used.add(name);
+    return { src, name };
+  });
+
+  // 3) 组装结果：左表行数为准，左关联保行、内关联只留匹配上的
+  const out = [];
+  const emit = (lrow, rrow) => {
+    const o = {};
+    leftMap.forEach((m) => {
+      o[m.name] = lrow && lrow[m.src] !== undefined ? lrow[m.src] : null;
+    });
+    rightMap.forEach((m) => {
+      o[m.name] = rrow && rrow[m.src] !== undefined ? rrow[m.src] : null;
+    });
+    out.push(o);
+  };
+
+  left.forEach((lrow) => {
+    const key = normKey(lrow && lrow[leftKey]);
+    const rrow = key === '' ? null : (converged.get(key) || null);
+    if (rrow) emit(lrow, rrow);
+    else if (joinType === 'left') emit(lrow, null);
+  });
+
+  return out;
+}
+
+/**
+ * 选取当前待办：按 instanceKey 分组，输出每组的当前节点 / 当前负责人。
+ *
+ * 规则见 pickCurrentEvent（契约 §3.5 C3）：
+ *   - mode='pending'（默认）：最后一条 created>0 且其后无 completed/canceled；
+ *   - mode='simple'：旧规则（最后一条 created>0 且同一行未取消）；
+ *   - cutoffTime：快照切点，留空=当前时间；
+ *   - nodeAlias：节点名映射（如 '开始=销售签约'）。
+ */
+function runPickCurrentTask(cfg, rows) {
+  const c = cfg || {};
+  const instanceKey = String(c.instanceKey || c.groupBy || '').trim();
+  if (!instanceKey) throw new Error('选取当前待办需要配置实例分组键');
+
+  const nodeCol = String(c.nodeColumn || 'event_flow_name').trim();
+  const ownerCol = String(c.ownerColumn || 'event_current_assignee').trim();
+  const outNode = String(c.outputNodeName || '当前节点').trim() || '当前节点';
+  const outOwner = String(c.outputOwnerName || '当前负责人').trim() || '当前负责人';
+  const extraFields = String(c.extraFields || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const alias = nodeAliasMap(c.nodeAlias);
+
+  const pickOpts = {
+    mode: c.mode,
+    timeColumn: c.timeColumn,
+    cutoffTime: c.cutoffTime,
+    now: Number.isFinite(c.now) ? c.now : undefined,
+    createdCountColumn: c.createdCountColumn,
+    completedCountColumn: c.completedCountColumn,
+    canceledCountColumn: c.canceledCountColumn,
+  };
+
+  const out = [];
+  groupByColumn(rows, instanceKey).forEach((list, key) => {
+    const picked = pickCurrentEvent(list, pickOpts);
+    const row = {};
+    row[instanceKey] = key === '' ? null : key;
+    row[outNode] = picked && picked[nodeCol] !== undefined && picked[nodeCol] !== null
+      ? applyNodeAlias(picked[nodeCol], alias) : null;
+    row[outOwner] = picked && picked[ownerCol] !== undefined && picked[ownerCol] !== null
+      ? picked[ownerCol] : null;
+    extraFields.forEach((f) => {
+      row[f] = picked && picked[f] !== undefined ? picked[f] : null;
+    });
+    out.push(row);
+  });
+  return out;
+}
+
+/**
+ * 解析「列定义」为**有序**列表（允许同一个目标列出现多次，按顺序叠加）
+ *
+ * 为什么不用 parseKv：parseKv 返回对象，同名列会被后者覆盖。
+ * 而「当前节点=coalesce:...」后面还要接「当前节点=blankif:...」这类多步加工，
+ * 必须保留顺序与重复项。单列写法与原 parseKv 完全兼容。
+ *
+ * @returns {Array<{target: string, spec: string}>}
+ */
+function parseAssignments(v) {
+  if (v === null || v === undefined) return [];
+  if (typeof v === 'object') {
+    return Object.keys(v).map((k) => ({ target: k, spec: String(v[k]) }));
+  }
+  const out = [];
+  String(v).split('\n').forEach((line) => {
+    const s = line.trim();
+    if (!s || s.startsWith('#')) return;
+    const i = s.indexOf('=');
+    if (i <= 0) return;
+    out.push({ target: s.slice(0, i).trim(), spec: s.slice(i + 1).trim() });
+  });
+  return out;
+}
+
+/**
+ * 计算列：为每行派生新列
+ *   `新列名=常量`                 → 常量列
+ *   `新列名=copy:源列名`          → 复制其他列
+ *   `新列名=coalesce:A,B,...`     → 取第一个非空值（用于「102 有值用 102，否则回退 16」）
+ *   `新列名=blankif:列:值1|值2`   → 当 row[列] 命中值列表时置空（''），否则**保持原值不动**
+ *                                  （用于「流程状态=1 表示流程已结束 → 当前节点/负责人置空」）
+ *   `新列名=const:文本`           → 显式常量（值里含 = 时用这个）
+ *
+ * 同名列可写多条，**按书写顺序**依次作用（见 parseAssignments）。
+ */
+function runComputed(cfg, rows) {
+  const c = cfg || {};
+  const pairs = parseAssignments(c.assignments !== undefined ? c.assignments : c.mapping);
+  const onlyIfEmpty = c.onlyIfEmpty === true || c.onlyIfEmpty === 1 ||
+    String(c.onlyIfEmpty) === 'true';
+
+  return (Array.isArray(rows) ? rows : []).map((r) => {
+    const o = Object.assign({}, r);
+    pairs.forEach((p) => {
+      if (onlyIfEmpty && !isEmpty(o[p.target])) return;
+      const s = p.spec.trim();
+      if (/^copy:/i.test(s)) {
+        const src = s.slice(5).trim();
+        o[p.target] = src && o[src] !== undefined ? o[src] : null;
+      } else if (/^coalesce:/i.test(s)) {
+        const list = s.slice(9).split(',').map((x) => x.trim()).filter(Boolean);
+        let v = null;
+        for (const src of list) {
+          if (o[src] !== undefined && !isEmpty(o[src])) { v = o[src]; break; }
+        }
+        o[p.target] = v;
+      } else if (/^blankif:/i.test(s)) {
+        // blankif:列名:值1|值2 —— 命中则置空；未命中**不动**（保留上一步算出的值）
+        const rest = s.slice(8);
+        const i = rest.indexOf(':');
+        if (i > 0) {
+          const col = rest.slice(0, i).trim();
+          const vals = rest.slice(i + 1).split('|').map((x) => x.trim()).filter(Boolean);
+          const cur = o[col];
+          const curText = cur === null || cur === undefined ? '' : String(cur).trim();
+          if (vals.some((v) => v === curText)) o[p.target] = '';
+        }
+      } else if (/^map:/i.test(s)) {
+        // map:源列名:0=进行中|1=流转完成|*=其他 —— 枚举值翻译
+        //   未命中且没有 * 兜底时，保持原值（避免把未知枚举变成空）
+        const rest = s.slice(4);
+        const i = rest.indexOf(':');
+        if (i > 0) {
+          const col = rest.slice(0, i).trim();
+          const pairsText = rest.slice(i + 1);
+          const cur = o[col];
+          const curText = cur === null || cur === undefined ? '' : String(cur).trim();
+          let hit = null;
+          let fallback;
+          pairsText.split('|').forEach((seg) => {
+            const t = seg.trim();
+            if (!t) return;
+            const eq = t.indexOf('=');
+            if (eq < 0) return;
+            const from = t.slice(0, eq).trim();
+            const to = t.slice(eq + 1).trim();
+            if (from === '*') fallback = to;
+            else if (from === curText) hit = to;
+          });
+          if (hit !== null) o[p.target] = hit;
+          else if (fallback !== undefined) o[p.target] = fallback;
+          else o[p.target] = cur === undefined ? null : cur;
+        }
+      } else if (/^const:/i.test(s)) {
+        o[p.target] = s.slice(6).trim();
+      } else {
+        o[p.target] = p.spec;
+      }
+    });
+    return o;
+  });
 }
 
 /** 清洗节点 */
@@ -726,11 +1251,93 @@ function runClean(node, rows, ctx) {
       break;
     }
 
+    /* ---------- 新增：关联 / 当前待办 / 计算列 ---------- */
+
+    case 'join': {
+      // join 需要区分左右两路输入：由 run()/preview 通过 ctx.inputs 提供
+      // （多上游的默认拼接结果仍是 ctx 未提供时的兜底，但那样等于左右混在一起，必须拒绝）
+      const inputs = (ctx && ctx.inputs) || {};
+      if (!Array.isArray(inputs.left) || !Array.isArray(inputs.right)) {
+        throw new Error('关联节点需要左右两路上游数据（请分别连接左表、右表到本节点）');
+      }
+      out = runJoin(node, inputs.left, inputs.right);
+      break;
+    }
+
+    case 'pick_current_task': {
+      out = runPickCurrentTask(cfg, rows);
+      break;
+    }
+
+    case 'computed': {
+      out = runComputed(cfg, rows);
+      break;
+    }
+
     default:
       break;
   }
 
   return out;
+}
+
+/**
+ * 确保 upsert 主键列上有唯一索引
+ *
+ * 为什么必须做：sink_table 的 upsert 依赖 `ON DUPLICATE KEY UPDATE`，
+ * 而 schema.ensureTableFor 自动建表时只有 `PRIMARY KEY (id)`（自增 id），
+ * 业务主键列（如 data_id）**没有唯一索引**。此时 ON DUPLICATE 永远不命中，
+ * 每次运行都会再插一遍 → 目标表行数翻倍，静默污染数据。
+ *
+ * 约束：
+ *   - 只处理本平台表（jdywh_ 前缀）与默认数据源（可查 information_schema）；
+ *   - 列名必须是 ASCII 标识符，避免拼接风险；
+ *   - 唯一键过长时（utf8mb4 下 VARCHAR(255) = 1020 字节）回退为前缀索引 (191)。
+ *
+ * @returns {Promise<{ok:boolean, existed?:boolean, added?:boolean, reason?:string}>}
+ */
+async function ensureUpsertKey(source, table, keyField) {
+  const column = String(keyField || '').trim();
+  if (!column || !/^[A-Za-z0-9_]+$/.test(column)) {
+    return { ok: false, reason: `主键字段名不合法：${column}` };
+  }
+  if (!schema.isOwnTable(table)) return { ok: false, reason: `非本平台表，不做索引变更：${table}` };
+  const dsId = source && source.id !== undefined ? Number(source.id) : 0;
+  if (dsId !== 0) return { ok: false, reason: '仅默认数据源支持自动补唯一索引' };
+
+  const colRows = await db.query(
+    `SELECT COLUMN_NAME AS name FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+    [table, column]
+  );
+  if (!colRows.length) return { ok: false, reason: `目标表 ${table} 没有列 ${column}` };
+
+  const idxRows = await db.query(
+    `SELECT INDEX_NAME AS name FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? AND NON_UNIQUE = 0
+      LIMIT 1`,
+    [table, column]
+  );
+  if (idxRows.length) return { ok: true, existed: true };
+
+  const indexName = `uk_flow_${column}`.slice(0, 64);
+  try {
+    await schema.safeRaw(
+      `ALTER TABLE \`${table}\` ADD UNIQUE KEY \`${indexName}\` (\`${column}\`)`,
+      [], [table]
+    );
+    return { ok: true, added: true };
+  } catch (err) {
+    // 键过长（老版本 InnoDB 767 字节上限）→ 退化成前缀唯一索引
+    if (/key was too long|Specified key/i.test(String(err && err.message))) {
+      await schema.safeRaw(
+        `ALTER TABLE \`${table}\` ADD UNIQUE KEY \`${indexName}\` (\`${column}\`(191))`,
+        [], [table]
+      );
+      return { ok: true, added: true, prefix: 191 };
+    }
+    return { ok: false, reason: err && err.message ? err.message : String(err) };
+  }
 }
 
 /** 输出节点 */
@@ -755,6 +1362,18 @@ async function runSink(node, rows, ctx) {
       if (!cols.length) throw new Error('结果集为空，无法推断表结构');
       const defs = cols.map((c) => ({ column_name: c, field_name: c, field_key: c }));
       await schema.ensureTableFor(source, table, defs, rows[0]);
+    }
+
+    /*
+     * upsert 前置检查：业务主键必须有唯一索引，否则 ON DUPLICATE 不命中 → 重复插入。
+     * 这一步只对新建/已有本平台表做「补建唯一索引」，不删除任何数据。
+     * 失败时**直接报错**而不是静默继续——静默会写脏数据。
+     */
+    if (mode === 'upsert' && cfg.keyField) {
+      const keyCheck = await ensureUpsertKey(source, table, cfg.keyField);
+      if (keyCheck.ok === false) {
+        throw new Error(`upsert 主键不可用：${keyCheck.reason}`);
+      }
     }
 
     if (mode === 'replace') {
@@ -950,9 +1569,54 @@ function topoSort(nodes, edges) {
 }
 
 /**
+ * 归集节点的输入
+ *
+ * 默认语义保持不变：多上游**拼接（concat）**——按连线顺序把各上游输出连起来。
+ * 唯一例外是 join 节点：它需要区分左右两路，因此额外返回 inputs.left / inputs.right。
+ *   - 优先用节点配置 leftSource / rightSource（上游节点 id）；
+ *   - 未配置时按连线声明顺序：第一条进 left，第二条进 right；
+ *   - 只连了一路时，另一路为空数组（左关联可正常跑，右列为空）。
+ *
+ * @param {object} node 节点
+ * @param {Array} edges 连线
+ * @param {object} outputs 已完成节点的输出 { nodeId: rows }
+ * @returns {{upstream: string[], rows: Array, inputs: {left?: Array, right?: Array}}}
+ */
+function collectInput(node, edges, outputs) {
+  const upstream = (edges || []).filter((e) => e.to === node.id).map((e) => e.from);
+  const rowsOf = (uid) => (Array.isArray(outputs[uid]) ? outputs[uid] : []);
+
+  let rows = [];
+  upstream.forEach((uid) => { rows = rows.concat(rowsOf(uid)); });
+
+  const inputs = {};
+  if (node && node.type === 'join') {
+    const cfg = node.config || {};
+    const idOf = (v) => {
+      if (v === null || v === undefined || String(v).trim() === '') return undefined;
+      return upstream.find((u) => String(u) === String(v).trim());
+    };
+    let leftId = idOf(cfg.leftSource);
+    let rightId = idOf(cfg.rightSource);
+    if (!leftId && !rightId) {
+      leftId = upstream[0];
+      rightId = upstream[1];
+    } else if (!leftId) {
+      leftId = upstream.find((u) => u !== rightId);
+    } else if (!rightId) {
+      rightId = upstream.find((u) => u !== leftId);
+    }
+    inputs.left = leftId === undefined ? [] : rowsOf(leftId);
+    inputs.right = rightId === undefined ? [] : rowsOf(rightId);
+  }
+
+  return { upstream, rows, inputs };
+}
+
+/**
  * 执行流程
  * @param {number} flowId
- * @param {string} trigger manual / cron / webhook
+ * @param {string} trigger manual / cron / webhook / push（推送触发）
  */
 async function run(flowId, trigger) {
   const flow = await getById(flowId);
@@ -978,17 +1642,9 @@ async function run(flowId, trigger) {
       const def = NODE_MAP[node.type];
       const t0 = Date.now();
 
-      // 找到上游节点的输出作为输入
-      const upstream = (flow.edges || []).filter((e) => e.to === node.id).map((e) => e.from);
-      let input;
-      if (upstream.length) {
-        input = [];
-        upstream.forEach((uid) => {
-          if (Array.isArray(outputs[uid])) input = input.concat(outputs[uid]);
-        });
-      } else {
-        input = rows;
-      }
+      // 找到上游节点的输出作为输入（多上游默认拼接；join 额外归集左右两路）
+      const collected = collectInput(node, flow.edges, outputs);
+      const input = collected.upstream.length ? collected.rows : rows;
 
       let out;
       try {
@@ -1005,14 +1661,17 @@ async function run(flowId, trigger) {
           outputs[node.id] = out;
           continue;
         } else {
-          out = runClean(node, input, { flowId });
+          out = runClean(node, input, { flowId, inputs: collected.inputs });
         }
 
         outputs[node.id] = out;
+        // join 的「输入行数」按左表计（右表是 1:N 事件，混在一起算会误导排查）
+        const isJoin = node.type === 'join' && collected.inputs.left;
         nodeLogs.push({
           nodeId: node.id, type: node.type,
           name: (node.label || (def && def.name) || node.type),
-          inputRows: input.length, outputRows: out.length,
+          inputRows: isJoin ? collected.inputs.left.length : input.length,
+          outputRows: out.length,
           ms: Date.now() - t0, ok: true,
         });
       } catch (err) {
@@ -1074,6 +1733,212 @@ async function run(flowId, trigger) {
 }
 
 /* ══════════════════════════════════════════════════════════
+ *  推送触发（on_push）
+ *
+ *  语义：jdywh_flows.run_mode = 'trigger'（前端「执行方式 → 数据触发」，
+ *  列注释本来就是 manual/cron/trigger，无需加列、无需 DDL）。
+ *
+ *  推送落库成功后触发，两个挂载点（都已接好）：
+ *    - src/flow-ingest.js handle() 末尾 —— 流程推送（项目 102）
+ *    - src/routes/push.js data_create/update 分支末尾 —— 数据推送（项目 16）
+ *  两者都是 setImmediate 异步执行，**绝不阻塞推送响应**。
+ *
+ *  防重入：同一流程运行中 → 跳过；运行结束后 3 秒内再次触发 → 合并跳过
+ *  （简道云一次业务操作常连发多条推送，不合并会把同一流程跑几十遍）。
+ * ══════════════════════════════════════════════════════════ */
+
+/** on_push 默认冷却时间（毫秒）：运行结束后此时长内的重复触发直接合并 */
+const ON_PUSH_COOLDOWN_MS = 3000;
+
+/** 运行闸门：flowId → { running, startedAt, finishedAt } */
+const RUN_GATES = new Map();
+
+/** 流程是否引用了某个项目（项目列，或任一 source_project 节点） */
+function flowReferencesProject(flow, projectId) {
+  const pid = Number(projectId);
+  if (!flow || !Number.isFinite(pid) || pid <= 0) return false;
+
+  const rawProjectId = flow.projectId !== undefined ? flow.projectId : flow.project_id;
+  if (Number(rawProjectId) === pid) return true;
+
+  let nodes = flow.nodes;
+  if (!Array.isArray(nodes)) nodes = parseJson(nodes, []);
+  if (!Array.isArray(nodes)) return false;
+  return nodes.some((n) => {
+    if (!n || n.type !== 'source_project') return false;
+    const cfg = n.config || {};
+    return Number(cfg.projectId) === pid;
+  });
+}
+
+/**
+ * 从流程列表中挑出「该推送应当触发的流程」（纯函数，可单测）
+ *
+ * 条件：启用中 + run_mode = 'trigger' + 引用了该 projectId
+ * @param {Array} rows 流程行（DB 原始行或 publicFlow 结果都支持）
+ * @param {number} projectId
+ * @returns {Array}
+ */
+function selectOnPushFlows(rows, projectId) {
+  return (Array.isArray(rows) ? rows : []).filter((f) => {
+    if (!f) return false;
+    const status = f.status === undefined || f.status === null ? 1 : Number(f.status);
+    if (status !== 1) return false;
+    const mode = flowRunMode(f);
+    if (mode !== 'trigger') return false;
+    return flowReferencesProject(f, projectId);
+  });
+}
+
+/** 取流程执行方式（DB 原始行 run_mode / publicFlow 的 runMode 都支持） */
+function flowRunMode(f) {
+  const v = f.runMode !== undefined && f.runMode !== null ? f.runMode : f.run_mode;
+  return String(v === undefined || v === null || v === '' ? 'manual' : v);
+}
+
+/**
+ * 归一化执行方式：兼容前端/外部传 'on_push' 的写法，落库统一为 'trigger'
+ * （jdywh_flows.run_mode 没有 on_push 取值，前端 RUN_MODE 用的也是 trigger）
+ */
+function normalizeRunMode(v) {
+  const s = String(v === undefined || v === null ? '' : v).trim().toLowerCase();
+  if (!s) return 'manual';
+  if (s === 'on_push' || s === 'onpush' || s === 'push' || s === 'trigger') return 'trigger';
+  if (s === 'cron' || s === 'manual') return s;
+  return 'manual';
+}
+
+/**
+ * 抢占运行闸门（防重入 + 冷却）
+ * @returns {{started: boolean, reason?: string, waitMs?: number}}
+ */
+function beginFlowRun(flowId, options) {
+  const o = options || {};
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  const cooldown = Number.isFinite(o.cooldownMs) ? o.cooldownMs : ON_PUSH_COOLDOWN_MS;
+  const key = String(flowId);
+  const cur = RUN_GATES.get(key);
+  if (cur) {
+    if (cur.running) return { started: false, reason: 'running' };
+    const idle = now - cur.finishedAt;
+    if (idle >= 0 && idle < cooldown) {
+      return { started: false, reason: 'cooldown', waitMs: cooldown - idle };
+    }
+  }
+  RUN_GATES.set(key, { running: true, startedAt: now, finishedAt: 0 });
+  return { started: true };
+}
+
+/** 释放运行闸门（进入冷却期） */
+function endFlowRun(flowId, options) {
+  const o = options || {};
+  const now = Number.isFinite(o.now) ? o.now : Date.now();
+  RUN_GATES.set(String(flowId), { running: false, startedAt: 0, finishedAt: now });
+}
+
+/** 清空闸门（仅测试/排障用） */
+function resetFlowRunGates() {
+  RUN_GATES.clear();
+}
+
+/**
+ * 读取所有启用中的 trigger 流程（只读查询）
+ *
+ * 为什么要缓存：这段查询在**每一次数据推送**后都会跑（push.js / flow-ingest.js），
+ * 而流程表极小、变化极少。不缓存的话每次推送多一次 DB 往返；
+ * 缓存 5 秒可把「一次业务操作连发 N 条推送」压成 1 次查询。
+ * 流程的增/改/删会主动失效缓存，因此不会长时间读到旧配置。
+ */
+const TRIGGER_FLOW_CACHE_TTL_MS = 5000;
+let triggerFlowCache = null;   // { at: number, rows: Array }
+
+/** 让 trigger 流程缓存失效（流程增删改后调用） */
+function invalidateTriggerFlowCache() {
+  triggerFlowCache = null;
+}
+
+async function listTriggerFlows() {
+  const envTtl = Number(process.env.FLOW_TRIGGER_CACHE_MS);
+  const ttl = Number.isFinite(envTtl) && envTtl >= 0 ? envTtl : TRIGGER_FLOW_CACHE_TTL_MS;
+  const now = Date.now();
+  if (triggerFlowCache && now - triggerFlowCache.at < ttl) return triggerFlowCache.rows;
+
+  const rows = await db.query(
+    `SELECT f.* FROM jdywh_flows f
+      WHERE f.status = 1 AND f.run_mode = 'trigger'
+      ORDER BY f.id ASC`
+  );
+  triggerFlowCache = { at: now, rows };
+  return rows;
+}
+
+/**
+ * 推送触发入口：异步执行，不阻塞调用方（推送响应）
+ *
+ * 永不抛异常（内部全部兜住），返回触发明细供日志/排查。
+ *
+ * @param {number} projectId 刚落库推送的项目
+ * @param {object} [options]
+ * @param {Array}  [options.flows]   注入流程列表（测试用，跳过 DB）
+ * @param {Function} [options.runner] 注入执行器 (flowId, trigger) => Promise（测试用）
+ * @param {number} [options.now]     注入当前时间（测试用）
+ * @param {number} [options.cooldownMs] 冷却时间
+ * @returns {Promise<{ok:boolean, projectId:number, matched:number[], triggered:number[],
+ *                    skipped:Array<{flowId:number, reason:string}>}>}
+ */
+async function triggerOnPush(projectId, options) {
+  const opts = options || {};
+  const pid = Number(projectId);
+  const result = { ok: true, projectId: pid, matched: [], triggered: [], skipped: [] };
+
+  if (!Number.isFinite(pid) || pid <= 0) return result;
+  // 应急开关：FLOW_ON_PUSH=0 时一律不自动跑（生产排障用，无需改代码）
+  if (String(process.env.FLOW_ON_PUSH === undefined ? '1' : process.env.FLOW_ON_PUSH) === '0') {
+    result.ok = false;
+    result.disabled = true;
+    return result;
+  }
+
+  let rows;
+  try {
+    rows = Array.isArray(opts.flows) ? opts.flows : await listTriggerFlows();
+  } catch (err) {
+    console.error('[flow] 查询推送触发流程失败:', err.message);
+    result.ok = false;
+    result.error = err.message;
+    return result;
+  }
+
+  const matched = selectOnPushFlows(rows, pid);
+  result.matched = matched.map((f) => Number(f.id));
+
+  const runner = typeof opts.runner === 'function'
+    ? opts.runner
+    : (id, trigger) => run(id, trigger);
+
+  for (const f of matched) {
+    const flowId = Number(f.id);
+    const gate = beginFlowRun(flowId, { now: opts.now, cooldownMs: opts.cooldownMs });
+    if (!gate.started) {
+      result.skipped.push({ flowId, reason: gate.reason });
+      continue;
+    }
+    result.triggered.push(flowId);
+    // 关键：setImmediate 异步执行，不 await，推送响应已经返回
+    setImmediate(() => {
+      Promise.resolve()
+        .then(() => runner(flowId, 'push'))
+        .catch((err) => {
+          console.error(`[flow] 推送触发流程 #${flowId} 执行失败:`, err && err.message ? err.message : err);
+        })
+        .finally(() => endFlowRun(flowId, { now: opts.now }));
+    });
+  }
+
+  return result;
+}
+
+/* ══════════════════════════════════════════════════════════
  *  流程 CRUD
  * ══════════════════════════════════════════════════════════ */
 
@@ -1089,6 +1954,8 @@ function publicFlow(r, withDetail) {
     sourceType: r.source_type,
     targetTable: r.target_table || null,
     runMode: r.run_mode,
+    // 推送触发的对等写法：run_mode='trigger' 等价于「推送后自动执行（on_push）」
+    triggerMode: String(r.run_mode || 'manual') === 'trigger' ? 'on_push' : 'manual',
     cronExpr: r.cron_expr || null,
     status: Number(r.status),
     runCount: Number(r.run_count || 0),
@@ -1183,12 +2050,13 @@ async function create(input, userId) {
       JSON.stringify(nodes),
       JSON.stringify(edges),
       String(input.targetTable || '').trim() || null,
-      input.runMode || 'manual',
+      normalizeRunMode(input.runMode),
       String(input.cronExpr || '').trim() || null,
       input.status === 0 ? 0 : 1,
       userId || null,
     ]
   );
+  invalidateTriggerFlowCache();
   return getById(result.insertId);
 }
 
@@ -1217,13 +2085,14 @@ async function update(id, input) {
     set('edges', JSON.stringify(normalizeEdges(input.edges, flow.nodes)));
   }
   if (input.targetTable !== undefined) set('target_table', String(input.targetTable || '').trim() || null);
-  if (input.runMode !== undefined) set('run_mode', input.runMode);
+  if (input.runMode !== undefined) set('run_mode', normalizeRunMode(input.runMode));
   if (input.cronExpr !== undefined) set('cron_expr', String(input.cronExpr || '').trim() || null);
   if (input.status !== undefined) set('status', Number(input.status) ? 1 : 0);
 
   if (!fields.length) return flow;
   params.push(id);
   await db.query(`UPDATE jdywh_flows SET ${fields.join(', ')} WHERE id = ?`, params);
+  invalidateTriggerFlowCache();
   return getById(id);
 }
 
@@ -1232,6 +2101,7 @@ async function remove(id) {
   if (!flow) throw new Error('流程不存在');
   await db.query('DELETE FROM jdywh_flow_logs WHERE flow_id = ?', [id]);
   await db.query('DELETE FROM jdywh_flows WHERE id = ?', [id]);
+  invalidateTriggerFlowCache();
   return true;
 }
 
@@ -1278,5 +2148,15 @@ module.exports = {
   list, getById, create, update, remove,
   run, listLogs, stats, topoSort,
   runSource, runClean, runSink,
-  parseKv, getByPath, evalExpression, publicFlow,
+  collectInput,
+  // 关联 / 事件收敛（供节点执行与单测直接调用）
+  runJoin, runPickCurrentTask, runComputed,
+  pickCurrentEvent, sortByTime, groupByColumn, columnsOf, normKey, numOf, timeOf,
+  resolveCutoffTime, nodeAliasMap, applyNodeAlias,
+  // 推送触发（on_push）
+  ON_PUSH_COOLDOWN_MS,
+  triggerOnPush, selectOnPushFlows, flowReferencesProject, flowRunMode, normalizeRunMode,
+  beginFlowRun, endFlowRun, resetFlowRunGates, listTriggerFlows, invalidateTriggerFlowCache,
+  ensureUpsertKey,
+  parseKv, parseAssignments, getByPath, evalExpression, publicFlow,
 };

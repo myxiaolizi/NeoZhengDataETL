@@ -6,6 +6,7 @@ const config = require('../config');
 const jdy = require('../jdy');
 const flow = require('../flow');
 const flowIngest = require('../flow-ingest');
+const flows = require('../flows');
 const schema = require('../schema');
 const projects = require('../projects');
 const fields = require('../fields');
@@ -238,9 +239,9 @@ router.post('/push/:token', async (req, res) => {
           const pcol = fields.parsedColumnOf(def.column_name);
           if (!parsedLiveCols.has(pcol)) continue;
           const v = fields.parseValue(raw, def.parse_mode, def.parse_path);
-          if (v !== null && v !== undefined && v !== '') {
-            parsed[pcol] = String(v).slice(0, 500);
-          }
+          // 字段来了但解析为空 → 写 '' 置空（修复「清空后永不置空」的 bug）
+          const cell = parsedCellOf(raw, v);
+          if (cell.write) parsed[pcol] = cell.value;
         }
       }
 
@@ -262,10 +263,13 @@ router.post('/push/:token', async (req, res) => {
 
         const mode = def.parse_mode && def.parse_mode !== 'none' ? def.parse_mode : 'path';
         const v = fields.parseValue(raw, mode, def.parse_path);
-        if (v === null || v === undefined || v === '') continue;
+        // 源字段存在（raw !== undefined，上面已判）但解析为空时必须落空值，
+        // 否则「地址被清空」这类变更永远同步不过来（契约 §3.5 C4）
+        const cell = parsedCellOf(raw, v);
+        if (!cell.write) continue;
 
-        if (inRaw) columns[def.column_name] = String(v).slice(0, 2000);
-        if (autoParse && inParsed) parsed[pcol] = String(v).slice(0, 500);
+        if (inRaw) columns[def.column_name] = String(cell.value).slice(0, 2000);
+        if (autoParse && inParsed) parsed[pcol] = cell.value;
       }
 
       // 4.4 系统字段（提交人/修改人等）也写入解析列
@@ -279,9 +283,9 @@ router.post('/push/:token', async (req, res) => {
           const pcol = fields.parsedColumnOf(def.column_name);
           if (!parsedLiveCols.has(pcol)) continue;
           const v = fields.parseValue(raw, def.parse_mode, def.parse_path);
-          if (v !== null && v !== undefined && v !== '') {
-            parsed[pcol] = String(v).slice(0, 500);
-          }
+          // 同上：raw 存在（上面已判 undefined）→ 解析为空也要写 '' 置空
+          const cell = parsedCellOf(raw, v);
+          if (cell.write) parsed[pcol] = cell.value;
         }
       }
 
@@ -334,6 +338,9 @@ router.post('/push/:token', async (req, res) => {
       }
 
       await projects.touchProject(project.id);
+
+      // 推送触发（on_push）：异步跑引用了本项目的 trigger 流程，不阻塞推送响应
+      triggerFlowsAfterPush(project.id);
     } else if (op === 'data_remove') {
       if (dataId) {
         const defs = await fields.listFieldDefs(project.id);
@@ -382,6 +389,49 @@ router.post('/push/:token', async (req, res) => {
   }
 });
 
+async function triggerFlowsAfterPush(projectId) {
+  try {
+    const p = flows.triggerOnPush(projectId);
+    if (!p || typeof p.then !== 'function') return;
+    p.then((t) => {
+      if (t && t.triggered && t.triggered.length) {
+        console.log(`[push] 触发流程 ${t.triggered.length} 个: ${t.triggered.join(', ')}`);
+      } else if (t && t.error) {
+        console.error('[push] 触发流程查询失败:', t.error);
+      }
+    }).catch((e) => {
+      console.error('[push] 触发流程失败:', e && e.message ? e.message : e);
+    });
+  } catch (e) {
+    // 触发流程属于旁路能力：任何异常都不能影响推送本身的响应码
+    console.error('[push] 触发流程异常:', e && e.message ? e.message : e);
+  }
+}
+
+/**
+ * 决定「某个字段的解析列」这次该怎么写（契约 §3.5 C4 修复）
+ *
+ * 历史 bug：原实现是
+ *     if (v !== null && v !== undefined && v !== '') { parsed[pcol] = ...; }
+ * 于是**字段被业务系统清空时解析列永远不会置空**，解析表一直保留旧值
+ * （对账里「业务系统已清空、我方仍有值」的差异就来自这里）。
+ *
+ * 正确语义：
+ *   - `raw === undefined`  → 该字段**没出现在本次报文里**，跳过不动（避免部分字段推送清空其他列）；
+ *   - `raw` 存在但解析结果为空（空串 / 空数组 / null）→ **显式写 ''**，把旧值清掉；
+ *   - 其余 → 写解析值（截断 500，与原行为一致）。
+ *
+ * @param {*} raw 报文里的原始值
+ * @param {*} parsedValue fields.parseValue 的结果
+ * @returns {{write: boolean, value?: string}}
+ */
+function parsedCellOf(raw, parsedValue) {
+  if (raw === undefined) return { write: false };
+  if (parsedValue === null || parsedValue === undefined) return { write: true, value: '' };
+  const s = String(parsedValue);
+  return { write: true, value: s.slice(0, 500) };
+}
+
 /**
  * 推送数据归一化：分离业务字段与系统元数据
  */
@@ -415,3 +465,6 @@ router.all('/push', (req, res) => {
 });
 
 module.exports = router;
+// 供只读自检脚本验证「推送后触发流程」与「解析列置空」两段逻辑（不改变路由行为）
+router.triggerFlowsAfterPush = triggerFlowsAfterPush;
+router.parsedCellOf = parsedCellOf;

@@ -2,7 +2,7 @@
 import React from 'react';
 import type { FlowNode, FlowNodeTypeDef } from '@/api/flows';
 import {
-  C, NODE_H, NODE_W, categoryColor, ellipsize, fmtNum, withAlpha,
+  C, NODE_H, NODE_W, categoryColor, ellipsize, fmtNum, nodeIcon, withAlpha,
 } from './constants';
 import type { NodeRunStat } from './types';
 
@@ -108,7 +108,7 @@ export default function FlowNodeCard({
         fill={color}
         style={{ userSelect: 'none' }}
       >
-        {def?.icon || '◇'}
+        {nodeIcon(node.type, def?.icon)}
       </text>
 
       {/* 名称 */}

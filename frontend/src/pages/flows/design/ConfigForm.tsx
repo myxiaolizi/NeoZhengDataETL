@@ -1,6 +1,6 @@
 /** 节点配置表单：按后端 fields schema 动态渲染 */
 import React from 'react';
-import { Input, InputNumber, Select, Switch } from 'antd';
+import { AutoComplete, Input, InputNumber, Select, Switch } from 'antd';
 import type { FlowNode, FlowNodeFieldDef } from '@/api/flows';
 import { C } from './constants';
 import type { OptionBundle } from './types';
@@ -10,6 +10,8 @@ export interface ConfigFormProps {
   node: FlowNode;
   fields: FlowNodeFieldDef[];
   options: OptionBundle;
+  /** 当前节点的上游列选项（优先于 options.fields） */
+  upstreamFields?: { label: string; value: string }[];
   onChange: (key: string, value: unknown) => void;
 }
 
@@ -22,8 +24,11 @@ function Placeholder(label: string, f: FlowNodeFieldDef): string {
   return f.placeholder || f.hint || `请输入${label}`;
 }
 
-export default function ConfigForm({ node, fields, options, onChange }: ConfigFormProps) {
+export default function ConfigForm({
+  node, fields, options, upstreamFields, onChange,
+}: ConfigFormProps) {
   const valueOf = (key: string) => node.config?.[key];
+  const fieldOptions = upstreamFields?.length ? upstreamFields : (options.fields || []);
 
   const renderControl = (f: FlowNodeFieldDef) => {
     const value = valueOf(f.key);
@@ -129,6 +134,26 @@ export default function ConfigForm({ node, fields, options, onChange }: ConfigFo
           />
         );
       case 'field':
+        if (fieldOptions.length > 0) {
+          return (
+            <AutoComplete
+              style={{ width: '100%' }}
+              allowClear
+              value={String(value ?? '')}
+              options={fieldOptions}
+              placeholder={f.placeholder || f.hint || '选择或输入字段名'}
+              filterOption={(input, option) => {
+                const kw = input.trim().toLowerCase();
+                if (!kw) return true;
+                return (
+                  String(option?.value ?? '').toLowerCase().includes(kw) ||
+                  String(option?.label ?? '').toLowerCase().includes(kw)
+                );
+              }}
+              onChange={(v) => onChange(f.key, v ?? '')}
+            />
+          );
+        }
         return (
           <Input
             value={String(value ?? '')}

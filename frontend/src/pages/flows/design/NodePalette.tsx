@@ -3,7 +3,7 @@ import React, { useMemo, useState } from 'react';
 import { Empty, Input } from 'antd';
 import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import type { FlowNodeMeta, FlowNodeTypeDef } from '@/api/flows';
-import { C, categoryColor, withAlpha } from './constants';
+import { C, categoryColor, nodeIcon, withAlpha } from './constants';
 
 export interface NodePaletteProps {
   meta: FlowNodeMeta | null;
@@ -145,7 +145,7 @@ export default function NodePalette({ meta, onAdd, bare }: NodePaletteProps) {
                         fontSize: 13,
                       }}
                     >
-                      {t.icon || '◇'}
+                      {nodeIcon(t.key, t.icon)}
                     </span>
                     <span style={{ minWidth: 0, flex: 1 }}>
                       <span

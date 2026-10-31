@@ -7,7 +7,7 @@ import {
 import type { FlowEdge, FlowNode, FlowNodeTypeDef } from '@/api/flows';
 import ConfigForm from './ConfigForm';
 import {
-  C, NODE_MIN, categoryColor, fmtNum, withAlpha,
+  C, NODE_MIN, categoryColor, fmtNum, nodeIcon, withAlpha,
 } from './constants';
 import { clampNodePos } from './geometry';
 import type { NodeRunStat, OptionBundle } from './types';
@@ -18,6 +18,7 @@ export interface NodeInspectorProps {
   nodes: FlowNode[];
   edges: FlowEdge[];
   options: OptionBundle;
+  upstreamFields?: { label: string; value: string }[];
   stat?: NodeRunStat;
   connectFrom: string | null;
   onPatch: (patch: Partial<FlowNode>) => void;
@@ -31,7 +32,7 @@ export interface NodeInspectorProps {
 }
 
 export default function NodeInspector({
-  node, def, nodes, edges, options, stat, connectFrom,
+  node, def, nodes, edges, options, upstreamFields, stat, connectFrom,
   onPatch, onConfigChange, onDelete, onDuplicate,
   onStartConnect, onCancelConnect, onRemoveEdge, onFocusNode,
 }: NodeInspectorProps) {
@@ -62,7 +63,7 @@ export default function NodeInspector({
             display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
           }}
         >
-          {def?.icon || '◇'}
+          {nodeIcon(node.type, def?.icon)}
         </span>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: C.deep, lineHeight: 1.35 }}>
@@ -139,7 +140,13 @@ export default function NodeInspector({
 
       <Divider style={{ margin: '2px 0' }}>节点配置</Divider>
 
-      <ConfigForm node={node} fields={def?.fields || []} options={options} onChange={onConfigChange} />
+      <ConfigForm
+        node={node}
+        fields={def?.fields || []}
+        options={options}
+        upstreamFields={upstreamFields}
+        onChange={onConfigChange}
+      />
 
       <Divider style={{ margin: '2px 0' }}>连接</Divider>
 

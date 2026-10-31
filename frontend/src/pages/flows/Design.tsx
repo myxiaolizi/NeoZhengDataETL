@@ -15,10 +15,13 @@ import {
 } from '@ant-design/icons';
 import Page from '@/components/Page';
 import { NEUTRAL } from '@/theme';
-import { flowsApi, fetchDatasourceOptions, fetchFormOptions, fetchProjectOptions } from '@/api/flows';
+import {
+  flowsApi, buildProjectFieldOptions, fetchDatasourceOptions, fetchFormOptions,
+  fetchProjectColumnsMeta, fetchProjectOptions,
+} from '@/api/flows';
 import type {
-  FlowDetail, FlowEdge, FlowNode, FlowNodeMeta, FlowNodeTypeDef,
-  FlowPreviewResult, FlowRunResult,
+  FlowDetail, FlowEdge, FlowField, FlowNode, FlowNodeMeta, FlowNodeTypeDef,
+  FlowPreviewResult, FlowRunResult, ProjectColumnsMeta,
 } from '@/api/flows';
 import FlowCanvas from './design/FlowCanvas';
 import NodePalette from './design/NodePalette';
@@ -74,6 +77,9 @@ export default function FlowDesignPage() {
   const [stats, setStats] = useState<Record<string, NodeRunStat>>({});
   const [preview, setPreview] = useState<FlowPreviewResult | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [flowFields, setFlowFields] = useState<FlowField[]>([]);
+  const [projectMetaMap, setProjectMetaMap] = useState<Record<number, ProjectColumnsMeta>>({});
+  const fetchingProjectsRef = useRef<Set<number>>(new Set());
 
   const nodesRef = useRef<FlowNode[]>([]);
   const edgesRef = useRef<FlowEdge[]>([]);
@@ -118,17 +124,47 @@ export default function FlowDesignPage() {
         if (alive) setLoading(false);
       }
 
-      const [project, datasource, form] = await Promise.all([
+      const [project, datasource, form, initialFields] = await Promise.all([
         fetchProjectOptions().catch(() => []),
         fetchDatasourceOptions().catch(() => []),
         fetchFormOptions().catch(() => []),
+        flowsApi.fields(id).catch(() => [] as FlowField[]),
       ]);
-      if (alive) setOptions({ project, datasource, form });
+      if (alive) {
+        setOptions({ project, datasource, form });
+        setFlowFields(initialFields || []);
+      }
     })();
     return () => {
       alive = false;
     };
   }, [id]);
+
+  /* 收集画布中 source_project 节点引用的项目列结构（供下游节点 field 下拉使用） */
+  useEffect(() => {
+    const pids = new Set<number>();
+    nodes.forEach((n) => {
+      if (n.type === 'source_project') {
+        const pid = Number(n.config?.projectId);
+        if (Number.isFinite(pid) && pid > 0) pids.add(pid);
+      }
+    });
+    if (detail?.projectId) {
+      const pid = Number(detail.projectId);
+      if (Number.isFinite(pid) && pid > 0) pids.add(pid);
+    }
+    pids.forEach((pid) => {
+      if (projectMetaMap[pid] || fetchingProjectsRef.current.has(pid)) return;
+      fetchingProjectsRef.current.add(pid);
+      fetchProjectColumnsMeta(pid)
+        .then((m) => {
+          if (m) setProjectMetaMap((prev) => ({ ...prev, [pid]: m }));
+        })
+        .finally(() => {
+          fetchingProjectsRef.current.delete(pid);
+        });
+    });
+  }, [nodes, detail?.projectId, projectMetaMap]);
 
   /* 未保存离开提醒 */
   useEffect(() => {
@@ -153,6 +189,112 @@ export default function FlowDesignPage() {
     if (selectedIds.length !== 1) return null;
     return nodes.find((n) => n.id === selectedIds[0]) || null;
   }, [nodes, selectedIds]);
+
+  /** 推导当前选中节点的上游输出列选项（供 field 类型下拉补全） */
+  const selectedUpstreamFields = useMemo(() => {
+    if (!selectedNode) return [];
+    const nodeMap = new Map<string, FlowNode>();
+    nodes.forEach((n) => nodeMap.set(n.id, n));
+
+    // 反向 BFS 找出所有可达的上游节点（若未连线，则退化为画布内全部上游/数据源节点）
+    const visited = new Set<string>();
+    const queue: string[] = [];
+    edges.forEach((e) => {
+      if (e.to === selectedNode.id) queue.push(e.from);
+    });
+    while (queue.length) {
+      const cur = queue.shift()!;
+      if (visited.has(cur)) continue;
+      visited.add(cur);
+      edges.forEach((e) => {
+        if (e.to === cur && !visited.has(e.from)) queue.push(e.from);
+      });
+    }
+
+    const candidates = visited.size
+      ? Array.from(visited).map((nid) => nodeMap.get(nid)).filter((n): n is FlowNode => !!n)
+      : nodes.filter((n) => n.id !== selectedNode.id);
+
+    const seen = new Set<string>();
+    const out: { label: string; value: string }[] = [];
+    const push = (val: string, label?: string) => {
+      const v = String(val || '').trim();
+      if (!v || seen.has(v)) return;
+      seen.add(v);
+      out.push({ value: v, label: label || v });
+    };
+
+    const parseKvKeys = (raw: unknown): { k: string; v: string }[] => {
+      const list: { k: string; v: string }[] = [];
+      String(raw || '').split('\n').forEach((line) => {
+        const s = line.trim();
+        if (!s || s.startsWith('#')) return;
+        const i = s.indexOf('=');
+        if (i < 0) return;
+        list.push({ k: s.slice(0, i).trim(), v: s.slice(i + 1).trim() });
+      });
+      return list;
+    };
+
+    // 1) 上游 source_project / source_manual 节点以及清洗节点新增列
+    candidates.forEach((up) => {
+      if (up.type === 'source_project') {
+        const pid = Number(up.config?.projectId);
+        const tableMode = String(up.config?.table || 'parsed');
+        const opts = buildProjectFieldOptions(projectMetaMap[pid], tableMode);
+        opts.forEach((o) => push(o.value, o.label));
+      } else if (up.type === 'source_manual') {
+        try {
+          const parsed = JSON.parse(String(up.config?.json || '[]'));
+          if (Array.isArray(parsed) && parsed[0] && typeof parsed[0] === 'object') {
+            Object.keys(parsed[0] as Record<string, unknown>).forEach((k) => push(k));
+          }
+        } catch {
+          /* ignore */
+        }
+      } else if (up.type === 'rename') {
+        parseKvKeys(up.config?.mapping).forEach(({ v }) => push(v));
+      } else if (up.type === 'computed') {
+        parseKvKeys(up.config?.assignments).forEach(({ k }) => push(k));
+      } else if (up.type === 'pick_current_task') {
+        push(String(up.config?.instanceKey || ''));
+        push(String(up.config?.outputNodeName || '当前节点'));
+        push(String(up.config?.outputOwnerName || '当前负责人'));
+        String(up.config?.extraFields || '')
+          .split(',')
+          .forEach((f) => push(f));
+      } else if (
+        up.type === 'compute' ||
+        up.type === 'merge_field' ||
+        up.type === 'extract_json' ||
+        up.type === 'extract_regex'
+      ) {
+        push(String(up.config?.target || ''));
+      } else if (up.type === 'split_field') {
+        String(up.config?.targets || '')
+          .split(',')
+          .forEach((f) => push(f));
+      }
+    });
+
+    // 2) 流程关联项目兜底
+    if (!out.length && detail?.projectId) {
+      const opts = buildProjectFieldOptions(projectMetaMap[Number(detail.projectId)], 'parsed');
+      opts.forEach((o) => push(o.value, o.label));
+    }
+
+    // 3) 后端 /flows/:id/fields 与最近一次试运行输出列兜底
+    flowFields.forEach((f) => {
+      const sample =
+        f.sample === null || f.sample === undefined || f.sample === ''
+          ? ''
+          : `（示例：${String(f.sample).slice(0, 18)}）`;
+      push(f.name, `${f.name}${sample}`);
+    });
+    (preview?.columns || []).forEach((c) => push(c.name));
+
+    return out;
+  }, [selectedNode, nodes, edges, projectMetaMap, detail?.projectId, flowFields, preview]);
 
   const categories = meta?.categories?.length ? meta.categories : [];
 
@@ -300,6 +442,7 @@ export default function FlowDesignPage() {
       setEdges((updated.edges || []).map((e) => ({ ...e })));
       setDirty(false);
       message.success('流程已保存');
+      flowsApi.fields(id).then((list) => setFlowFields(list || [])).catch(() => {});
       return true;
     } catch {
       return false;
@@ -491,6 +634,7 @@ export default function FlowDesignPage() {
       nodes={nodes}
       edges={edges}
       options={options}
+      upstreamFields={selectedUpstreamFields}
       stat={stats[selectedNode.id]}
       connectFrom={connectFrom}
       onPatch={(patch) => patchNode(selectedNode.id, patch)}

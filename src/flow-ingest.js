@@ -6,6 +6,7 @@ const fields = require('./fields');
 const projects = require('./projects');
 const flow = require('./flow');
 const flowState = require('./flow-state');
+const flows = require('./flows');
 
 /**
  * 流程推送入库
@@ -149,6 +150,35 @@ async function syncRunStateToFormProject(flowProject, instanceId, events) {
   }
 }
 
+/**
+ * 推送触发（on_push）
+ *
+ * 推送已经落库成功后，反查所有「引用了本项目 + run_mode='trigger'」的流程，
+ * 交给 flows.triggerOnPush 用 setImmediate 异步执行。
+ *
+ * 三个硬约束：
+ *   1. **不 await** —— 推送响应不能被流程执行拖慢（拒绝简道云超时重推）；
+ *   2. **不抛异常** —— 流程跑失败只写 console + 流程日志，推送本身仍是成功；
+ *   3. **防重入** —— 同一流程运行中/冷却期内的重复推送由 flows 侧的闸门合并。
+ */
+function triggerOnPushAfterSave(projectId) {
+  try {
+    const p = flows.triggerOnPush(projectId);
+    if (!p || typeof p.then !== 'function') return;
+    p.then((r) => {
+      if (r && r.triggered && r.triggered.length) {
+        console.log(`[flow] 推送触发 ${r.triggered.length} 个流程: ${r.triggered.join(', ')}`);
+      } else if (r && r.error) {
+        console.error('[flow] 推送触发查询失败:', r.error);
+      }
+    }).catch((err) => {
+      console.error('[flow] 推送触发流程失败:', err && err.message ? err.message : err);
+    });
+  } catch (err) {
+    console.error('[flow] 推送触发流程失败:', err && err.message ? err.message : err);
+  }
+}
+
 async function handle(project, parsed, rawBody) {
   await schema.ensureProjectTables(project.id);
 
@@ -231,6 +261,9 @@ async function handle(project, parsed, rawBody) {
 
   await projects.touchProject(project.id);
 
+  // 推送触发：落库成功后异步跑引用了本项目的流程（不阻塞推送响应）
+  triggerOnPushAfterSave(project.id);
+
   const parts = [];
   if (sync.added.length) parts.push(`新增列: ${sync.added.join(', ')}`);
   if (filled) parts.push(`写入字段: ${filled} 个`);
@@ -247,4 +280,7 @@ async function handle(project, parsed, rawBody) {
   };
 }
 
-module.exports = { handle, ensureFlowFieldDefs, syncRunStateToFormProject, eventsOfInstance };
+module.exports = {
+  handle, ensureFlowFieldDefs, syncRunStateToFormProject, eventsOfInstance,
+  triggerOnPushAfterSave,
+};

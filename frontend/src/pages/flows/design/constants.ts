@@ -66,6 +66,18 @@ export function categoryColor(category?: string): string {
   return (category && CATEGORY_COLOR[category]) || CATEGORY_FALLBACK;
 }
 
+/** 节点推荐图标映射（新节点：join → '⋈'，pick_current_task → '◉'，computed → 'ƒ'） */
+export const NODE_ICON_FALLBACK: Record<string, string> = {
+  join: '⋈',
+  pick_current_task: '◉',
+  computed: 'ƒ',
+};
+
+export function nodeIcon(key?: string, backendIcon?: string): string {
+  if (key && NODE_ICON_FALLBACK[key]) return NODE_ICON_FALLBACK[key];
+  return backendIcon || '◇';
+}
+
 /** 十六进制颜色 → rgba */
 export function withAlpha(hex: string, alpha: number): string {
   const h = hex.replace('#', '');

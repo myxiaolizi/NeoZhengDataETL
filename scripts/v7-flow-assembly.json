@@ -1,0 +1,148 @@
+{
+  "name": "CRM签约对账表（16+102 合成）",
+  "code": "crm_signing_v7",
+  "description": "CRM表单推送(16) 全字段 + CRM流程推送(102) 推导的当前节点/当前负责人，合成 59 列宽表，写入 jdywh_crm_signing_v7；run_mode=trigger 时推送后自动刷新。",
+  "projectId": 16,
+  "sourceType": "project",
+  "runMode": "trigger",
+  "targetTable": "jdywh_crm_signing_v7",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "source_project",
+      "label": "表单推送(16)",
+      "x": 60,
+      "y": 80,
+      "config": {
+        "projectId": 16,
+        "table": "parsed",
+        "limit": 5000
+      }
+    },
+    {
+      "id": "n2",
+      "type": "source_project",
+      "label": "流程推送(102) 事件",
+      "x": 60,
+      "y": 320,
+      "config": {
+        "projectId": 102,
+        "table": "parsed",
+        "limit": 20000
+      }
+    },
+    {
+      "id": "n3",
+      "type": "pick_current_task",
+      "label": "收敛当前待办(每实例1行)",
+      "x": 320,
+      "y": 320,
+      "config": {
+        "instanceKey": "event_instance_id",
+        "timeColumn": "jdy_op_time",
+        "mode": "pending",
+        "cutoffTime": "2026-10-30 23:30:00",
+        "createdCountColumn": "event_created_count",
+        "completedCountColumn": "event_completed_count",
+        "canceledCountColumn": "event_canceled_count",
+        "nodeColumn": "event_flow_name",
+        "ownerColumn": "event_current_assignee",
+        "nodeAlias": "开始=销售签约",
+        "outputNodeName": "当前节点",
+        "outputOwnerName": "当前负责人"
+      }
+    },
+    {
+      "id": "n4",
+      "type": "join",
+      "label": "关联 16 ⟕ 102",
+      "x": 580,
+      "y": 180,
+      "config": {
+        "joinType": "left",
+        "leftKey": "jdy_data_id",
+        "rightKey": "event_instance_id",
+        "rightAgg": "first",
+        "rightPrefix": "flow_",
+        "rightFields": "当前节点,当前负责人",
+        "leftSource": "n1",
+        "rightSource": "n3"
+      }
+    },
+    {
+      "id": "n5",
+      "type": "computed",
+      "label": "运行态回退 + 重名列别名",
+      "x": 840,
+      "y": 180,
+      "config": {
+        "assignments": "当前节点=coalesce:flow_当前节点,flow_current_node\n当前负责人=coalesce:flow_当前负责人,flow_current_owner\n当前节点=blankif:sys_flow_state_2:1\n当前负责人=blankif:sys_flow_state_2:1\n流程状态_状态源=map:sys_flow_state_2:0=进行中|1=流转完成"
+      }
+    },
+    {
+      "id": "n6",
+      "type": "select_fields",
+      "label": "挑选 59 列",
+      "x": 1100,
+      "y": 180,
+      "config": {
+        "mode": "keep",
+        "fields": "jdy_data_id,w_1791449342206_title_p,w_1792564761950,widget_1791449342211,widget_1791449342205,widget_1791449342209,widget_1791449342206,widget_1792048325267,w_1792577110570,widget_1792048325259,w_1793101382911,w_1793101382912,w_1793343168111,widget_1791882979503,widget_1791882979504_p,widget_1791882979505,widget_1791882979506_p,widget_1791510326270_p,widget_1791449342217_p,widget_1791449342218_p,widget_1791449342208_p,widget_1791509478932_p,w_1792139730147_p,widget_1791509478935_p,widget_1791510696565_p,widget_1791510696561_p,w_1793089366573,widget_1792029306426,widget_1791596350260,w_1792547295323,w_1792547295325,widget_1791509478941_p,w_1792547295328,w_1792552277283,w_1792552277285,w_1793089366506,widget_1791964258708_p,widget_1791964258722,widget_1791533061604,widget_1791453695943,w_1792139730191,w_1792131264427_province_p,w_1792131264427_city_p,w_1792131264427_district_p,widget_1792072044675,w_1793094135522_p,w_1793094135524_p,w_1793094135538_p,w_1793094135578_p,w_1793094135592_p,w_1793094135593_p,w_1793094135594_p,w_1793094135608_p,sys_creator_2_p,sys_create_time_2_p,sys_update_time_2_p,流程状态_状态源,当前节点,当前负责人"
+      }
+    },
+    {
+      "id": "n7",
+      "type": "rename",
+      "label": "重命名为业务表列名",
+      "x": 1360,
+      "y": 180,
+      "config": {
+        "mapping": "jdy_data_id=data_id\nw_1791449342206_title_p=标题\nw_1792564761950=流水号\nwidget_1791449342211=区域\nwidget_1791449342205=连锁ID\nwidget_1791449342209=签约主体名称\nwidget_1791449342206=连锁名称\nwidget_1792048325267=连锁类型\nw_1792577110570=对接版本\nwidget_1792048325259=门店数\nw_1793101382911=上月销售门店数\nw_1793101382912=近2年销售门店数\nw_1793343168111=签约类型\nwidget_1791882979503=连锁业务对接人姓名\nwidget_1791882979504_p=连锁业务对接人联系电话\nwidget_1791882979505=连锁技术对接人姓名\nwidget_1791882979506_p=连锁技术对接人联系电话\nwidget_1791510326270_p=签约时间\nwidget_1791449342217_p=服务开始时间\nwidget_1791449342218_p=服务结束时间\nwidget_1791449342208_p=销售\nwidget_1791509478932_p=客服\nw_1792139730147_p=解决方案\nwidget_1791509478935_p=培训人\nwidget_1791510696565_p=基础资料\nwidget_1791510696561_p=优惠券\nw_1793089366573=连锁ERP名称\nwidget_1792029306426=对接结果\nwidget_1791596350260=对接备注\nw_1792547295323=优惠券(结果)\nw_1792547295325=短信报备\nwidget_1791509478941_p=渠道充值和余额\nw_1792547295328=客服备注\nw_1792552277283=培训结果\nw_1792552277285=培训备注\nw_1793089366506=策略开通情况\nwidget_1791964258708_p=已开通策略\nwidget_1791964258722=未开通策略原因\nwidget_1791533061604=流程状态\nwidget_1791453695943=区域负责人手机号码\nw_1792139730191=省或直辖市\nw_1792131264427_province_p=地址(表单格式)(省/自治区/直辖市)\nw_1792131264427_city_p=地址(表单格式)(市)\nw_1792131264427_district_p=地址(表单格式)(县/区)\nwidget_1792072044675=是否开通\nw_1793094135522_p=单据提交时间\nw_1793094135524_p=策略开通时间\nw_1793094135538_p=实施对接时间\nw_1793094135578_p=对接审核时间\nw_1793094135592_p=客服处理时间\nw_1793094135593_p=客户培训时间\nw_1793094135594_p=连锁使用时间\nw_1793094135608_p=策略审核时间\nsys_creator_2_p=提交人\nsys_create_time_2_p=提交时间\nsys_update_time_2_p=更新时间\n流程状态_状态源=流程状态(节点)\n当前节点=当前节点\n当前负责人=当前负责人"
+      }
+    },
+    {
+      "id": "n8",
+      "type": "sink_table",
+      "label": "写入 jdywh_crm_signing_v7",
+      "x": 1620,
+      "y": 180,
+      "config": {
+        "datasourceId": 0,
+        "table": "jdywh_crm_signing_v7",
+        "mode": "upsert",
+        "keyField": "data_id",
+        "createTable": true
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "n1",
+      "to": "n4"
+    },
+    {
+      "from": "n2",
+      "to": "n3"
+    },
+    {
+      "from": "n3",
+      "to": "n4"
+    },
+    {
+      "from": "n4",
+      "to": "n5"
+    },
+    {
+      "from": "n5",
+      "to": "n6"
+    },
+    {
+      "from": "n6",
+      "to": "n7"
+    },
+    {
+      "from": "n7",
+      "to": "n8"
+    }
+  ]
+}

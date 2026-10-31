@@ -118,6 +118,23 @@ async function columnNames(table) {
 }
 
 /**
+ * 列名集合（Set），供「按列名查存在性 / 增量补列」的场景使用。
+ *
+ * 背景（V7 修复）：ensureTableFor() 原来直接用 columnNames() 的返回值当 Set 用
+ * （existing.size / existing.has / existing.add），但 columnNames() 返回的是**数组**：
+ *   - 数组没有 .has / .add → 表已存在且需要补列时抛 `existing.has is not a function`
+ *   - 数组的 .size 恒为 undefined → 空表判断 `existing.size === 0` 也失效
+ * 新建表路径碰不到，所以历史用例没暴露；一旦「目标表已存在 + 字段有变化」就会失败。
+ *
+ * @param {string} table
+ * @returns {Promise<Set<string>>}
+ */
+async function columnNameSet(table) {
+  const cols = await columnInfo(table);
+  return new Set(cols.map((c) => c.name));
+}
+
+/**
  * 统计各列的非空行数，用于「同一字段存在多套历史列时择优」。
  * 例：widget_1791449342208 有 59 行数据、w_1791449342208 为空 → 选前者。
  *
@@ -237,7 +254,7 @@ function toScalar(v) {
 async function ensureTableFor(ds, table, defs, sample) {
   assertOwnTable(table);
 
-  const existing = await columnNames(table);
+  const existing = await columnNameSet(table);
   if (existing.size === 0) {
     const metaCols = [
       '`id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT "自增主键"',
@@ -899,6 +916,7 @@ module.exports = {
   tableExists,
   columnInfo,
   columnNames,
+  columnNameSet,
   columnFillStats,
   inferColumnType,
   upgradeColumnType,

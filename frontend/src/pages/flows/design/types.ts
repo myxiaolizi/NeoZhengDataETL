@@ -42,6 +42,8 @@ export interface OptionBundle {
   project: { label: string; value: number | string }[];
   datasource: { label: string; value: number | string }[];
   form: { label: string; value: number | string }[];
+  /** 上游节点可用字段（供 field 类型自动补全/下拉，仍可手动输入） */
+  fields?: { label: string; value: string }[];
 }
 
 /** 上下文菜单/内联结构 */
