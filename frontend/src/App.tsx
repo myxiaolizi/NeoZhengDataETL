@@ -5,7 +5,7 @@ import { Spin } from 'antd';
 import { useAppStore } from '@/stores/app';
 import { setUnauthorizedHandler } from '@/api/client';
 import BasicLayout from '@/layouts/BasicLayout';
-import { PUBLIC_ROUTES } from '@/routes';
+import { PUBLIC_ROUTES, PUBLIC_PREFIXES } from '@/routes';
 
 /** 统一懒加载包装 */
 const lazyPage = (loader: () => Promise<any>, name?: string) =>
@@ -18,6 +18,8 @@ const ForgotPassword = lazyPage(() => import('@/pages/forgot-password'));
 const ResetPassword = lazyPage(() => import('@/pages/reset-password'));
 const ShareView = lazyPage(() => import('@/pages/share-view'));
 const PublicForm = lazyPage(() => import('@/pages/public-form'));
+/** V8：AI 问数公开分享页（手机扫码 / 微信打开，独立布局） */
+const AiShare = lazyPage(() => import('@/pages/ai-share'));
 
 // 业务页
 const Dashboard = lazyPage(() => import('@/pages/dashboard'));
@@ -89,7 +91,13 @@ export default function App() {
   useEffect(() => {
     // 这些路由完全不需要用户态，避免多余 401 请求
     if (PUBLIC_ROUTES.some((p) => location.pathname.startsWith(p))) return;
-    if (location.pathname.startsWith('/s/') || location.pathname.startsWith('/f/')) return;
+    /*
+     * V8：/s/ 、/f/ 、/a/ 前缀一律**不探测登录态**。
+     * /a/ 是 AI 问数公开分享页 —— 未登录访客（手机扫码/微信打开）若触发 fetchUser()
+     * 会打 401，虽然 store 会吞掉，但会白耗一次请求并可能触发全局未授权处理，
+     * 因此在路由层就短路，保证「打开网址即可问数」。
+     */
+    if (PUBLIC_PREFIXES.some((p) => location.pathname.startsWith(p))) return;
 
     /*
      * /intro 与 /help 允许未登录访问，但仍需探测登录态：
@@ -114,6 +122,8 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/s/:token" element={<ShareView />} />
         <Route path="/f/:token" element={<PublicForm />} />
+        {/* V8：AI 问数公开分享 —— 独立布局（不套 BasicLayout / RequireAuth），手机优先 */}
+        <Route path="/a/:token" element={<AiShare />} />
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
 
         {/* 公开访问的业务页：宣传页与帮助文档需允许未登录浏览，

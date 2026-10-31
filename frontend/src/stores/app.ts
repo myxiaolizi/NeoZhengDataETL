@@ -19,7 +19,7 @@ export const DEFAULT_SITE_DESCRIPTION = '';
 /** 页脚文案兜底（空串 = 不展示） */
 export const DEFAULT_SITE_FOOTER = '';
 /** 品牌区版本号（唯一出处，不要在组件里写死版本串） */
-export const APP_VERSION = 'V6.1';
+export const APP_VERSION = 'V8.0';
 
 /* ══════════ 站点信息：结构 / 缓存 ══════════ */
 

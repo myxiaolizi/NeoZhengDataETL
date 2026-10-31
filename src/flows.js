@@ -356,6 +356,60 @@ const CATEGORIES = [
 ];
 
 /* ══════════════════════════════════════════════════════════
+ *  能力自检：流程定义里是否用了「当前服务端不认识」的节点类型
+ *
+ *  背景（生产真实故障）：`jdywh_flows` 里的流程定义与**代码版本**是解耦的。
+ *  V7 新增了 `join` / `pick_current_task` / `computed` 三种节点，若库里的流程用了它们、
+ *  而线上跑的是 V6 代码，则：
+ *    - 旧代码 `runClean()` 的 `default: break` 会**静默放行**（数据原样穿过），
+ *      用户点「运行」看起来成功、目标表却是错的 —— 比报错更危险；
+ *    - 旧代码 `normalizeNodes()` 更会把未知类型**悄悄改成 filter**，保存即损坏定义。
+ *
+ *  因此这里提供显式能力自检：未知节点一律给出**中文可读错误**（不回显堆栈），
+ *  运行/推送触发/保存三条路径各自决定「报错还是跳过」，从而让版本错配**可见且可诊断**。
+ * ══════════════════════════════════════════════════════════ */
+
+/** 列出流程定义里当前服务端不认识的节点（纯函数，可单测） */
+function unknownNodeTypes(nodes) {
+  const out = [];
+  (Array.isArray(nodes) ? nodes : []).forEach((n, i) => {
+    if (!n) return;
+    const type = String(n.type || '').trim();
+    if (!type) return;
+    if (NODE_MAP[type]) return;
+    out.push({
+      nodeId: String(n.id || `n${i + 1}`),
+      type,
+      label: String(n.label || '').slice(0, 60) || null,
+    });
+  });
+  return out;
+}
+
+/**
+ * 流程能力自检（纯函数，可单测）
+ * @param {object} flow 流程（DB 行或 publicFlow 均可，nodes 允许是 JSON 字符串）
+ * @returns {{ok:boolean, unsupported:Array<{nodeId,type,label}>, message:string}}
+ */
+function assertFlowSupported(flow) {
+  let nodes = flow && flow.nodes;
+  if (typeof nodes === 'string') nodes = parseJson(nodes, []);
+  const unsupported = unknownNodeTypes(nodes);
+  if (!unsupported.length) return { ok: true, unsupported: [], message: '' };
+
+  const types = [...new Set(unsupported.map((u) => u.type))];
+  const where = unsupported.map((u) => `${u.nodeId}(${u.type})`).join('、');
+  return {
+    ok: false,
+    unsupported,
+    types,
+    message: `该流程使用了当前服务端不支持的节点类型：${types.join('、')}`
+      + `（节点 ${where}）。当前服务端版本过低（可能是 V6 及更早版本），`
+      + '请先升级服务端到 V8 再运行该流程。',
+  };
+}
+
+/* ══════════════════════════════════════════════════════════
  *  工具函数
  * ══════════════════════════════════════════════════════════ */
 
@@ -1274,8 +1328,17 @@ function runClean(node, rows, ctx) {
       break;
     }
 
+    /*
+     * 未知节点：**必须显式失败**。
+     * 旧实现这里是 `default: break`，即把不认识的处理节点当「什么都不做」静默放行——
+     * 这在「库里流程定义比服务端代码新」时会造成**看起来成功、实际没加工**的静默数据错误
+     * （如 V6 服务端跑含 join/pick_current_task 的 V7 流程）。改为一律抛中文可读错误。
+     */
     default:
-      break;
+      throw new Error(
+        `不支持的节点类型：${node.type}（节点 ${node.id || ''}）。`
+        + '当前服务端没有该节点的加工能力，请升级服务端到 V8 后再运行该流程。'
+      );
   }
 
   return out;
@@ -1387,18 +1450,51 @@ async function runSink(node, rows, ctx) {
     let written = 0;
 
     if (mode === 'upsert' && cfg.keyField) {
-      for (const r of rows) {
-        const sets = cols.map((c) => `${dsDriver.quoteIdent(source, c)} = ?`).join(', ');
-        const vals = cols.map((c) => normalizeVal(r[c]));
+      /*
+       * 批量 upsert（V8 性能优化，语义与逐行完全一致）
+       *
+       * 旧实现：每行一条 `INSERT ... ON DUPLICATE KEY UPDATE` → N 行 = N 次往返。
+       * 本机 .env 连的是**远程库**（tx.zhengl.vip），单次往返 20~40ms，
+       * 96 行就要 2~4 秒；一旦与其它查询争抢连接池（DB_CONNECTION_LIMIT=10）
+       * 实测劣化到 38 秒（jdywh_flow_logs #17 = 38362ms），而推送触发是**每次推送都会跑全量**，
+       * 直接决定「推送 → 目标表可见」的延迟。改为多行 VALUES 批量后，96 行只要 1 次往返。
+       *
+       * 兼容性：仍是同一条 `INSERT ... ON DUPLICATE KEY UPDATE 全列`，逐行语义不变；
+       * 分批只为规避单语句占位符上限（MySQL 65535 个 ?）与超长 SQL。
+       */
+      const placeholdersPerRow = cols.length;
+      const maxRowsPerStmt = Math.max(1, Math.min(
+        Number(cfg.upsertBatchSize) || 100,
+        Math.floor(60000 / Math.max(1, placeholdersPerRow))
+      ));
+      const insertCols = cols.map((c) => dsDriver.quoteIdent(source, c)).join(',');
+      const rowPlaceholder = `(${cols.map(() => '?').join(',')})`;
+      const updateSets = cols.map((c) => `${dsDriver.quoteIdent(source, c)} = ?`).join(', ');
+
+      for (let i = 0; i < rows.length; i += maxRowsPerStmt) {
+        const batch = rows.slice(i, i + maxRowsPerStmt);
+        const placeholders = batch.map(() => rowPlaceholder).join(',');
+        const vals = [];
+        // 前半：VALUES 部分（逐行逐列）
+        batch.forEach((r) => cols.forEach((c) => vals.push(normalizeVal(r[c]))));
+        /*
+         * 后半：ON DUPLICATE KEY UPDATE 的绑定值。
+         * 用 `VALUES(列)` 引用本批**当前行**的值，而不是重复绑定参数——
+         * 多行语句下若把每行值再绑一遍，长度会翻倍且容易错位；
+         * VALUES() 在 MySQL 8.0 中已标记 deprecated 但仍可用，
+         * 为兼容 MariaDB/老版本这里保留 VALUES()，并且它是按行求值的（与旧逐行语义一致）。
+         */
         await dsDriver.raw(
           source,
-          `INSERT INTO ${dsDriver.quoteIdent(source, table)} (${cols.map((c) => dsDriver.quoteIdent(source, c)).join(',')})
-           VALUES (${cols.map(() => '?').join(',')})
-           ON DUPLICATE KEY UPDATE ${sets}`,
-          vals.concat(vals)
+          `INSERT INTO ${dsDriver.quoteIdent(source, table)} (${insertCols})
+           VALUES ${placeholders}
+           ON DUPLICATE KEY UPDATE ${cols.map((c) => `${dsDriver.quoteIdent(source, c)} = VALUES(${dsDriver.quoteIdent(source, c)})`).join(', ')}`,
+          vals
         );
-        written += 1;
+        written += batch.length;
       }
+      // updateSets 仅用于可读性说明（当前实现用 VALUES()，不需要重复绑定）
+      void updateSets;
     } else {
       const batchSize = 200;
       for (let i = 0; i < rows.length; i += batchSize) {
@@ -1632,6 +1728,24 @@ async function run(flowId, trigger) {
   let message = '';
 
   try {
+    /*
+     * 能力自检（先于任何节点执行）：流程定义里出现服务端不认识的节点类型时，
+     * 直接以中文可读错误失败（写入 jdywh_flow_logs + last_run_msg，前端可见），
+     * 而不是让未知节点静默放行导致目标表数据错误。
+     */
+    const capability = assertFlowSupported(flow);
+    if (!capability.ok) {
+      nodeLogs.push({
+        nodeId: (capability.unsupported[0] || {}).nodeId || null,
+        type: (capability.unsupported[0] || {}).type || null,
+        name: '能力自检',
+        ok: false,
+        error: capability.message,
+        ms: 0,
+      });
+      throw new Error(capability.message);
+    }
+
     const order = topoSort(flow.nodes, flow.edges);
     if (!order.length) throw new Error('流程没有任何节点');
 
@@ -1752,6 +1866,9 @@ const ON_PUSH_COOLDOWN_MS = 3000;
 
 /** 运行闸门：flowId → { running, startedAt, finishedAt } */
 const RUN_GATES = new Map();
+
+/** 推送触发时「因节点类型不受支持而跳过」的日志去重集合（key = flowId:类型列表） */
+const UNSUPPORTED_FLOW_LOGGED = new Set();
 
 /** 流程是否引用了某个项目（项目列，或任一 source_project 节点） */
 function flowReferencesProject(flow, projectId) {
@@ -1918,6 +2035,23 @@ async function triggerOnPush(projectId, options) {
 
   for (const f of matched) {
     const flowId = Number(f.id);
+
+    /*
+     * 能力自检：流程定义用了本服务端不认识的节点（典型：库升级到 V7/V8 而代码还是 V6），
+     * 推送时就**跳过**而不是执行——旧代码会静默放行未知节点，产出错误目标表。
+     * 日志按「流程 + 缺失类型」去重，避免每条推送都刷一遍。
+     */
+    const capability = assertFlowSupported(f);
+    if (!capability.ok) {
+      const key = `${flowId}:${(capability.types || []).join(',')}`;
+      if (!UNSUPPORTED_FLOW_LOGGED.has(key)) {
+        UNSUPPORTED_FLOW_LOGGED.add(key);
+        console.error(`[flow] 推送触发起跳过流程 #${flowId}：${capability.message}`);
+      }
+      result.skipped.push({ flowId, reason: 'unsupported_nodes', types: capability.types });
+      continue;
+    }
+
     const gate = beginFlowRun(flowId, { now: opts.now, cooldownMs: opts.cooldownMs });
     if (!gate.started) {
       result.skipped.push({ flowId, reason: gate.reason });
@@ -2010,9 +2144,23 @@ async function getById(id) {
 
 function normalizeNodes(nodes) {
   if (!Array.isArray(nodes)) return [];
+  /*
+   * 未知节点类型**必须报错**，不能悄悄改成 filter：
+   * 旧实现 `type: NODE_MAP[n.type] ? n.type : 'filter'` 会把「本服务端不认识的新节点」
+   * 静默降级成「过滤器（恒真、放行全部行）」，用户保存一次就把流程定义改坏了。
+   * 现在改为可读的中文错误，提示升级服务端。
+   */
+  const unknown = unknownNodeTypes(nodes);
+  if (unknown.length) {
+    const types = [...new Set(unknown.map((u) => u.type))];
+    throw new Error(
+      `流程包含当前服务端不支持的节点类型：${types.join('、')}。`
+      + '请升级服务端到 V8 后再保存该流程。'
+    );
+  }
   return nodes.map((n, i) => ({
     id: String(n.id || `n${i + 1}`),
-    type: NODE_MAP[n.type] ? n.type : 'filter',
+    type: n.type,
     label: String(n.label || (NODE_MAP[n.type] ? NODE_MAP[n.type].name : '节点')).slice(0, 60),
     x: Number(n.x) || 40,
     y: Number(n.y) || 40 + i * 100,
@@ -2157,6 +2305,8 @@ module.exports = {
   ON_PUSH_COOLDOWN_MS,
   triggerOnPush, selectOnPushFlows, flowReferencesProject, flowRunMode, normalizeRunMode,
   beginFlowRun, endFlowRun, resetFlowRunGates, listTriggerFlows, invalidateTriggerFlowCache,
+  // 能力自检（节点类型缺失时给出中文可读错误，见 assertFlowSupported 注释）
+  unknownNodeTypes, assertFlowSupported,
   ensureUpsertKey,
   parseKv, parseAssignments, getByPath, evalExpression, publicFlow,
 };

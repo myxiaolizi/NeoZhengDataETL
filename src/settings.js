@@ -74,14 +74,35 @@ const DEFAULTS = {
   webhook_token: '',
 
   // ---------- AI 问数 ----------
+  /*
+   * 【V8 注意】ai_enabled 默认保持 '0'：
+   * 线上库里没有 ai_api_key 时，默认开启会让每个用户点开 AI 问数都吃到一条英文报错。
+   * 首次配置请用「系统设置 → AI 问数」勾选启用，或执行一键启用：
+   *   node scripts/v8-ai-backend.js --enable
+   * 该脚本只在显式传 --enable 时才写库，并且会先读回确认。
+   */
   ai_enabled: '0',
   ai_provider: 'deepseek',
   ai_base_url: 'https://api.deepseek.com/v1',
   ai_api_key: '',
   ai_model: 'deepseek-chat',
-  ai_temperature: '0.1',
+  /** 问数场景温度：0 最稳（实测 0 比 0.1 生成的 SQL 更稳定） */
+  ai_temperature: '0',
   ai_max_rows: '500',
   ai_welcome: '你好，我是数据助手。你可以问我：本月新增了多少条数据？各区域的销售金额排名如何？',
+  // ---------- AI 问数（V8 新增） ----------
+  /** 协议风格：chat = OpenAI Chat Completions；responses = OpenAI Responses API */
+  ai_api_style: 'chat',
+  /** 是否展示/使用模型思维链（reasoning_content）。0 = 不展示（推荐） */
+  ai_enable_thinking: '0',
+  /** 单次 AI 请求超时（毫秒），默认 60000 */
+  ai_timeout_ms: '60000',
+  /** 是否允许公开分享链接问数 */
+  ai_public_ask_enabled: '1',
+  /** 单个分享令牌每分钟最大问数次数 */
+  ai_public_rate_per_min: '20',
+  /** 单次问数最多可选的数据范围数量 */
+  ai_scope_max_sources: '8',
 
   // ---------- 审计 ----------
   audit_enabled: '1',
@@ -212,13 +233,22 @@ const GROUPS = [
     desc: '大模型接口配置（兼容 OpenAI 协议）',
     icon: '✦',
     fields: [
-      { key: 'ai_enabled', label: '启用 AI 问数', type: 'switch' },
+      { key: 'ai_enabled', label: '启用 AI 问数', type: 'switch', hint: '需先填好接口地址与密钥再开启' },
       { key: 'ai_provider', label: '模型供应商', type: 'aiprovider', hint: '选择供应商后自动填充接口地址与模型，只需填入 API Key' },
-      { key: 'ai_api_key', label: '接口密钥', type: 'password', hint: '在供应商控制台创建 API Key 后粘贴到此处' },
-      { key: 'ai_model', label: '模型名称', type: 'aimodel', hint: '选择供应商后自动列出可用模型' },
-      { key: 'ai_base_url', label: '接口地址', type: 'text', placeholder: 'https://api.deepseek.com/v1', hint: '选择供应商后自动填充，自建服务可手动修改' },
-      { key: 'ai_temperature', label: '温度参数', type: 'text', placeholder: '0.1', hint: '0-1，越低越稳定，问数建议 0.1' },
-      { key: 'ai_max_rows', label: '最大返回行数', type: 'number', min: 10, max: 5000 },
+      { key: 'ai_api_key', label: '接口密钥', type: 'password', hint: '在供应商控制台创建 API Key 后粘贴到此处（MiMo 开放平台：https://api.xiaomimimo.com）' },
+      { key: 'ai_model', label: '模型名称', type: 'aimodel', hint: 'MiMo 可用 mimo-v2.6-pro（默认，能力更强）/ mimo-v2.6-flash（更快）' },
+      { key: 'ai_base_url', label: '接口地址', type: 'text', placeholder: 'https://api.xiaomimimo.com', hint: '填域名根、带 /v1、或完整 .../v1/chat/completions 都可以 —— 系统会自动归一化并补齐端点，不会重复拼接' },
+      { key: 'ai_api_style', label: '接口协议风格', type: 'select', options: [
+        { value: 'chat', label: 'Chat Completions（/chat/completions，推荐）' },
+        { value: 'responses', label: 'Responses API（/responses）' },
+      ], hint: '绝大多数服务与自建中转用 Chat Completions；OpenAI Responses API 才选第二项' },
+      { key: 'ai_temperature', label: '温度参数', type: 'text', placeholder: '0', hint: '0-2，越低越稳定；问数建议 0' },
+      { key: 'ai_enable_thinking', label: '展示模型思维链', type: 'switch', hint: '开启后接口会额外返回 reasoning_content（思维链）。思维链永远不会被当作答案或 SQL 执行，仅用于排查' },
+      { key: 'ai_timeout_ms', label: '接口超时（毫秒）', type: 'number', min: 5000, max: 600000, hint: '默认 60000（60 秒）；推理模型较慢可调大到 120000' },
+      { key: 'ai_max_rows', label: '最大返回行数', type: 'number', min: 10, max: 5000, hint: '问数结果最多返回多少行，硬上限 500（公开分享页硬上限 200）' },
+      { key: 'ai_scope_max_sources', label: '单次最多选几个数据范围', type: 'number', min: 1, max: 20, hint: '默认 8，避免一次塞太多表把提示词撑爆' },
+      { key: 'ai_public_ask_enabled', label: '允许公开分享问数', type: 'switch', hint: '关闭后所有 /a/:token 分享页都只显示「已关闭」，不再消耗大模型额度' },
+      { key: 'ai_public_rate_per_min', label: '分享页单令牌限流（次/分钟）', type: 'number', min: 1, max: 600, hint: '默认 20；单 IP 另有 30 次/分钟的固定上限' },
       { key: 'ai_welcome', label: '欢迎语', type: 'textarea', placeholder: '你好，我是数据助手...' },
     ],
   },

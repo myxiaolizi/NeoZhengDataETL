@@ -5,6 +5,257 @@
 
 ---
 
+## [8.0.0] - 2026-10-31
+
+本版是**AI 问数可用性 + 数据可分享 + 生产链路补齐**升级：定位并修复「AI 问数完全不可用」的 4 个根因，
+把问数从「单个数据集」升级为**多数据范围**（数据集 / 数据项目 / 邮箱推送 / 流程产出表），
+新增**分享为网页**（含手机 + 电脑都能用的公开问数页 `/a/:token`），
+重新独立核对两个 CRM 项目与业务表并**证明快照口径 100% 一致**，
+并把 **V7 从未部署到生产的后端**一并补齐。
+本版同时包含 [7.1.0] 的看板与报表中心 30+ 项优化（详见该章节）。
+
+### 1. AI 问数为何完全不可用（根因，全部实测）
+
+用户给的配置是 MiMo（小米）开放平台。实测出 **4 个根因**，其中 3 个是代码/配置缺陷、1 个是能力缺失：
+
+| # | 根因 | 证据 |
+|---|---|---|
+| 1 | **接口地址被无条件双拼** | 旧 `ai.js` 是 `baseUrl + '/chat/completions'`。用户按控制台填**完整地址** `https://api.xiaomimimo.com/v1/chat/completions` → 实际请求 `.../v1/chat/completions/chat/completions` → **HTTP 400**（实测返回 `{"error":{"code":"400","message":"Invalid request","param":"404 NOT_FOUND"}}`） |
+| 2 | **供应商预设指向错误的平台** | 旧 `PROVIDERS.mimo` 是 `https://api.mimo.ai/v1` + 模型 `mimo-7b-rl`，而真实是**小米 MiMo 开放平台** `https://api.xiaomimimo.com`，模型 `mimo-v2.6-pro` / `mimo-v2.6-flash`。选预设必然调不通 |
+| 3 | **库里的 key 是失效的** | `jdywh_settings` 里 `ai_enabled=1`、`ai_base_url`、`ai_model`、`ai_provider` 都在，但 `ai_api_key` 是旧 key → 401 `{"error":{"message":"Invalid API Key","code":"401","type":"invalid_key"}}` |
+| 4 | **只支持单个数据集** | `ai.ask()` 只有 `datasetId`，且 `buildSchemaContext` 会把库里的坏数据集一并塞给模型（id 41 表名 `zkcrm-ry`、42 SQL `select * from zkcrm-ry`、46/47 指向已不存在的项目 988/989）→ 生成的 SQL 必然执行失败 |
+
+**根因 1 的修法（`normalizeBaseUrl` / `buildEndpoint`）**：把用户可能填的任意形态归一化到「协议根」，再按 `ai_api_style` 拼端点。
+实测 9 种形态全部正确，且**任何情况都不会出现重复的 `/chat/completions`**：
+
+| 用户填的 | 实际请求 |
+|---|---|
+| `https://api.xiaomimimo.com` | `.../v1/chat/completions` |
+| `https://api.xiaomimimo.com/` | `.../v1/chat/completions` |
+| `https://api.xiaomimimo.com/v1` | `.../v1/chat/completions` |
+| `https://api.xiaomimimo.com/v1/chat/completions` | `.../v1/chat/completions` |
+| `https://api.xiaomimimo.com/chat/completions` | `.../v1/chat/completions` |
+| `https://api.xiaomimimo.com/v1/responses` | `.../v1/chat/completions`（chat 风格） |
+| `https://dashscope.aliyuncs.com/compatible-mode/v1` | `.../compatible-mode/v1/chat/completions` |
+
+**MiMo 协议实测（本项目内两路独立验证，结论一致）**：
+- `mimo-v2.6-pro` 2233ms / `mimo-v2.6-flash` 904ms 均 200；
+- **`choices[0].message.content` 才是答案，`reasoning_content` 是思维链**（英文推理，**占用 `max_tokens` 预算**：`max_tokens=16` 时推理吃光 15 个 token 导致 `content=""`）→ 一律丢弃；`max_tokens` 下限 256、SQL 生成用 2048；
+- SQL 生成能力**优秀**：给逻辑表名 + 中文列清单后 3/3 严格只输出一条 SELECT（无 ``` 围栏、无分号、**自动给中文列名加反引号**）；
+- 长上下文 OK（120 字段 → `prompt_tokens=1153`；8247 字符 → 4160）；
+- `max_tokens` 16/2000/9000/20000/128000 全部 200；
+- 流式 SSE 可用（先出 `reasoning_content` 再出 `content`）；`tools` 函数调用可用；`/v1/responses` 与 `/anthropic/v1/messages` 均 200 兼容；
+- **`GET /v1/models` 返回 405** → 「测试连接」绝不依赖它，一律走一次最小 chat 调用。
+
+**错误信息中文化**（实测错误结构逐条映射）：
+`401 invalid_key` → 「API Key 无效或已过期」；`400 Unsupported model` → 「模型名不受支持」；
+`400 Invalid request / param:404` → 「接口地址不正确」；`ENOTFOUND` → 「无法连接 AI 接口：无法解析域名」；超时 → 「请求超时」。
+
+### 2. AI 问数：从「单数据集」到「多数据范围」
+
+新增 `src/ai-scope.js`，把 4 类来源解析成统一对象 `{kind,id,name,table,alias,columns,rowCount,invalid,reason}`：
+
+| kind | 来源 | 物理表 |
+|---|---|---|
+| `dataset` | 数据集（`jdywh_datasets`） | `project` → 项目解析表；`table` → `source_table`；`sql` → 内联为逻辑表 |
+| `project` | 数据项目（`jdywh_projects`） | `parsed_table`（或 `data_table`） |
+| `mail` | 邮箱推送项目（`jdywh_mail_projects`） | `data_table`，如 `jdywh_mail_31`（1062 行） |
+| `flow` | 处理流程产出表 | 从 `jdywh_flows` 的 `sink_table` 节点解析，如 `jdywh_crm_signing_v7` |
+
+**关键设计一：逻辑别名 + CTE 注入**。不把中文物理表名直接塞进提示词，而是告诉模型「逻辑表 `t1` = 这些列」，执行时拼 `WITH t1 AS (...)`。实测模型 3/3 会正确沿用 `t1`。
+
+**关键设计二：中文业务名投影（解决「Unknown column '区域'」）**。
+`parsed_16` 的物理列名是 `widget_1791449342211` 这类匿名名，中文业务名（如「区域」）只存在于列注释里。
+即使把「区域」写进提示词，中文模型仍会**直接把「区域」当列名**写进 SQL → MySQL 报 `Unknown column '区域'`（生产实测命中）。
+V8 在 CTE 里把物理列**再投影一份中文别名**（仅在中文名与已有列不重名时），于是 `区域` 与 `widget_1791449342211` **两种写法都能跑**。
+实测 4/4 中文列名 SQL 直执行通过；真实问数 3/3 通过。
+
+**关键设计三：按需包裹**。只有模型引用了逻辑别名、或来源存在「匿名列 + 中文业务名」时才包 CTE；
+模型直接写白名单物理表（如 sql 数据集自身的 `zkcrm-ry`）时**原样执行**，保持 V4.1 历史契约（返回模型原 SQL）。
+
+**SQL 安全（三层）**：
+1. `reports.assertReadOnly()` —— 只允许单条 SELECT/WITH，拒绝 INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/GRANT/多语句；
+2. `ai-scope.assertScopeOnly()` —— **表白名单**：FROM/JOIN 引用的表必须 ∈（scope 物理表 ∪ sql 数据集自身源表 `physicalRefs` ∪ 逻辑别名 ∪ 模型自声明 CTE 名）；`information_schema`/`mysql`/`performance_schema`/`sys` 一律拒绝；`jdywh_` 前缀必须精确命中；
+3. 强制分页上限 `min(ai_max_rows, 500)`。
+
+**白名单对抗测试 16/16 全对**（放行 3 / 拦截 13），含 **UNION 藏表、子查询藏表、注释绕过、大小写绕过、多语句** 全部拦截。
+
+**顺带修掉一个历史回归**：sql 型数据集的源表名含连字符（`zkcrm-ry`）时，词法解析会拆成表 `zkcrm` + 别名 `ry` → 被白名单误杀。
+现在 `parseTableRef()` 在 FROM/JOIN 位置把 `-词` 回拼成完整表名，并把 sql 数据集**已补反引号的 `normalizeSql` 结果**里的表引用加入 `physicalRefs`。
+`v41-ai-backend.js` 由 PASS 4/FAIL 5 → **PASS 10/FAIL 0**。
+
+**坏源不静默降级**：`scope-options` 把坏数据集标 `invalid:true` + `reason`，界面置灰；`ask` 遇到全坏源直接给中文错误。
+跨数据源（`datasource_id≠0`）明确报「V8 暂不支持跨数据源 AI 问数」，**不静默降级**。
+
+**顺手修的两个真 bug**（自查发现）：
+1. **`resp.text()` 超时逃逸**：`AbortSignal.timeout` 同时作用于「等响应头」与「读响应体」，原代码只包了 `fetch()`，读 body 超时会漏出英文 `The operation was aborted due to timeout`。已把两者一起包进 `try` → 一律中文；
+2. **SQL 生成超时重试**：107 列提示词下首字延迟偶尔 >60s，对**仅超时类**错误自动重试一次、超时放宽到 2×（上限 180s）。
+
+### 3. AI 问数：分享为网页（他人用手机 / 电脑打开即可问）
+
+新增 `src/ai-shares.js` + 表 `jdywh_ai_shares`（幂等建表）：
+`token / title / scope_json / password(sha256) / password_plain / expires_at / allow_export / status / view_count / ask_count / last_ask_at / created_by`，`PRIMARY KEY(id)` + `UNIQUE KEY uk_token(token)`。
+
+**登录态接口**（`requirePerm('ai:use')`）：`GET /api/ai/scope-options`、`POST/GET /api/ai/shares`、`PATCH/DELETE /api/ai/shares/:id`。
+**公开接口**（无登录，**必须放在 `requireAuthApi` 之前**，已实测挂载位置正确）：`GET /api/public/ai-shares/:token?pwd=`、`POST /api/public/ai-shares/:token/ask`。
+
+**隐私设计（三层）**：
+1. **meta 不暴露物理表名**：`sources[]` 只有 `{kind,name,rowCount,columnCount}`，无 `table`；
+2. **公开问数不回传 SQL**：`sql` 字段刻意省略（防表结构泄露）；
+3. **有密码分享在验证通过前 `sources` 为空**，不泄露「分享里有什么数据」；`passwordError` 用 200 状态码返回（前端原地显示密码框，不会被当成登录失效）。
+
+**限流与审计**：单 token 20 次/分、单 IP 30 次/分、密码错 5 次/10 分钟 → 429；公开问数写 `jdywh_ai_chats`（`user_id=NULL`，`message` 前缀 `share:<id>`）。
+
+**修掉一个生产才暴露的链接拼接 bug**：宝塔 Node 反代默认 `proxy_set_header Host $host:$server_port`，且只设 `X-Scheme`（不设 `X-Forwarded-Proto`），
+导致旧 `requestHost()` 拼出 `http://域名:443/a/xxx`（协议错 + 端口多余），复制到微信/短信会走 301、个别客户端直接失败。
+现在按 `X-Forwarded-Proto` → `X-Scheme` → Host 端口是否为 443 → `req.protocol` 取协议，并去掉默认端口（https 的 `:443` / http 的 `:80`）。
+生产实测链接已变为 `https://jdy.zhengl.vip/a/<token>`。
+
+**前端**：`/ai` 页新增数据范围多选（按 4 类分组、显示行数/列数、坏源置灰、超 `maxSources` 拦截）、
+「分享」弹窗（标题/密码/有效期/允许导出 → 链接 + 复制 + 打开预览）、「分享管理」抽屉（复制/停用-启用/删除二次确认）；
+新增公开路由 **`/a/:token`** 独立布局（**不套 BasicLayout**，手机优先：气泡对话 + 吸底输入 + `env(safe-area-inset-bottom)` 安全区 + 结果表横向滚动）；
+`/a/` 前缀**完全不探测登录态**（未登录访客不会打到 401）。
+
+**修掉公开页「0 个数据来源」bug**：根因是裸 `fetch` 未解包后端 `{ok, data:{...}}` 外层（只有 `api.*` 会自动取 `data`），
+导致 `json.sources` 为 `undefined` → 页面判成「无可问数来源」。已在 `publicAiRaw()` 显式解包。
+
+### 4. 两个 CRM 项目的数据核对（独立重做）
+
+**基准**：`数据文件/新增智能体签约_20261030233545.xlsx`，Sheet「新增智能体签约」，**96 数据行 × 59 列**。
+⚠️ 两个**重名列**必须按列序号读：`优惠券`（idx 25/29）、`流程状态`（idx 38/56）；`data_id` 在 idx 0。
+
+**4 个「假差异」陷阱（踩了会白改一遍）**：
+
+| # | 陷阱 | 真相 |
+|---|---|---|
+| 1 | 以为 `parsed_16` 列名是中文 | **错**。列名是 `widget_xxx`/`w_xxx` 匿名列，**业务名在 `COLUMN_COMMENT` 里**，必须按注释映射 |
+| 2 | 以为主键是 `data_id` | **错**。`parsed_16` 主键列是 **`jdy_data_id`** |
+| 3 | `流程状态`(idx56) 直接比文本 | **错**。DB 是 `sys_flow_state_2` 存 `0/1`，业务是 `进行中`/`流转完成` → 必须映射（1→流转完成） |
+| 4 | 时间列直接比字符串 | **错**。业务是分钟精度，DB 是 `datetime` → 统一到分钟 |
+
+另有 3 处「注释被改过名」的列需特殊映射：`渠道充值和余额` → 注释 **`渠道信息(解析)`**；第 2 个 `优惠券` → **`优惠券(结果)`**；第 1 个 `流程状态`(idx38) → **`流程状态(节点)`**。
+
+**`签约类型` 的真相 —— 不是缺字段，是没认出来**：
+`raw_json` 里**没有**「签约类型」字样（0 行），但它对应 `data._widget_1793343168111`；映射到 `parsed_16` 是 **`w_1793343168111`**（列注释仍是占位符，`field_defs.field_name` 也是占位符 → 所以按业务名找不到）。
+**实测 96/96 完全一致**（xlsx 与 DB 都是 `SIC合作连锁签约 93 + 新连锁签约 3`）。
+
+**结论：快照口径下 100% 一致**
+
+```
+映射列 57（含 data_id，缺失 0）；比对单元格 5472
+差异 6 格 / 3 行；按列：实施对接时间 3、更新时间 3
+非 fresh 行差异 = 0        ← 核心断言
+快照口径一致率 = 100.0000%
+```
+
+这 6 格**全部落在「快照时刻之后仍收到真实推送」的 3 行**上（`...c0ca / ...cb / ...cc`）：
+`jdy_op_time` = `2026-10-31 13:01:15 / 13:01:53 / 13:05:23`（北京），与 `parsed_16.updated_at` 逐秒吻合。
+→ **改成表格的旧值等于用旧快照覆盖实时数据、让线上数据倒退**，因此本轮 **DB 写入 0 次**，也**不创建 apply 脚本**。
+→ 这也**正面证明简道云推送链路是通的、实时的**。
+
+**关于 V7 的两处数字（本版纠正了内部一次误判）**：
+V7 的「流程状态 43 差异」在 **idx38**（varchar 节点名 vs 业务节点名，真差异，V7 回填已修）；
+V7 的「签约类型 87 差异 / 只有 9 行有值」是 **回填前**（20:41）的快照，`backfill-plan`（20:56）随后写了 82 格，**9 + 82 + 5 = 96 完全自洽**。
+→ **V7 的计数没有错**。V7 真正遗留的是「根因定性」与「生产链路未同步」。
+
+**根因（最终版）**：`parsed_16` = 「该行最后一次收到 webhook 那一刻」的快照。业务侧不逐条发 webhook 的批量操作会造成时点差；**但只要业务侧发推送，我们就是实时正确的**。
+
+**V7 真正遗留的三条（本版处理）**：
+1. `src/flow-state.js` 缺 `开始 → 销售签约` 别名 → 首节点实例再推送会把「开始」写进业务列（**本版已修**）；
+2. `flow-state.aggregate()` 终态不置空 → 终态实例再推送会写错两列（**本版未修**，列为后续）；
+3. **V7 后端从未部署到生产**（**本版随部署补齐**）。
+
+**已知未修（如实列出，不做「已解决」冒充）**：
+- `aggregate()` **终态置空缺失**：3 个终态实例（`...c0e0` / `...d215f` / `...d2163`）在 `parsed_102` 里分别有 **7 / 7 / 5** 条事件（按 `event_instance_id` 关联），`aggregate()` 会返回 `策略审核/郑磊`（正确应为空）。当前这 3 行值是对的（来自 V7 回填），但**再次推送就会写错** → 风险「潜在但非纯理论」，属行为变更需单独评审；
+- legacy `aggregate()` 排序键仍是 `header_created_at`，**36 个实例存在 1ms 级 `jdy_op_time` 回退**，建议后续统一为 `(jdy_op_time, id)`。
+
+### 5. 流程宽表（16 + 102 合成）
+
+`jdywh_crm_signing_v7`：**96 行 × 61 列**（`id` + `created_at` + 59 业务列），列顺序与业务表完全一致；重名列改名 `优惠券(结果)` / `流程状态(节点)`；`uk_flow_data_id(data_id)` 唯一索引（upsert 前提）。
+
+```
+比对单元格 5664；差异 6 格 / 3 行
+非 fresh 行 96 × 59 逐格 0 差异      ← 核心断言
+```
+
+**「当前节点 / 当前负责人」四要素推导规则在当前库数据上仍 96/96 命中**（来源分布 `events=66 / fallback_16=26 / ended=4 / empty=0`）。
+
+**实时性最强证据**（同一行、同一条规则、两个切点）：
+```
+6adafffb466e4b153257337c
+  cutoffTime=2026-10-30T15:30:00Z（业务表快照） → 连锁使用 / 郑飞   ← 精确命中业务表
+  cutoffTime=''              （生产实时口径） → 客户培训 / 郑磊   ← 精确命中最新推送
+```
+
+**推送实时触发实测 14/14 PASS**（走 `flow-ingest.triggerOnPushAfterSave(102)` 与 `push.js.triggerFlowsAfterPush(16)` 两条真实生产调用）：
+钩子同步返回 0ms（不阻塞简道云）→ 目标表 **1059ms** 后生效；冷却 3s 内重复触发被合并；运行中重入被拒；删除探针后 1714ms 自动还原、无残留。
+**不做增量 upsert 的理由**：瓶颈在读不在写；增量需维护脏行快照，一旦漂移就**静默漏更新**，比慢更危险；全量 upsert 天然自愈。
+
+### 6. 处理流程引擎改造（3 处，全部向后兼容）
+
+| 改动 | 说明 |
+|---|---|
+| **能力自检前置门** | 新增 `unknownNodeTypes()` / `assertFlowSupported()`（已导出）。`run()` 在**任何节点执行前**自检 → 返回 `{ok:false, message:"该流程使用了当前服务端不支持的节点类型：…请先升级服务端到 V8 再运行该流程。"}`，中文可读、无堆栈；`triggerOnPush()` 遇不支持节点跳过并 `skipped:[{reason:'unsupported_nodes'}]`；`runClean()` 的 `default: break` → **throw**；`normalizeNodes()` 不再把未知类型悄悄改成 `filter`（旧行为保存一次就损坏流程定义） |
+| **批量 upsert** | 逐行 upsert 96 行 = 96 次远程往返，实测同一次推送触发耗时 **38362ms**。改为多行 `VALUES ... ON DUPLICATE KEY UPDATE`：`sink_table` 1097ms → **98–159ms**，单次全量 1935/1569ms → **1047/1130/1305ms**。语义等价（同列集、同 `keyField=data_id`、两次运行全表指纹一致） |
+| **`NODE_ALIAS` 补 `开始 → 销售签约`** | 业务流程表首个节点叫「销售签约」，流程事件流里是「开始」。V7 的 C3 推导规则已做该别名，但**推送实时链路**（`flow-state.js`）漏了 → 首节点实例再推送会把「开始」写进 `parsed_16.flow_current_node`，值域漂移并顺着宽表流进看板 |
+
+**回归全绿**：`v7-flow-join.js` 132/132、`v7-flow-assembly-dryrun.js` 11/11、`v7-flow-push-wire.js` 9/9、`v7-flow-check-assembly.js` 通过。
+
+### 7. 生产部署现状（审计结论 + 本次补齐）
+
+| 项 | 状态 |
+|---|---|
+| **6.1 的修改** | ✅ **已部署且已生效**（`settings.js` 含 `DEFAULT_CACHE_TTL_MS`；`/api/settings/public` 返回 `Cache-Control: no-cache, no-store, must-revalidate`） |
+| **7.0/7.1 的后端** | ❌ 部署前**未部署**：生产 `src/flows.js` 48488B（本机 96297B，`grep pick_current_task` = 0）、`schema.js` 无 `columnNameSet`、`routes/push.js` 无 `parsedCellOf`、`flow-ingest.js` 无 `FLOW_ON_PUSH` |
+| **版本错配** | 部署前生产代码 = 6.1，但库里已有 V7 的 flow 25（`run_mode=trigger`）→ **在生产点运行必然报节点类型错误**；且生产无触发逻辑 → 宽表**永不自动刷新**；字段清空 bug **仍在线** |
+
+**本次随部署一并补齐**：`src/**`（含 V7/V7.1 未部署文件 + V8 新增 `ai-scope.js`/`ai-shares.js`）、`scripts/v7-*` 与 `scripts/v8-*`、`frontend/dist`（重新构建）、`package.json`、`CHANGELOG.md`、`README.md`；保留生产 `.env` 与 `node_modules`。
+
+### 8. 验证（全部实测，可复跑）
+
+| 项目 | 结果 |
+|---|---|
+| **AI 后端自测** `scripts/v8-ai-backend.js` | **PASS 103 / FAIL 0** |
+| **AI 统一验收** `scripts/v8-acceptance.js --ai` | **33 / 33** |
+| **数据对账复核** `scripts/v8-reconcile-verify.js` | **PASS 6 / FAIL 0，EXIT=0**（映射 57 列 / 5472 格 / 非 fresh 0 差异 / 快照口径 100%） |
+| **流程宽表复核** `scripts/v8-flow-verify.js` | **PASS 31 / FAIL 0 / BLOCK 0，EXIT=0**（生产环境 PASS 23 / SKIP 2，缺 xlsx 属预期；本次已随生产部署 xlsx，达 PASS 31） |
+| **流程 + 历史回归** `scripts/v8-acceptance.js --flow --regress` | **9 / 9** |
+| **V4.1 AI 后端回归** | **PASS 10 / FAIL 0**（修复前 4/5） |
+| **V4.1 数据集 SQL / V6.1 数据明细 / V7 三项** | 全通过 |
+| **SQL 白名单对抗测试** | **16 / 16** |
+| **中文列名直执行** | **4 / 4**（修复前 0/4，报 `Unknown column '区域'`） |
+| **分享链路 HTTP 端到端** | **35 / 35** |
+| **前端 AI UI 断言** `scripts/v8-ai-ui-check.js` | **59 / 59** |
+| **TypeScript** | `npx tsc --noEmit` → **0 错误** |
+| **前端构建** | `npm run build` → 成功（92 assets） |
+| **生产浏览器验收（桌面 + 3 手机视口）** | **27 / 27 PASS**（含公开页提问返回 96 条、无横向溢出、无 console error） |
+
+### 9. 部署与回滚
+
+```bash
+# 部署（root）
+bash scripts/v8-deploy.sh /tmp/jdy-push-v8-src
+# 脚本会：备份到 .backup-v8-<ts>/ → rsync（排除 .env/node_modules/.git/数据文件/_work）
+#        → 逐文件 node --check → 失败自动回滚 → 权限修正 → dist 自检 → 打印回滚命令
+
+# 重启后验证
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8781/healthz   # 期望 200
+node scripts/v8-reconcile-verify.js                                      # 期望 EXIT=0
+node scripts/v8-flow-verify.js                                           # 期望 EXIT=0
+node scripts/v7-flow-run.js                                              # 追平部署期间的推送
+```
+
+**回滚**：`rsync -a --delete .backup-v8-<ts>/src/ /www/wwwroot/jdy-push/src/ && cp -a .backup-v8-<ts>/frontend /www/wwwroot/jdy-push/`，再重启。
+**AI 一键关停**：`UPDATE jdywh_settings SET svalue='0' WHERE skey='ai_enabled'`。
+
+### 10. 安全性说明（如实披露）
+
+- `ai_api_key` 目前以**明文**存放在 `jdywh_settings`（与既有 `smtp_pass`、`mail_imap_pass` 一致）。本版**未改变**这个存储方式；建议后续单独评估加密或改用环境变量。
+- 密钥**从未**写入任何源码、脚本、日志、CHANGELOG 或 Git；测试统一从 `MIMO_KEY` 环境变量读取；公开接口与错误信息全程 `sk-***` 脱敏。
+- `数据文件/`、`_work/` 已在 `.gitignore` 中，业务数据与调试产物不入库。生产上的 `数据文件/` 权限 `600` + 属主 `www`，且已实测**无法经 HTTP 访问**（返回 404）。
+
+---
+
 ## [7.1.0] - 2026-10-31
 
 本版针对看板与报表中心的 30+ 项需求做优化：**板块标题收进卡片**、**1080P 单排布局**、
