@@ -219,8 +219,8 @@ const CSS = `
   font-size:var(--fs-xs,12px);
   font-variant-numeric:tabular-nums;   /* 数字等宽，保证竖直对齐 */
   table-layout:fixed;                   /* 列宽稳定：日期定宽 + 节点等分 */
-  /* 窄屏保底宽度：日期 104 + 9×52 + 合计 76 ≈ 648，避免节点列被压成 19px */
-  min-width:648px;
+  /* 窄屏保底宽度：日期 104 + 9×52 = 572，避免节点列被压成 19px */
+  min-width:572px;
 }
 
 /* 表头：12px/700 --text2，panel2 底 + 1px --line 下边 */
@@ -260,7 +260,8 @@ const CSS = `
 .vb8-tb tbody tr:hover th{background:color-mix(in srgb,var(--brand) 6%,var(--panel))}
 
 /* 0 值：视觉退后但仍可读 */
-.vb8-tb tbody td.zero{color:var(--text3);font-weight:500;opacity:.55}
+/* V10 修复：深色下 .55 透明度让 0 值反差仅 2.13，改为 --text2 + .72 */
+.vb8-tb tbody td.zero{color:var(--text2);font-weight:500;opacity:.72}
 
 /* 最新日行：左侧 3px 品牌色条 + 极淡品牌底 */
 .vb8-tb tbody tr.newest th{
@@ -294,7 +295,7 @@ const CSS = `
   color:var(--text2);font-weight:700;
   position:sticky;left:0;bottom:0;z-index:3;
 }
-.vb8-tb tfoot td.zero{color:var(--text3);font-weight:600;opacity:.7}
+.vb8-tb tfoot td.zero{color:var(--text2);font-weight:600;opacity:.8}
 .vb8-tb tfoot td.tot{padding-right:16px;width:76px;font-size:var(--fs-lg,17px);font-weight:750;color:var(--brand)}
 
 /* 底部统计 */
@@ -381,7 +382,6 @@ export default function FlowProgress({ data, loading, isMobile }: FlowProgressPr
                 {opts.full ? nd : nodeShort(nd)}
               </th>
             ))}
-            <th className="tot">合计</th>
           </tr>
         </thead>
         <tbody>
@@ -392,7 +392,6 @@ export default function FlowProgress({ data, loading, isMobile }: FlowProgressPr
                 const v = num(view.grid[ri]?.[k]);
                 return <td key={`${nd}-${k}`} className={v ? '' : 'zero'}>{v || 0}</td>;
               })}
-              <td className="rowtot">{fmtNum(view.colTotals[k] || 0)}</td>
             </tr>
           ))}
         </tbody>
@@ -403,7 +402,6 @@ export default function FlowProgress({ data, loading, isMobile }: FlowProgressPr
               const v = view.rowTotals[ri] || 0;
               return <td key={`ft-${nd}`} className={v ? '' : 'zero'}>{fmtNum(v)}</td>;
             })}
-            <td className="tot">{fmtNum(view.grand)}</td>
           </tr>
         </tfoot>
       </table>

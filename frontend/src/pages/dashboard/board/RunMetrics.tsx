@@ -1,13 +1,13 @@
-/** 客户运行情况（6 组指标）— V9.2 视觉重构
+/** 客户运行情况（6 组指标）— V10 视觉重构
  *
- * V9.2 变更（纯视觉，不改数据与交互）：
- *  V1 「6 张同质卡片」→ **1 个统一面板 + 内部 1px 分隔线**（gap:1px + 面板底色 = 分隔线技巧），
- *     6 个单元格等高、无自身边框，整体感更强，不再是 6 个复制粘贴的盒子
- *  V2 每格顶部 3px 语义色强调条 + 极淡同色底（3%），形成 6 个可辨识的视觉身份
- *  V3 南北区从「纯文字 南 x 北 y」→ **双色迷你占比条**：`南 41 ▓▓▓░░ 北 56`
- *     占比用 flex-grow 分配，南北各取自身语义色（南 #2563eb / 北 #059669）
- *  V4 层级修正：大数字 22px/750 用 --text（深色高对比），南北区标签 11px + 数值 12px/700 上色
- *  V5 字号全部走令牌阶梯（最小 11px），不再出现 8~10.5px
+ * V10 变更（纯视觉，不改数据口径与交互）：
+ *  R6-1 金额 ≥ 10000 → 「万元」并保留 1 位小数（本地 fmtMoneyWan，不改 theme.ts）
+ *       例：¥1,045,541 → 104.6万；¥12,340 → 1.2万；¥9,800 → ¥9,800（原样）
+ *  R6-2 南北区数据条**铺满整行**：轨道 width:100%，南/北段按 s/(s+n) 与 n/(s+n) 的百分比宽度分配。
+ *       （历史：早期版本按原始比值分配空间，比率类指标两段之和 <1 时轨道留白，
+ *        实测只填 41.3% / 2.9% / 0.7%；改用百分比宽度后恒为 100%。）
+ *  R6-3 指标名移到数字**右侧下方**：数字 22px/750 在左上，指标名 11px var(--text2) 基线对齐在其右下方。
+ *  V9.2 保留：统一面板 + gap:1px 分隔线、6 格等高、顶部 3px 语义色条、悬停浅色底。
  *
  * 数据：data.row7（含 cost 指标组；口径见 V7 契约 §2.4）
  */
@@ -16,7 +16,7 @@ import { Empty, Tooltip } from 'antd';
 import { ExclamationCircleOutlined } from '@ant-design/icons';
 import type { BoardData, Row7Data, SplitValue } from '@/api/crm-board';
 import { REGION_COLORS } from '@/api/crm-board';
-import { fmtMoney, fmtNum, fmtPct } from './theme';
+import { fmtNum, fmtPct } from './theme';
 
 export interface RunMetricsProps {
   data: BoardData;
@@ -60,9 +60,19 @@ function pair(p?: Partial<SplitValue> | null): { total: number; south: number; n
   return { total: num(p?.total), south: num(p?.south), north: num(p?.north) };
 }
 
+/** R6-1：金额格式化 —— ≥ 10000 用「万元」保留 1 位小数，否则原样 ¥ 千分位
+ *  ¥1,045,541 → 104.6万 | ¥12,340 → 1.2万 | ¥9,800 → ¥9,800 | ¥10,000 → 1.0万
+ *  （theme.ts 不在本组件写作用域内，故在此本地实现，语义与其 fmtMoney 一致） */
+export function fmtMoneyWan(v: number | null | undefined): string {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return '¥0';
+  if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(1)}万`;
+  return `¥${fmtNum(n, 0)}`;
+}
+
 function format(v: number, fmt: Fmt): string {
   if (fmt === 'pct') return fmtPct(v);
-  if (fmt === 'money') return fmtMoney(v);
+  if (fmt === 'money') return fmtMoneyWan(v);
   return fmtNum(v);
 }
 
@@ -100,8 +110,9 @@ const CSS = `
 /* V1：统一面板 —— gap:1px + line2 底 = 内部分隔线，6 格等高 */
 .vb9-panel{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:1px;background:var(--line2);flex:1;min-width:0}
 
-/* V2：单元格 —— 顶部 3px 语义色条 + 3% 同色底 */
-.vb9-cell{position:relative;display:flex;flex-direction:column;gap:8px;padding:13px 13px 12px;background:var(--panel);min-width:0;transition:background .16s ease}
+/* V2：单元格 —— 顶部 3px 语义色条 + 3% 同色底
+   V10：底部内距收到 5px，让内容撑到 95%+ 填充率（原 12px 只剩 92.9%） */
+.vb9-cell{position:relative;display:flex;flex-direction:column;gap:7px;padding:13px 13px 5px;background:var(--panel);min-width:0;transition:background .16s ease}
 .vb9-cell::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:var(--ac);opacity:.9}
 .vb9-cell:hover{background:color-mix(in srgb,var(--ac) 6%,var(--panel))}
 
@@ -111,39 +122,44 @@ const CSS = `
 .vb9-q{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;flex-shrink:0;cursor:help;color:var(--text3);font-size:var(--fs-2xs);line-height:1;transition:color .15s}
 .vb9-q:hover{color:var(--ac)}
 
-/* 指标主体：两行均分剩余高度 → 填充率 100% */
+/* 指标主体：两行均分剩余高度 → 填充率拉满 */
 .vb9-body{flex:1;display:flex;flex-direction:column;min-height:0}
-.vb9-item{flex:1;display:flex;flex-direction:column;justify-content:center;gap:2px;min-width:0}
+.vb9-item{flex:1;display:flex;flex-direction:column;justify-content:center;gap:5px;min-width:0}
 .vb9-item + .vb9-item{border-top:1px solid var(--line2)}
 
-/* V4：标签 11px / 数字 22px 深色高对比 / 南北区双色条 */
-.vb9-lbl{font-size:var(--fs-2xs);color:var(--text2);font-weight:var(--fw-normal);line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.vb9-num{font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--text);line-height:1.12;letter-spacing:-.4px;white-space:nowrap;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis}
+/* R6-3：数字左上（22px/750） + 指标名在其右侧下方（11px --text2，基线对齐） */
+.vb9-top{display:flex;align-items:baseline;gap:7px;min-width:0}
+.vb9-num{font-size:var(--fs-xl);font-weight:var(--fw-heavy);color:var(--text);line-height:1.08;letter-spacing:-.4px;white-space:nowrap;font-variant-numeric:tabular-nums;flex-shrink:0}
+/* 指标名 11px：--text3 在深色底(#141e33)上对比度仅 4.21，改用 --text2（≥7.5） */
+.vb9-lbl{font-size:var(--fs-2xs);font-weight:var(--fw-normal);color:var(--text2);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;padding-bottom:2px}
 
-/* V3：南北区占比条 */
-.vb9-split{display:flex;align-items:center;gap:8px;min-width:0;margin-top:1px}
-.vb9-split .rg{display:inline-flex;align-items:baseline;gap:3px;white-space:nowrap;flex-shrink:0;font-variant-numeric:tabular-nums;line-height:1.3}
-.vb9-split .rg i{font-style:normal;font-size:var(--fs-2xs);font-weight:var(--fw-normal);color:var(--text2)}
-.vb9-split .rg b{font-size:var(--fs-xs);font-weight:var(--fw-bold)}
-/* 12px 区域文字：用 Board.tsx 的 --south / --north（明暗自适应）；
- *   图形仍用 REGION_COLORS 保品牌识别。
+/* 南北区数值行 */
+.vb9-regs{display:flex;align-items:baseline;justify-content:space-between;gap:8px;min-width:0}
+.vb9-regs .rg{display:inline-flex;align-items:baseline;gap:3px;white-space:nowrap;flex-shrink:0;font-variant-numeric:tabular-nums;line-height:1.25}
+.vb9-regs .rg i{font-style:normal;font-size:var(--fs-2xs);font-weight:var(--fw-normal);color:var(--text2)}
+.vb9-regs .rg b{font-size:var(--fs-xs);font-weight:var(--fw-bold)}
+/* 12px 区域文字：用 Board.tsx 的 --south / --north（明暗自适应）；图形仍用 REGION_COLORS 保品牌识别。
  *   --north 绿在浅底上对比度仅 3.77，与 --text 混合加深到 ≥4.5（只用令牌，不新造色值） */
-.vb9-split .s b{color:var(--south,var(--brand))}
-.vb9-split .n b{color:color-mix(in srgb,var(--north,var(--green)) 80%,var(--text))}
-.vb9-split .track{flex:1;min-width:20px;height:6px;border-radius:99px;background:var(--line2);display:flex;overflow:hidden}
-.vb9-split .track.empty{background:var(--line)}
-.vb9-split .seg{display:block;height:100%;min-width:0}
-.vb9-split .seg.s{background:var(--vb9-south)}
-.vb9-split .seg.n{background:var(--vb9-north)}
+.vb9-regs .s b{color:var(--south,var(--brand))}
+.vb9-regs .n b{color:color-mix(in srgb,var(--north,var(--green)) 80%,var(--text))}
+
+/* R6-2：轨道铺满整行；南/北段用百分比宽度，二者之和恒为 100%
+ *  ⚠️ 不要改回按原始比值分配空间的做法：比率类指标的南北值都 <1（如 0.144 / 0.269），
+ *     按比值分空间时两段之和 <1，轨道会留下大段空白（实测只填 41.3% / 2.9% / 0.7%）。 */
+.vb9-track{display:flex;width:100%;height:7px;border-radius:99px;background:var(--line2);overflow:hidden;flex-shrink:0}
+.vb9-track.empty{background:var(--line)}
+.vb9-track .seg{display:block;height:100%;flex:0 0 auto;min-width:0}
+.vb9-track .seg.s{background:var(--vb9-south)}
+.vb9-track .seg.n{background:var(--vb9-north)}
 .vb9-empty{padding:34px 0}
 
 /* 断点：6 → 3 → 2 → 1，分隔线由 gap 自动生成，无需改边框 */
 @media(max-width:1440px){.vb9-panel{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:1024px){.vb9-panel{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:640px){.vb9-panel{grid-template-columns:1fr}.vb9-cell{padding:12px}}
+@media(max-width:640px){.vb9-panel{grid-template-columns:1fr}.vb9-cell{padding:12px 12px 6px}}
 `;
 
-export default function RunMetrics({ data, loading, isMobile }: RunMetricsProps) {
+export default function RunMetrics({ data, isMobile }: RunMetricsProps) {
   const r7 = data?.row7 as Row7Data | undefined;
 
   const groups = useMemo<Group[]>(() => {
@@ -211,20 +227,26 @@ export default function RunMetrics({ data, loading, isMobile }: RunMetricsProps)
 
   const hasData = groups.length > 0;
 
-  /** V3：单行指标的南北区占比条 */
+  /** R6-2 + R6-3：南北区数值一行 + 铺满整行的双色占比条 */
   const renderSplit = (ln: Line) => {
     const s = ln.south;
     const n = ln.north;
-    const empty = s + n <= 0;
+    const sum = s + n;
+    const empty = !(sum > 0);
+    /* 百分比宽度：南 + 北 恒等于 100%（空轨时都不渲染） */
+    const southPct = empty ? 0 : (Math.max(s, 0) / sum) * 100;
+    const northPct = empty ? 0 : (Math.max(n, 0) / sum) * 100;
     return (
-      <div className="vb9-split">
-        <span className="rg s"><i>南</i><b>{format(s, ln.fmt)}</b></span>
-        <span className={`track${empty ? ' empty' : ''}`} aria-hidden="true">
-          {!empty && <i className="seg s" style={{ flexGrow: Math.max(s, 0), flexBasis: 0 }} />}
-          {!empty && <i className="seg n" style={{ flexGrow: Math.max(n, 0), flexBasis: 0 }} />}
+      <>
+        <div className="vb9-regs">
+          <span className="rg s"><i>南</i><b>{format(s, ln.fmt)}</b></span>
+          <span className="rg n"><i>北</i><b>{format(n, ln.fmt)}</b></span>
+        </div>
+        <span className={`vb9-track${empty ? ' empty' : ''}`} aria-hidden="true">
+          {!empty && <i className="seg s" style={{ width: `${southPct}%` }} />}
+          {!empty && <i className="seg n" style={{ width: `${northPct}%` }} />}
         </span>
-        <span className="rg n"><i>北</i><b>{format(n, ln.fmt)}</b></span>
-      </div>
+      </>
     );
   };
 
@@ -271,8 +293,11 @@ export default function RunMetrics({ data, loading, isMobile }: RunMetricsProps)
                   <div className="vb9-body">
                     {g.lines.map((ln) => (
                       <div className="vb9-item" key={ln.label}>
-                        <div className="vb9-lbl" title={ln.label}>{ln.label}</div>
-                        <div className="vb9-num">{format(ln.total, ln.fmt)}</div>
+                        {/* R6-3：数字在左，指标名在其右侧下方 */}
+                        <div className="vb9-top">
+                          <span className="vb9-num">{format(ln.total, ln.fmt)}</span>
+                          <span className="vb9-lbl" title={ln.label}>{ln.label}</span>
+                        </div>
                         {renderSplit(ln)}
                       </div>
                     ))}

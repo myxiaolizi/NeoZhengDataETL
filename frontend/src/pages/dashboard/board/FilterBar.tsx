@@ -1,36 +1,234 @@
-/** 看板筛选区
+/** 看板筛选区 — V10
  *
- * 6 个筛选按钮（从左到右）：日期 / 区域 / 连锁类型 / 销售 / 全部筛选条件 / 重置
- * 按钮名默认「全部」，筛选后显示所选结果名称；按钮后方显示该维度当前客户数。
+ * 6 个筛选控件（从左到右）：日期 / 区域 / 连锁类型 / 销售 / 全部筛选条件 / 重置
+ *
+ * V10 改动：
+ *   T1 修复图标裁切 —— 原 ICON.region / ICON.sales 把 <circle> 写在 <svg> 外面，
+ *      导致 circle 被渲染成按钮的裸子元素（实测 0×0 尺寸，肉眼看起来「图标缺一半」）。
+ *      改为全内联在同一个 <svg> 内。
+ *   T2 日历改用官方 DatePicker.RangePicker（presets 快捷项 + 深色字面色值覆盖）
+ *   T4 「全部筛选条件」由右侧 Drawer 改为居中 Modal
+ *   T5 区域/连锁类型/销售弹窗改 2 列网格 + 大号选项按钮（≥40px / 13px）
+ *   T6 未选显示维度名、选中显示结果；去掉按钮外框
+ *
  * 纯展示组件：状态由 Board.tsx 持有，这里只 onChange 回传补丁。
  */
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Badge, Button, Calendar, Checkbox, DatePicker, Divider, Drawer, Empty, Input, Modal,  Space, Tooltip,
+  Button, Checkbox, DatePicker, Empty, Input, Modal, Space, Tooltip,
 } from 'antd';
-import {
-  CalendarOutlined, CloseOutlined, EnvironmentOutlined, FilterOutlined,
-  ReloadOutlined, SearchOutlined, ShopOutlined, TeamOutlined,
-} from '@ant-design/icons';
+import { SearchOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import type {
   BoardCounts, BoardFilters, BoardOptions, DatePreset,
 } from '@/api/crm-board';
+import { useThemeMode } from './theme';
 
 const { RangePicker } = DatePicker;
 
-/* ══════════════ V9.2 筛选 chip 样式（精致化） ══════════════ */
+/* ══════════════ 弹层令牌重声明（T5 关键修复） ══════════════
+ *
+ * antd 的 Modal/Dropdown 会 portal 到 <body>，**取不到 .board-root 上的 CSS 变量**。
+ * 实测（v10-vars.cjs）：弹窗内 --brand/--line/--text/--fs-sm/--radius-sm 全部为空字符串，
+ * 导致选项按钮回落到 antd 默认值：font-size 14px（应 13px）、
+ * border-radius 0（应 10px）、border 取到 antd 文字色 rgb(11,31,59)（应 --line #e3e9f2）。
+ *
+ * 解决：用 useBoardTokens() 从 .board-root 读到真实值（含 --brand 用户主题色），
+ * 在弹窗内容根节点上以**内联字面值**重新声明这些变量，子元素即可正常继承。
+ * 这是契约 §六-9 允许的「重新声明令牌」做法。
+ */
+interface BoardTokens {
+  '--panel': string;
+  '--panel2': string;
+  '--line': string;
+  '--line2': string;
+  '--text': string;
+  '--text2': string;
+  '--text3': string;
+  '--brand': string;
+  '--brand3': string;
+  '--brandSoft': string;
+  '--danger': string;
+  '--radius-sm': string;
+  '--fs-2xs': string;
+  '--fs-xs': string;
+  '--fs-sm': string;
+}
 
-/** 筛选 chip 基础样式：30px 高、8px 圆角、白底 + 细边框，保证与浮动条有清晰边界 */
+const TOKENS_LIGHT: BoardTokens = {
+  '--panel': '#ffffff',
+  '--panel2': '#f8fafd',
+  '--line': '#e3e9f2',
+  '--line2': '#edf1f8',
+  '--text': '#0f172a',
+  '--text2': '#475569',
+  '--text3': '#8494ab',
+  '--brand': '#2563eb',
+  '--brand3': '#60a5fa',
+  '--brandSoft': '#eff5ff',
+  '--danger': '#dc2626',
+  '--radius-sm': '10px',
+  '--fs-2xs': '11px',
+  '--fs-xs': '12px',
+  '--fs-sm': '13px',
+};
+
+const TOKENS_DARK: BoardTokens = {
+  '--panel': '#141e33',
+  '--panel2': '#1a2740',
+  '--line': '#243356',
+  '--line2': '#1d2a47',
+  '--text': '#e8eef8',
+  '--text2': '#9db0cc',
+  '--text3': '#6d81a3',
+  '--brand': '#2563eb',
+  '--brand3': '#93c5fd',
+  '--brandSoft': '#16294a',
+  '--danger': '#f87171',
+  '--radius-sm': '10px',
+  '--fs-2xs': '11px',
+  '--fs-xs': '12px',
+  '--fs-sm': '13px',
+};
+
+/**
+ * 读取看板令牌用于弹层重声明。
+ * 优先取 .board-root 上的真实值（这样用户自定义的 --brand 主题色也能带进弹层），
+ * 取不到时回落到本节的字面值。
+ */
+function useBoardTokens(): React.CSSProperties {
+  const mode = useThemeMode();
+  const [brand, setBrand] = useState<string>('');
+
+  useEffect(() => {
+    const el = document.querySelector('.board-root');
+    if (!el) return;
+    const v = getComputedStyle(el).getPropertyValue('--brand').trim();
+    if (v) setBrand(v);
+  }, [mode]);
+
+  const base = mode === 'dark' ? TOKENS_DARK : TOKENS_LIGHT;
+  return (brand ? { ...base, '--brand': brand } : base) as unknown as React.CSSProperties;
+}
+
+/* ══════════════ 日历弹层样式（T2） ══════════════
+ *
+ * 弹层被 antd portal 到 <body>，取不到 .board-root 上的 CSS 变量
+ * （实测 .ant-modal-container / body 上 --brand/--line/--text 全部为空），
+ * 所以这里必须用**字面色值**，并按 V10 §三 令牌一对一声明：
+ *
+ *   亮色：--panel #ffffff · --line #e3e9f2 · --text #0f172a
+ *         --text2 #475569 · --text3 #8494ab · --brand #2563eb
+ *   深色：--panel #141e33 · --line #243356 · --text #e8eef8
+ *         --text2 #9db0cc · --text3 #6d81a3 · --brand #2563eb
+ *
+ * 圆角用 --radius 的 14px 视觉值取 12px（弹层比卡片略紧），阴影用 --shadow2 等价字面量。
+ */
+const CAL_CSS = `
+/* ── 面板容器 ── */
+.board-cal .ant-picker-panel-container{
+  border-radius:12px!important;
+  border:1px solid #e3e9f2!important;
+  box-shadow:0 4px 16px rgba(15,23,42,.09)!important;
+  overflow:hidden!important;
+}
+.board-cal .ant-picker-panel{border-radius:0!important}
+.board-cal .ant-picker-header{
+  border-bottom:1px solid #e3e9f2!important;
+  color:#0f172a!important;
+  padding:8px 10px!important;
+}
+.board-cal .ant-picker-header button{color:#475569!important}
+.board-cal .ant-picker-header-view{font-weight:600!important;color:#0f172a!important}
+.board-cal .ant-picker-content th{color:#8494ab!important;font-weight:600!important}
+.board-cal .ant-picker-cell{padding:2px 0!important}
+.board-cal .ant-picker-cell .ant-picker-cell-inner{
+  border-radius:8px!important;
+  min-width:26px!important;
+  height:26px!important;
+  line-height:26px!important;
+  font-size:12px!important;
+  transition:background .14s ease,color .14s ease!important;
+}
+.board-cal .ant-picker-cell-in-view{color:#0f172a!important}
+/* 非本月日期：用 :not() 降低权重，避免覆盖上面的 in-view 配色
+   （两者同为「属性+3类」特异性，若用通配 .ant-picker-cell 且写在后面会把 in-view 覆盖掉） */
+.board-cal .ant-picker-cell:not(.ant-picker-cell-in-view){color:#8494ab!important}
+.board-cal .ant-picker-cell:hover .ant-picker-cell-inner{background:#eff5ff!important}
+.board-cal .ant-picker-cell-today .ant-picker-cell-inner{
+  border:1px solid #60a5fa!important;
+  color:#2563eb!important;
+  font-weight:600!important;
+}
+.board-cal .ant-picker-cell-in-view.ant-picker-cell-selected .ant-picker-cell-inner,
+.board-cal .ant-picker-cell-in-view.ant-picker-cell-range-start .ant-picker-cell-inner,
+.board-cal .ant-picker-cell-in-view.ant-picker-cell-range-end .ant-picker-cell-inner{
+  background:#2563eb!important;color:#fff!important;font-weight:600!important;
+}
+.board-cal .ant-picker-cell-in-view.ant-picker-cell-in-range::before{background:#eff5ff!important}
+.board-cal .ant-picker-presets{border-right:1px solid #e3e9f2!important;padding:8px 4px!important}
+.board-cal .ant-picker-presets ul{list-style:none!important;margin:0!important;padding:0!important}
+/* 注意：antd 6 的 presets 项渲染为 <li>，不是 <button> */
+.board-cal .ant-picker-presets li{
+  border-radius:8px!important;color:#475569!important;font-size:12px!important;
+  padding:6px 10px!important;margin:2px 4px!important;cursor:pointer!important;
+  transition:background .14s ease,color .14s ease!important;
+}
+.board-cal .ant-picker-presets li:hover{background:#eff5ff!important;color:#2563eb!important}
+.board-cal .ant-picker-footer{border-top:1px solid #e3e9f2!important}
+.board-cal .ant-picker-today-btn{color:#2563eb!important}
+
+/* ── 深色（字面色值，见上方令牌映射） ── */
+html[data-theme='dark'] .board-cal .ant-picker-panel-container{
+  background:#141e33!important;
+  border-color:#243356!important;
+  box-shadow:0 4px 16px rgba(0,0,0,.42)!important;
+}
+html[data-theme='dark'] .board-cal .ant-picker-header{
+  border-bottom-color:#243356!important;color:#e8eef8!important;
+}
+html[data-theme='dark'] .board-cal .ant-picker-header button{color:#9db0cc!important}
+html[data-theme='dark'] .board-cal .ant-picker-header-view{color:#e8eef8!important}
+html[data-theme='dark'] .board-cal .ant-picker-content th{color:#6d81a3!important}
+html[data-theme='dark'] .board-cal .ant-picker-cell-in-view{color:#e8eef8!important}
+html[data-theme='dark'] .board-cal .ant-picker-cell:not(.ant-picker-cell-in-view){color:#6d81a3!important}
+html[data-theme='dark'] .board-cal .ant-picker-cell-inner{color:inherit!important}
+html[data-theme='dark'] .board-cal .ant-picker-cell:hover .ant-picker-cell-inner{background:#1a2740!important}
+html[data-theme='dark'] .board-cal .ant-picker-cell-today .ant-picker-cell-inner{
+  border-color:#60a5fa!important;color:#93c5fd!important;
+}
+html[data-theme='dark'] .board-cal .ant-picker-cell-in-view.ant-picker-cell-selected .ant-picker-cell-inner,
+html[data-theme='dark'] .board-cal .ant-picker-cell-in-view.ant-picker-cell-range-start .ant-picker-cell-inner,
+html[data-theme='dark'] .board-cal .ant-picker-cell-in-view.ant-picker-cell-range-end .ant-picker-cell-inner{
+  background:#2563eb!important;color:#fff!important;
+}
+html[data-theme='dark'] .board-cal .ant-picker-cell-in-view.ant-picker-cell-in-range::before{background:#16294a!important}
+html[data-theme='dark'] .board-cal .ant-picker-presets{border-right-color:#243356!important}
+html[data-theme='dark'] .board-cal .ant-picker-presets li{color:#9db0cc!important}
+html[data-theme='dark'] .board-cal .ant-picker-presets li:hover{background:#1a2740!important;color:#93c5fd!important}
+html[data-theme='dark'] .board-cal .ant-picker-footer{border-top-color:#243356!important;background:#141e33!important}
+html[data-theme='dark'] .board-cal .ant-picker-today-btn{color:#93c5fd!important}
+html[data-theme='dark'] .board-cal .ant-picker-panel,
+html[data-theme='dark'] .board-cal .ant-picker-body{background:transparent!important}
+html[data-theme='dark'] .board-cal .ant-picker-input > input{color:#e8eef8!important}
+html[data-theme='dark'] .board-cal .ant-picker-range-separator{color:#6d81a3!important}
+`;
+
+/* ══════════════ 筛选 chip 样式 ══════════════ */
+
+/**
+ * 筛选 chip：30px 高、8px 圆角。
+ * V10 T6：去掉外框 —— 默认透明底 + 透明边，hover / 选中才有视觉反馈。
+ * 为保证 chip 仍能被辨识，默认用 --panel2 底（面板白底上仍有细微层次），
+ * 并以 hover 的品牌色底作为主要交互反馈。
+ */
 const BTN_BASE: React.CSSProperties = {
   height: 30,
   padding: '0 10px',
   borderRadius: 8,
-  // --panel2(#f8fafd) 与 --panel(#fff) 仅差 7 个色阶，实测肉眼无法分辨（会「糊」），
-  // 故用 --line(#e3e9f2) 的 1px 实边 + 白底，让 chip 从浮动条上明确「浮」出来。
-  border: '1px solid var(--line)',
-  background: 'var(--panel)',
+  border: '1px solid transparent',
+  background: 'transparent',
   color: 'var(--text2)',
   fontSize: 'var(--fs-xs)',
   fontWeight: 500,
@@ -43,9 +241,11 @@ const BTN_BASE: React.CSSProperties = {
   whiteSpace: 'nowrap',
   lineHeight: 1,
   flexShrink: 0,
+  // 防止 SVG 被 flex 压扁（T1 的次要加固）
+  overflow: 'visible',
 };
 
-/** 已激活：品牌色实心 + 白字 + 轻微阴影（明显但克制） */
+/** 已激活：品牌色实心 + 白字 + 轻微阴影 */
 const BTN_ON: React.CSSProperties = {
   ...BTN_BASE,
   background: 'var(--brand)',
@@ -53,6 +253,18 @@ const BTN_ON: React.CSSProperties = {
   color: '#fff',
   fontWeight: 600,
   boxShadow: '0 2px 6px color-mix(in srgb, var(--brand) 26%, transparent)',
+};
+
+/** hover 进 / 出（未激活态） */
+const chipHoverOn = (el: HTMLElement) => {
+  el.style.background = 'var(--brandSoft)';
+  el.style.color = 'var(--brand)';
+  el.style.borderColor = 'color-mix(in srgb, var(--brand) 20%, transparent)';
+};
+const chipHoverOff = (el: HTMLElement) => {
+  el.style.background = 'transparent';
+  el.style.color = 'var(--text2)';
+  el.style.borderColor = 'transparent';
 };
 
 /** 计数徽标（字号 ≥11px） */
@@ -76,59 +288,75 @@ function CountBadge({ n, on }: { n: number; on?: boolean }) {
   );
 }
 
-/** 分组之间的竖向细分隔线 */
-function VSep() {
-  return (
-    <span
-      aria-hidden
-      style={{
-        width: 1,
-        height: 18,
-        background: 'var(--line)',
-        flexShrink: 0,
-        margin: '0 2px',
-      }}
-    />
-  );
+/* ══════════════ 图标（T1：所有图元必须内联在同一个 <svg> 内） ══════════════ */
+
+interface IconProps {
+  children: React.ReactNode;
+  size?: number;
 }
 
-/** 组标签：11px/700 --text3，做「大写感」的小标题 */
-function GroupLabel({ children }: { children: React.ReactNode }) {
+/** 统一 SVG 外壳；width/height 固定 + flexShrink:0，避免任何挤压变形 */
+function Icon({ children, size = 15 }: IconProps) {
   return (
-    <span
-      style={{
-        fontSize: 'var(--fs-2xs)',
-        fontWeight: 700,
-        color: 'var(--text3)',
-        letterSpacing: '.8px',
-        whiteSpace: 'nowrap',
-        flexShrink: 0,
-      }}
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      style={{ flexShrink: 0, display: 'block', overflow: 'visible' }}
     >
       {children}
-    </span>
+    </svg>
   );
 }
 
-/** 内联 SVG 图标（16px，stroke 风格，与参考站一致） */
-const Svg = ({ d, extra }: { d: string; extra?: React.ReactNode }) => (
-  <svg
-    width="15" height="15" viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-    style={{ flexShrink: 0 }}
-  >
-    <path d={d} />
-    {extra}
-  </svg>
-);
-
 const ICON = {
-  calendar: <Svg d="M3 10h18M7 3v3M17 3v3M5 5h14a2 2 0 012 2v13a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z" />,
-  region: <><Svg d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1116 0z" /><circle cx="12" cy="10" r="3" fill="none" stroke="currentColor" strokeWidth="2" /></>,
-  type: <Svg d="M3 21h18M5 21V8l7-4 7 4v13M9 21v-6h6v6" />,
-  sales: <><Svg d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" fill="none" stroke="currentColor" strokeWidth="2" /></>,
-  filter: <Svg d="M3 5h18l-7 8v6l-4-2v-4L3 5z" />,
-  reset: <Svg d="M3 12a9 9 0 109-9 9 9 0 00-6.36 2.64L3 8M3 3v5h5" />,
+  /** 日期 */
+  calendar: (
+    <Icon>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18M7 3v4M17 3v4" />
+    </Icon>
+  ),
+  /** 区域：定位针（圆点必须在 svg 内 —— V10 T1 修复点） */
+  region: (
+    <Icon>
+      <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1116 0z" />
+      <circle cx="12" cy="10" r="3" />
+    </Icon>
+  ),
+  /** 连锁类型：店铺 */
+  type: (
+    <Icon>
+      <path d="M3 21h18M5 21V8l7-4 7 4v13M9 21v-6h6v6" />
+    </Icon>
+  ),
+  /** 销售：人形（头部圆必须在 svg 内 —— V10 T1 修复点） */
+  sales: (
+    <Icon>
+      <circle cx="12" cy="7" r="4" />
+      <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+    </Icon>
+  ),
+  /** 全部筛选条件：漏斗 */
+  filter: (
+    <Icon>
+      <path d="M3 5h18l-7 8v6l-4-2v-4L3 5z" />
+    </Icon>
+  ),
+  /** 重置 */
+  reset: (
+    <Icon>
+      <path d="M3 12a9 9 0 109-9 9 9 0 00-6.36 2.64L3 8" />
+      <path d="M3 3v5h5" />
+    </Icon>
+  ),
 };
 
 interface Props {
@@ -140,7 +368,7 @@ interface Props {
   isMobile: boolean;
 }
 
-/* ══════════════ 日期区间计算（前端侧，与后端口径一致） ══════════════ */
+/* ══════════════ 日期区间计算（与后端口径一致） ══════════════ */
 
 function presetRange(preset: DatePreset, today = dayjs()): [string, string] | null {
   const t = today.startOf('day');
@@ -183,55 +411,58 @@ const PRESET_LABELS: { key: DatePreset; label: string }[] = [
 
 /** 日期按钮文案 */
 function dateButtonLabel(f: BoardFilters): string {
-  if (f.datePreset === 'all') return '全部';
+  if (f.datePreset === 'all') return '全部时间';
   const preset = PRESET_LABELS.find((p) => p.key === f.datePreset);
   if (preset) return preset.label;
   if (f.datePreset === 'custom' && f.dateFrom) {
     const a = dayjs(f.dateFrom);
     const b = dayjs(f.dateTo || f.dateFrom);
-    if (!a.isValid()) return '全部';
+    if (!a.isValid()) return '全部时间';
     if (!b.isValid() || a.isSame(b, 'day')) return a.format('MM/DD');
     return `${a.format('MM/DD')}-${b.format('MM/DD')}`;
   }
-  return '全部';
+  return '全部时间';
 }
 
-/** 多选按钮文案：空=全部；1个=名称；多个=首个+N */
-function multiLabel(list: string[], allLabel = '全部'): string {
-  if (!list.length) return allLabel;
-  if (list.length === 1) return list[0];
-  return `${list[0]} +${list.length - 1}`;
+/**
+ * 维度按钮文案（T6）：
+ *   未选 → 维度名本身（区域 / 连锁类型 / 销售）
+ *   选中 1 个 → 该值名（南区 / 全国百强 / 张三）
+ *   选中多个 → 「已选 N 项」
+ */
+function dimensionLabel(values: string[], dimensionName: string): string {
+  if (!values.length) return dimensionName;
+  if (values.length === 1) return values[0];
+  return `已选 ${values.length} 项`;
 }
 
-/* ══════════════ 通用：多选下拉 ══════════════ */
+/* ══════════════ 多选弹窗（T5：2 列网格 + 大号选项） ══════════════ */
 
 interface MultiSelectProps {
-  label: string;
+  dimension: string;
   icon: React.ReactNode;
   values: string[];
   options: string[];
   counts?: Record<string, number>;
   onApply: (next: string[]) => void;
   searchable?: boolean;
-  allLabel?: string;
+  isMobile: boolean;
 }
 
 function MultiSelect({
-  label, icon, values, options, counts, onApply, searchable, allLabel = '全部',
+  dimension, icon, values, options, counts, onApply, searchable, isMobile,
 }: MultiSelectProps) {
+  const tokens = useBoardTokens();
   const [open, setOpen] = useState(false);
   const [kw, setKw] = useState('');
   const [draft, setDraft] = useState<string[]>(values);
   /**
    * draft 的实时镜像。
-   *
-   * 「确定」按钮和 Checkbox 在同一个渲染周期里，若直接读 draft 闭包变量，
-   * 会在「勾选后立刻点确定」时读到旧值、丢掉本次选择（自动化测试必现）。
-   * 用 ref 保存最新值，applyDraft() 永远拿到用户最后一次勾选。
+   * 「确定」按钮和选项按钮在同一渲染周期，若直接读 draft 闭包变量，
+   * 会在「勾选后立刻点确定」时读到旧值（自动化测试必现）。
    */
   const draftRef = useRef<string[]>(values);
 
-  // 打开时同步外部值
   const openPanel = () => {
     draftRef.current = values;
     setDraft(values);
@@ -251,8 +482,7 @@ function MultiSelect({
 
   const shown = useMemo(() => {
     const k = kw.trim().toLowerCase();
-    const list = k ? options.filter((o) => o.toLowerCase().includes(k)) : options;
-    return list;
+    return k ? options.filter((o) => o.toLowerCase().includes(k)) : options;
   }, [options, kw]);
 
   const active = values.length > 0;
@@ -263,296 +493,268 @@ function MultiSelect({
         type="button"
         onClick={openPanel}
         style={active ? BTN_ON : BTN_BASE}
-        onMouseEnter={(e) => {
-          if (active) return;
-          e.currentTarget.style.background = 'var(--brandSoft)';
-          e.currentTarget.style.color = 'var(--brand)';
-          e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--brand) 26%, transparent)';
-        }}
-        onMouseLeave={(e) => {
-          if (active) return;
-          e.currentTarget.style.background = 'var(--panel)';
-          e.currentTarget.style.color = 'var(--text2)';
-          e.currentTarget.style.borderColor = 'var(--line)';
-        }}
+        onMouseEnter={(e) => { if (!active) chipHoverOn(e.currentTarget); }}
+        onMouseLeave={(e) => { if (!active) chipHoverOff(e.currentTarget); }}
       >
         {icon}
-        <span>{multiLabel(values, allLabel)}</span>
-        {active && <CountBadge n={values.length} on />}
+        <span>{dimensionLabel(values, dimension)}</span>
+        {values.length > 1 && <CountBadge n={values.length} on />}
       </button>
 
       <Modal
-        title={
-          <Space size={6}>
-            {icon}
-            <span>{label}</span>
-          </Space>
-        }
+        title={<Space size={8}>{icon}<span>{dimension}</span></Space>}
         open={open}
         onCancel={() => setOpen(false)}
         footer={
           <Space>
             <Button onClick={clearDraft}>清空</Button>
             <Button onClick={() => setOpen(false)}>取消</Button>
-            <Button type="primary" onClick={applyDraft}>
-              确定
-            </Button>
+            <Button type="primary" onClick={applyDraft}>确定</Button>
           </Space>
         }
-        width={480}
-        styles={{ body: { maxHeight: '60vh', overflowY: 'auto' } }}
+        width={isMobile ? '92vw' : 560}
+        styles={{ body: { maxHeight: '62vh', overflowY: 'auto', paddingTop: 4 } }}
       >
-        {searchable && options.length > 8 && (
-          <Input
-            allowClear
-            prefix={<SearchOutlined />}
-            placeholder="搜索"
-            value={kw}
-            onChange={(e) => setKw(e.target.value)}
-            style={{ marginBottom: 12 }}
-          />
-        )}
-        {shown.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无可选项" />
-        ) : (
-          <Checkbox.Group
-            value={draft}
-            onChange={(v) => {
-              draftRef.current = v as string[];
-              setDraft(v as string[]);
-            }}
-            style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}
-          >
-            {shown.map((o) => (
-              <Checkbox key={o} value={o} style={{ marginLeft: 0 }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                  <span>{o}</span>
-                  {counts && counts[o] !== undefined && (
-                    <span
-                      style={{
-                        fontSize: 11, padding: '0 6px', borderRadius: 9,
-                        background: 'var(--bg-card-2)', color: 'var(--text-sub)',
-                        border: '1px solid var(--border)', lineHeight: '17px',
-                      }}
-                    >
-                      {counts[o]}
-                    </span>
-                  )}
-                </span>
-              </Checkbox>
-            ))}
-          </Checkbox.Group>
-        )}
-      </Modal>
-    </>
-  );
-}
-
-/* ══════════════ 日期弹窗（左按钮 + 右日历） ══════════════ */
-
-function DateFilter({ filters, onChange, isMobile }: {
-  filters: BoardFilters;
-  onChange: (patch: Partial<BoardFilters>) => void;
-  isMobile: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  /** 日历首次点击 = 开始，再次点击 = 结束 */
-  const [pickedStart, setPickedStart] = useState<Dayjs | null>(null);
-  const [hoverEnd, setHoverEnd] = useState<Dayjs | null>(null);
-
-  const label = dateButtonLabel(filters);
-  const active = filters.datePreset !== 'all';
-
-  const openPanel = () => {
-    setPickedStart(filters.dateFrom ? dayjs(filters.dateFrom) : null);
-    setHoverEnd(filters.dateTo ? dayjs(filters.dateTo) : null);
-    setOpen(true);
-  };
-
-  const applyPreset = (preset: DatePreset) => {
-    if (preset === 'all') {
-      onChange({ datePreset: 'all', dateFrom: '', dateTo: '' });
-      setOpen(false);
-      return;
-    }
-    const r = presetRange(preset);
-    if (!r) return;
-    onChange({ datePreset: preset, dateFrom: r[0], dateTo: r[1] });
-    setOpen(false);
-  };
-
-  /** 日历点选 */
-  const onSelectDay = (d: Dayjs) => {
-    if (!pickedStart) {
-      // 第一次点击 = 开始
-      setPickedStart(d.startOf('day'));
-      setHoverEnd(null);
-      return;
-    }
-    // 第二次点击 = 结束（若早于开始则交换）
-    let a = pickedStart;
-    let b = d.startOf('day');
-    if (b.isBefore(a, 'day')) [a, b] = [b, a];
-    onChange({
-      datePreset: 'custom',
-      dateFrom: a.format('YYYY-MM-DD'),
-      dateTo: b.format('YYYY-MM-DD'),
-    });
-    setPickedStart(null);
-    setHoverEnd(null);
-    setOpen(false);
-  };
-
-  /** RangePicker 兜底（移动端更易操作） */
-  const onRange = (vals: any) => {
-    if (!vals || !vals[0] || !vals[1]) return;
-    onChange({
-      datePreset: 'custom',
-      dateFrom: vals[0].format('YYYY-MM-DD'),
-      dateTo: vals[1].format('YYYY-MM-DD'),
-    });
-    setOpen(false);
-  };
-
-  const cellRender = (current: Dayjs, info: any) => {
-    if (info.type !== 'date') return info.originNode;
-    const start = pickedStart;
-    const end = hoverEnd;
-    if (!start) return info.originNode;
-    const inRange = end
-      ? (current.isAfter(start, 'day') && current.isBefore(end, 'day'))
-      : false;
-    const isEdge = current.isSame(start, 'day') || (end ? current.isSame(end, 'day') : false);
-    if (!isEdge && !inRange) return info.originNode;
-    return (
-      <div
-        style={{
-          borderRadius: 6,
-          background: isEdge ? 'var(--primary)' : 'rgba(54,135,255,.14)',
-          color: isEdge ? '#fff' : 'var(--text-main)',
-          height: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}
-      >
-        {current.date()}
-      </div>
-    );
-  };
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={openPanel}
-        style={active ? BTN_ON : BTN_BASE}
-        onMouseEnter={(e) => {
-          if (active) return;
-          e.currentTarget.style.background = 'var(--brandSoft)';
-          e.currentTarget.style.color = 'var(--brand)';
-          e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--brand) 26%, transparent)';
-        }}
-        onMouseLeave={(e) => {
-          if (active) return;
-          e.currentTarget.style.background = 'var(--panel)';
-          e.currentTarget.style.color = 'var(--text2)';
-          e.currentTarget.style.borderColor = 'var(--line)';
-        }}
-      >
-        {ICON.calendar}
-        <span>{label}</span>
-      </button>
-
-      <Modal
-        title={<Space size={6}><CalendarOutlined /><span>日期筛选</span></Space>}
-        open={open}
-        onCancel={() => setOpen(false)}
-        footer={null}
-        width={isMobile ? '94vw' : 720}
-        styles={{ body: { paddingTop: 8 } }}
-      >
-        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 14 }}>
-          {/* 左：快捷按钮 */}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: isMobile ? 'row' : 'column',
-              flexWrap: 'wrap',
-              gap: 8,
-              minWidth: isMobile ? 'auto' : 120,
-            }}
-          >
-            {PRESET_LABELS.map((p) => {
-              const r = presetRange(p.key);
-              const on = filters.datePreset === p.key;
-              return (
-                <Tooltip key={p.key} title={r ? `${r[0]} ~ ${r[1]}` : ''} placement="right">
-                  <Button
-                    block={!isMobile}
-                    type={on ? 'primary' : 'default'}
-                    onClick={() => applyPreset(p.key)}
-                    style={{ borderColor: on ? 'var(--primary)' : 'var(--border)' }}
-                  >
-                    {p.label}
-                  </Button>
-                </Tooltip>
-              );
-            })}
-            <Button
-              block={!isMobile}
-              type={filters.datePreset === 'all' ? 'primary' : 'default'}
-              onClick={() => applyPreset('all')}
-              style={{ borderColor: filters.datePreset === 'all' ? 'var(--primary)' : 'var(--border)' }}
-            >
-              全部
-            </Button>
-          </div>
-
-          <Divider type={isMobile ? 'horizontal' : 'vertical'} style={{ margin: 0 }} />
-
-          {/* 右：日历 */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-sub)', marginBottom: 6 }}>
-              {pickedStart
-                ? `已选开始 ${pickedStart.format('MM/DD')}，请点击结束日期`
-                : '首次点击选择开始日期，再次点击选择结束日期'}
-            </div>
-            <Calendar
-              fullscreen={!isMobile}
-              fullCellRender={undefined as any}
-              cellRender={cellRender as any}
-              onSelect={(d: Dayjs, info: any) => {
-                if (info?.source === 'date') onSelectDay(d);
-              }}
-              onPanelChange={() => { /* 保持当前面板 */ }}
+        {/* 弹层内重新声明令牌（见 useBoardTokens 注释） */}
+        <div style={tokens}>
+          {searchable && options.length > 8 && (
+            <Input
+              allowClear
+              prefix={<SearchOutlined />}
+              placeholder={`搜索${dimension}`}
+              value={kw}
+              onChange={(e) => setKw(e.target.value)}
+              style={{ marginBottom: 14 }}
             />
-            <div style={{ marginTop: 10 }}>
-              <RangePicker
-                value={
-                  filters.dateFrom && filters.dateTo
-                    ? [dayjs(filters.dateFrom), dayjs(filters.dateTo)]
-                    : null
-                }
-                onChange={onRange}
-                style={{ width: '100%' }}
-                placeholder={['开始日期', '结束日期']}
-              />
+          )}
+          {shown.length === 0 ? (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="无可选项" />
+          ) : (
+            /* T5：2 列网格 */
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                gap: 10,
+              }}
+            >
+              {shown.map((o) => {
+                const on = draft.includes(o);
+                const cnt = counts?.[o];
+                return (
+                  <button
+                    key={o}
+                    type="button"
+                    className="v10-opt"
+                    data-selected={on ? '1' : '0'}
+                    onClick={() => {
+                      const next = on
+                        ? draftRef.current.filter((x) => x !== o)
+                        : [...draftRef.current, o];
+                      draftRef.current = next;
+                      setDraft(next);
+                    }}
+                    style={{
+                      // T5：大号选项按钮 —— 高度 ≥40px、字号 13px
+                      minHeight: 40,
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      border: `1px solid ${on ? 'var(--brand)' : 'var(--line)'}`,
+                      background: on ? 'var(--brandSoft)' : 'var(--panel)',
+                      color: on ? 'var(--brand)' : 'var(--text)',
+                      fontSize: 'var(--fs-sm)',
+                      fontWeight: on ? 600 : 500,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      cursor: 'pointer',
+                      transition: 'background .14s, border-color .14s, color .14s',
+                      textAlign: 'left',
+                      width: '100%',
+                      minWidth: 0,
+                      fontFamily: 'inherit',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (on) return;
+                      e.currentTarget.style.background = 'var(--panel2)';
+                      e.currentTarget.style.borderColor = 'var(--brand3)';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (on) return;
+                      e.currentTarget.style.background = 'var(--panel)';
+                      e.currentTarget.style.borderColor = 'var(--line)';
+                    }}
+                  >
+                    <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {o}
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                      {cnt !== undefined && (
+                        <span
+                          style={{
+                            fontSize: 'var(--fs-2xs)',
+                            color: on ? 'var(--brand)' : 'var(--text3)',
+                            fontVariantNumeric: 'tabular-nums',
+                          }}
+                        >
+                          {cnt}
+                        </span>
+                      )}
+                      <span
+                        aria-hidden
+                        style={{
+                          width: 16,
+                          height: 16,
+                          borderRadius: 5,
+                          border: `1px solid ${on ? 'var(--brand)' : 'var(--line)'}`,
+                          background: on ? 'var(--brand)' : 'transparent',
+                          display: 'grid',
+                          placeItems: 'center',
+                          flexShrink: 0,
+                        }}
+                      >
+                        {on && (
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M20 6L9 17l-5-5" />
+                          </svg>
+                        )}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          </div>
+          )}
         </div>
       </Modal>
     </>
   );
 }
 
-/* ══════════════ 全部筛选条件（Drawer） ══════════════ */
+/** 弹窗宽度判断：实际宽度由 isMobile prop 决定，此函数仅作兜底，勿直接调用 */
+
+/* ══════════════ 日期筛选（T2：官方 RangePicker + presets） ══════════════ */
+
+function DateFilter({ filters, onChange, isMobile }: {
+  filters: BoardFilters;
+  onChange: (patch: Partial<BoardFilters>) => void;
+  isMobile: boolean;
+}) {
+  const label = dateButtonLabel(filters);
+  const active = filters.datePreset !== 'all';
+
+  /** 当前值（受控） */
+  const value: [Dayjs, Dayjs] | null = useMemo(() => {
+    if (!filters.dateFrom) return null;
+    const a = dayjs(filters.dateFrom);
+    const b = dayjs(filters.dateTo || filters.dateFrom);
+    if (!a.isValid() || !b.isValid()) return null;
+    return [a, b];
+  }, [filters.dateFrom, filters.dateTo]);
+
+  /** presets 快捷项（官方 API：悬停预览、点击即选中） */
+  const presets = useMemo(
+    () =>
+      PRESET_LABELS.map((p) => {
+        const r = presetRange(p.key);
+        return {
+          label: p.label,
+          value: r ? [dayjs(r[0]), dayjs(r[1])] as [Dayjs, Dayjs] : [dayjs(), dayjs()] as [Dayjs, Dayjs],
+        };
+      }),
+    [],
+  );
+
+  const handleChange = (vals: [Dayjs | null, Dayjs | null] | null) => {
+    if (!vals || !vals[0] || !vals[1]) {
+      onChange({ datePreset: 'all', dateFrom: '', dateTo: '' });
+      return;
+    }
+    onChange({
+      datePreset: 'custom',
+      dateFrom: vals[0].format('YYYY-MM-DD'),
+      dateTo: vals[1].format('YYYY-MM-DD'),
+    });
+  };
+
+  return (
+    <>
+      {/* T2：日历弹层样式（portal 到 body，必须字面色值） */}
+      <style>{CAL_CSS}</style>
+
+      <button
+        type="button"
+        style={active ? BTN_ON : BTN_BASE}
+        onMouseEnter={(e) => { if (!active) chipHoverOn(e.currentTarget); }}
+        onMouseLeave={(e) => { if (!active) chipHoverOff(e.currentTarget); }}
+        // 由内部隐藏的 RangePicker 承担点击（视觉上是同一个 chip）
+        onClick={() => {
+          const input = document.getElementById('board-date-anchor') as HTMLInputElement | null;
+          input?.focus();
+          input?.click();
+        }}
+        aria-label="选择日期范围"
+      >
+        {ICON.calendar}
+        <span>{label}</span>
+      </button>
+
+      {/* 真实控件：视觉隐藏但仍可交互，弹层由 antd 官方 DatePicker 提供 */}
+      <div
+        style={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          overflow: 'hidden',
+          clip: 'rect(0 0 0 0)',
+          whiteSpace: 'nowrap',
+        }}
+        aria-hidden="true"
+      >
+        <RangePicker
+          id="board-date-anchor"
+          /**
+           * T2 关键：className 只会落在触发器 .ant-picker 上，
+           * 而弹层是平级 portal 到 body（不是触发器的后代），
+           * 所以必须用 classNames.popup 把 class 精准挂到弹层根节点。
+           */
+          classNames={{ popup: { root: 'board-cal' } }}
+          value={value}
+          presets={presets}
+          onChange={handleChange as never}
+          format="YYYY-MM-DD"
+          allowClear
+          placement={isMobile ? 'bottomRight' : 'bottomLeft'}
+          style={{ width: 1, height: 1, opacity: 0, pointerEvents: 'auto' }}
+        />
+      </div>
+
+      {/* 选中的自定义区间回显（避免用户看不到当前值） */}
+      {active && filters.datePreset === 'custom' && filters.dateFrom && (
+        <span
+          style={{
+            fontSize: 'var(--fs-2xs)',
+            color: 'var(--text3)',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
+          }}
+        >
+          {filters.dateFrom} ~ {filters.dateTo || filters.dateFrom}
+        </span>
+      )}
+    </>
+  );
+}
+
+/* ══════════════ 全部筛选条件（T4：居中 Modal，不是 Drawer） ══════════════ */
 
 interface AllFilterProps {
   filters: BoardFilters;
   onChange: (patch: Partial<BoardFilters>) => void;
   options: BoardOptions;
   counts: BoardCounts;
+  isMobile: boolean;
 }
 
 const ALL_GROUPS: {
@@ -571,10 +773,10 @@ const ALL_GROUPS: {
   { key: 'openedStrategy', title: '已开通策略', optKey: 'openedStrategy', countKey: 'openedStrategy' },
 ];
 
-function AllFilters({ filters, onChange, options, counts }: AllFilterProps) {
+function AllFilters({ filters, onChange, options, counts, isMobile }: AllFilterProps) {
+  const tokens = useBoardTokens();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<BoardFilters>(filters);
-  /** draft 实时镜像：勾选后立刻点「确定」也能拿到最新值（同 MultiSelect 的说明） */
   const draftRef = useRef<BoardFilters>(filters);
 
   const openPanel = () => {
@@ -592,7 +794,11 @@ function AllFilters({ filters, onChange, options, counts }: AllFilterProps) {
   const apply = () => {
     const patch: Partial<BoardFilters> = {};
     ALL_GROUPS.forEach((g) => {
-      (patch as any)[g.key] = (draftRef.current as any)[g.key];
+      // 只复制数组型筛选字段；用局部变量承接避免 any
+      const v = draftRef.current[g.key];
+      if (Array.isArray(v)) {
+        Object.assign(patch, { [g.key]: v.slice() });
+      }
     });
     onChange(patch);
     setOpen(false);
@@ -600,7 +806,9 @@ function AllFilters({ filters, onChange, options, counts }: AllFilterProps) {
 
   const clearAll = () => {
     const patch: Partial<BoardFilters> = {};
-    ALL_GROUPS.forEach((g) => { (patch as any)[g.key] = []; });
+    ALL_GROUPS.forEach((g) => {
+      Object.assign(patch, { [g.key]: [] as string[] });
+    });
     const next = { ...draftRef.current, ...patch } as BoardFilters;
     draftRef.current = next;
     setDraft(next);
@@ -618,94 +826,86 @@ function AllFilters({ filters, onChange, options, counts }: AllFilterProps) {
         type="button"
         onClick={openPanel}
         style={activeCount ? BTN_ON : BTN_BASE}
-        onMouseEnter={(e) => {
-          if (activeCount) return;
-          e.currentTarget.style.background = 'var(--brandSoft)';
-          e.currentTarget.style.color = 'var(--brand)';
-          e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--brand) 26%, transparent)';
-        }}
-        onMouseLeave={(e) => {
-          if (activeCount) return;
-          e.currentTarget.style.background = 'var(--panel)';
-          e.currentTarget.style.color = 'var(--text2)';
-          e.currentTarget.style.borderColor = 'var(--line)';
-        }}
+        onMouseEnter={(e) => { if (!activeCount) chipHoverOn(e.currentTarget); }}
+        onMouseLeave={(e) => { if (!activeCount) chipHoverOff(e.currentTarget); }}
       >
         {ICON.filter}
-        <span>{activeCount ? `全部条件` : '全部筛选条件'}</span>
+        <span>全部筛选条件</span>
         {activeCount > 0 && <CountBadge n={activeCount} on />}
       </button>
 
-      <Drawer
+      <Modal
         title="全部筛选条件"
         open={open}
-        onClose={() => setOpen(false)}
-        width={560}
-        styles={{ body: { paddingBottom: 80 } }}
-        extra={
+        onCancel={() => setOpen(false)}
+        width={isMobile ? '94vw' : 760}
+        footer={
           <Space>
             <Button onClick={clearAll}>清空</Button>
+            <Button onClick={() => setOpen(false)}>取消</Button>
             <Button type="primary" onClick={apply}>确定</Button>
           </Space>
         }
+        styles={{ body: { maxHeight: '68vh', overflowY: 'auto' } }}
       >
-        {ALL_GROUPS.map((g) => {
-          const opts = (options[g.optKey] as string[]) || [];
-          const cnt = (counts[g.countKey] as Record<string, number>) || {};
-          const val = ((draft as any)[g.key] as string[]) || [];
-          if (!opts.length) {
+        {/* 弹层内重新声明令牌（见 useBoardTokens 注释） */}
+        <div
+          style={{
+            ...tokens,
+            display: 'grid',
+            gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
+            gap: 18,
+          }}
+        >
+          {ALL_GROUPS.map((g) => {
+            const opts = (options[g.optKey] as string[]) || [];
+            const cnt = (counts[g.countKey] as Record<string, number>) || {};
+            const val = (draft[g.key] as string[]) || [];
             return (
-              <div key={String(g.key)} style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 'var(--fs-sm)', fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
+              <div key={String(g.key)}>
+                <div
+                  style={{
+                    fontSize: 'var(--fs-sm)',
+                    fontWeight: 600,
+                    color: 'var(--text)',
+                    marginBottom: 8,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
                   {g.title}
+                  {val.length > 0 && (
+                    <span style={{ fontSize: 'var(--fs-2xs)', color: 'var(--brand)', fontWeight: 600 }}>
+                      已选 {val.length}
+                    </span>
+                  )}
                 </div>
-                <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--text3)' }}>暂无可选项</div>
-              </div>
-            );
-          }
-          return (
-            <div key={String(g.key)} style={{ marginBottom: 20 }}>
-              <div
-                style={{
-                  fontSize: 13, fontWeight: 600, color: 'var(--text-main)',
-                  marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6,
-                }}
-              >
-                {g.title}
-                {val.length > 0 && (
-                  <span style={{ fontSize: 11, color: 'var(--primary)' }}>已选 {val.length}</span>
+                {!opts.length ? (
+                  <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--text3)' }}>暂无可选项</div>
+                ) : (
+                  <Checkbox.Group
+                    value={val}
+                    onChange={(v) => setGroup(g.key, v as string[])}
+                    style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}
+                  >
+                    {opts.map((o) => (
+                      <Checkbox key={o} value={o} style={{ marginInlineStart: 0 }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-xs)' }}>
+                          <span>{o}</span>
+                          {cnt[o] !== undefined && (
+                            <span style={{ fontSize: 'var(--fs-2xs)', color: 'var(--text3)' }}>{cnt[o]}</span>
+                          )}
+                        </span>
+                      </Checkbox>
+                    ))}
+                  </Checkbox.Group>
                 )}
               </div>
-              <Checkbox.Group
-                value={val}
-                onChange={(v) => setGroup(g.key, v as string[])}
-                style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}
-              >
-                {opts.map((o) => (
-                  <Checkbox
-                    key={o}
-                    value={o}
-                    style={{
-                      marginLeft: 0,
-                      padding: '4px 10px',
-                      border: '1px solid var(--border)',
-                      borderRadius: 8,
-                      background: 'var(--bg-card)',
-                    }}
-                  >
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <span>{o}</span>
-                      {cnt[o] !== undefined && (
-                        <span style={{ fontSize: 11, color: 'var(--text-sub)' }}>{cnt[o]}</span>
-                      )}
-                    </span>
-                  </Checkbox>
-                ))}
-              </Checkbox.Group>
-            </div>
-          );
-        })}
-      </Drawer>
+            );
+          })}
+        </div>
+      </Modal>
     </>
   );
 }
@@ -715,88 +915,71 @@ function AllFilters({ filters, onChange, options, counts }: AllFilterProps) {
 export default function FilterBar({
   filters, onChange, onReset, options, counts, isMobile,
 }: Props) {
-  const regionActive = filters.regions.length > 0;
-  const typeActive = filters.chainTypes.length > 0;
-  const salesActive = filters.sales.length > 0;
   const anyActive =
-    regionActive || typeActive || salesActive || filters.datePreset !== 'all'
+    filters.regions.length > 0
+    || filters.chainTypes.length > 0
+    || filters.sales.length > 0
+    || filters.datePreset !== 'all'
     || ALL_GROUPS.some((g) => {
       const v = filters[g.key];
       return Array.isArray(v) && v.length > 0;
     });
-
-  const regionCount = regionActive
-    ? filters.regions.reduce((s, r) => s + (counts.region[r] || 0), 0)
-    : undefined;
-  const typeCount = typeActive
-    ? filters.chainTypes.reduce((s, t) => s + (counts.chainType[t] || 0), 0)
-    : undefined;
-  const salesCount = salesActive
-    ? filters.sales.reduce((s, x) => s + (counts.sales[x] || 0), 0)
-    : undefined;
 
   return (
     <div
       style={{
         display: 'flex',
         flexWrap: 'nowrap',
-        gap: 6,
+        gap: 4,
         alignItems: 'center',
-        // 不换行 → 所有 chip 永远同一基线、同一高度；
-        // 窄屏走内滚，绝不撑破顶栏。
+        // 不换行 → 所有 chip 永远同一基线、同一高度；窄屏内滚，绝不撑破顶栏
         overflowX: 'auto',
         overflowY: 'hidden',
         minWidth: 0,
         scrollbarWidth: 'none',
+        position: 'relative',
       }}
       className="board-filterbar"
     >
-      {/* ── 组 1：时间 ── */}
-      {!isMobile && <GroupLabel>时间</GroupLabel>}
       <DateFilter filters={filters} onChange={onChange} isMobile={isMobile} />
 
-      <VSep />
-
-      {/* ── 组 2：维度 ── */}
-      {!isMobile && <GroupLabel>维度</GroupLabel>}
       <MultiSelect
-        label="区域"
+        dimension="区域"
         icon={ICON.region}
         values={filters.regions}
         options={options.regions}
         counts={counts.region}
         onApply={(v) => onChange({ regions: v })}
+        isMobile={isMobile}
       />
       <MultiSelect
-        label="连锁类型"
+        dimension="连锁类型"
         icon={ICON.type}
         values={filters.chainTypes}
         options={options.chainTypes}
         counts={counts.chainType}
         onApply={(v) => onChange({ chainTypes: v })}
+        isMobile={isMobile}
       />
       <MultiSelect
-        label="销售"
+        dimension="销售"
         icon={ICON.sales}
         values={filters.sales}
         options={options.sales}
         counts={counts.sales}
         onApply={(v) => onChange({ sales: v })}
         searchable
+        isMobile={isMobile}
       />
 
-      <VSep />
-
-      {/* ── 组 3：更多条件 + 重置 ── */}
-      {!isMobile && <GroupLabel>更多</GroupLabel>}
       <AllFilters
         filters={filters}
         onChange={onChange}
         options={options}
         counts={counts}
+        isMobile={isMobile}
       />
 
-      {/* 重置：与前面 chip 区分（无底、浅字，hover 才显危险色） */}
       <Tooltip title="清空所有筛选条件">
         <button
           type="button"
@@ -804,10 +987,8 @@ export default function FilterBar({
           disabled={!anyActive}
           style={{
             ...BTN_BASE,
-            border: '1px solid transparent',
-            background: 'transparent',
-            color: anyActive ? 'var(--text2)' : 'var(--text3)',
-            opacity: anyActive ? 1 : 0.6,
+            color: anyActive ? 'var(--text3)' : 'var(--text3)',
+            opacity: anyActive ? 1 : 0.5,
             cursor: anyActive ? 'pointer' : 'not-allowed',
           }}
           onMouseEnter={(e) => {
@@ -819,7 +1000,7 @@ export default function FilterBar({
           onMouseLeave={(e) => {
             if (!anyActive) return;
             e.currentTarget.style.background = 'transparent';
-            e.currentTarget.style.color = 'var(--text2)';
+            e.currentTarget.style.color = 'var(--text3)';
             e.currentTarget.style.borderColor = 'transparent';
           }}
         >

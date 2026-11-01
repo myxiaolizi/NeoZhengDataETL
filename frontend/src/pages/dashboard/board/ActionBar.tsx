@@ -1,25 +1,17 @@
-/** 看板操作区（V6.0 紧凑版 · 适配单行 sticky 顶栏）
+/** 看板操作区 — V10
  *
- * 5 个 32×32 图标按钮（靠右，从左到右）：
- *   有效数据 / 刷新 / 明暗切换 / 主题色 / 手机版二维码
+ * 4 个 32×32 图标按钮（靠右，从左到右）：
+ *   有效数据 / 刷新 / 深色·浅色切换 / 手机版二维码
  *
- * 视觉参考 zk2.zhengl.vip/pc4.html：描边幽灵按钮 + 内联 SVG 图标 + hover 高亮。
+ * V10 改动：
+ *   T3 移除调色板（PRIMARY_OPTIONS），改为单个「深色/浅色」切换按钮
+ *   T7 去掉包裹操作按钮的外框（改为无容器的幽灵按钮行）
  */
 import React, { useMemo, useState } from 'react';
-import { Divider, Modal, Popover, Space, Tooltip, Typography, message } from 'antd';
+import { Divider, Modal, Space, Tooltip, Typography, message } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
-
-/** 主题色候选（V6：对齐参考站品牌色系） */
-const PRIMARY_OPTIONS: { color: string; name: string }[] = [
-  { color: '#2563eb', name: '科技蓝' },
-  { color: '#3b82f6', name: '天蓝' },
-  { color: '#0ea5e9', name: '湖蓝' },
-  { color: '#10b981', name: '翡翠绿' },
-  { color: '#8b5cf6', name: '紫罗兰' },
-  { color: '#f59e0b', name: '琥珀橙' },
-];
 
 interface Props {
   validOnly: boolean;
@@ -27,6 +19,10 @@ interface Props {
   onRefresh: () => void;
   dark: boolean;
   onToggleDark: () => void;
+  /**
+   * V10 T3：调色板已移除，但 Board.tsx 仍会传 primary / onPrimaryChange。
+   * 这两个 prop 保留在接口里（避免改 Board.tsx），组件内不再使用。
+   */
   primary: string;
   onPrimaryChange: (c: string) => void;
   isMobile: boolean;
@@ -81,16 +77,18 @@ const ICON = {
   moon: <Svg><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" /></Svg>,
   /** 太阳 */
   sun: <Svg><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></Svg>,
-  /** 主题色：调色板 */
-  theme: <Svg><path d="M12 21a9 9 0 110-18c4.97 0 9 3.58 9 8 0 2.5-2 4-4 4h-2a2 2 0 00-1.5 3.3A2 2 0 0112 21z" /><circle cx="7.5" cy="10.5" r="1" fill="currentColor" /><circle cx="12" cy="7.5" r="1" fill="currentColor" /><circle cx="16.5" cy="10.5" r="1" fill="currentColor" /></Svg>,
   /** 手机 */
   mobile: <Svg><rect x="6" y="2" width="12" height="20" rx="2.5" /><path d="M11 18h2" /></Svg>,
 };
 
 export default function ActionBar({
-  validOnly, onToggleValid, onRefresh, dark, onToggleDark,
-  primary, onPrimaryChange, isMobile,
+  validOnly, onToggleValid, onRefresh, dark, onToggleDark, isMobile,
 }: Props) {
+  /**
+   * V10 T3：调色板 UI 已移除。
+   * Props 接口仍保留 primary / onPrimaryChange（Board.tsx 会传，避免改 Lead 的文件），
+   * 这里不解构它们即可，不会产生「未使用变量」告警。
+   */
   const [qrOpen, setQrOpen] = useState(false);
   const [spin, setSpin] = useState(false);
 
@@ -226,11 +224,7 @@ export default function ActionBar({
         justifyContent: 'flex-end',
         gap: 2,
         flexShrink: 0,
-        // 操作区成组：轻量底 + 细边框，与筛选浮动条区分
-        background: 'var(--panel2)',
-        border: '1px solid var(--line)',
-        borderRadius: 'var(--radius-sm)',
-        padding: 3,
+        // V10 T7：去掉外框（原 --panel2 底 + --line 边 + 圆角），改为无容器按钮行
       }}
     >
       {/* 1. 有效数据 */}
@@ -268,57 +262,14 @@ export default function ActionBar({
         </button>
       </Tooltip>
 
-      {/* V7.2：按需求移除「明暗切换」按钮，只保留主题色调整 */}
-
-      {/* 4. 主题色 */}
-      <Popover
-        trigger="click"
-        placement="bottomRight"
-        content={
-          <div style={{ padding: 4 }}>
-            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 8 }}>选择主题色</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-              {PRIMARY_OPTIONS.map((o) => {
-                const on = primary.toLowerCase() === o.color.toLowerCase();
-                return (
-                  <button
-                    key={o.color}
-                    type="button"
-                    onClick={() => onPrimaryChange(o.color)}
-                    title={o.name}
-                    style={{
-                      width: 46, height: 46, borderRadius: 10, cursor: 'pointer',
-                      background: o.color,
-                      border: on ? '2px solid var(--text)' : '2px solid transparent',
-                      boxShadow: on ? '0 0 0 3px color-mix(in srgb, var(--brand) 30%, transparent)' : 'none',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      transition: 'transform .15s ease',
-                    }}
-                  >
-                    {on && (
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M20 6L9 17l-5-5" />
-                      </svg>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        }
-      >
-        <Tooltip title="切换与设置颜色主题">
-          <button
-            type="button"
-            aria-label="主题色"
-            style={BTN}
-            onMouseEnter={(e) => HOVER_ON(e.currentTarget)}
-            onMouseLeave={(e) => HOVER_OFF(e.currentTarget)}
-          >
-            {ICON.theme}
-          </button>
-        </Tooltip>
-      </Popover>
+      {/* 3. 深色 / 浅色切换（V10 T3：替换原调色板）
+          当前为浅色 → 显示月亮（点击进入深色）
+          当前为深色 → 显示太阳（点击回到浅色） */}
+      <IconBtn
+        icon={dark ? ICON.sun : ICON.moon}
+        tip={dark ? '当前深色模式，点击切换到浅色' : '当前浅色模式，点击切换到深色'}
+        onClick={onToggleDark}
+      />
 
       {/* 5. 手机版二维码 */}
       <IconBtn

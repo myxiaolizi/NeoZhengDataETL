@@ -1,10 +1,19 @@
-/** 策略运行趋势（原「客户运行趋势（近 30 日）」）— V7.1
+/** 策略运行趋势（原「客户运行趋势（近 30 日）」）— V10
  *
  * V7.1 变更（契约 §四 I）：
  *  I1 名称改为「策略运行趋势」，并在本组件自己的卡片标题栏渲染
  *  I2 支持开关数据标签（echarts series.label + labelLayout 防重叠）
  *  I3 混合图：人数/策略数/成本类 → 柱形（bar）；比率类（到店率/核销率/营销ROI）→ 折线（line）
  *  I4 指标按钮带**色块**，选中/未选中都能看出颜色，可直接当图例读
+ *
+ * V10 变更（契约 §四 R7）：
+ *  R7-1 金额 ≥ 10000 → 「万元」保留 1 位小数（46.7万 / 1.2万 / ¥9,800 / 1.0万）。
+ *       落点：tooltip 数值、左坐标轴刻度、数据标签 —— 即图表内所有展示金额的位置。
+ *       注：指标 chip（图例）本身不展示数值，因此无金额可转换。
+ *  R7-2 每个指标各自独立成一个 series（1 指标 = 1 条柱/线），**不做堆叠**。
+ *       经核对：本轮改动前即已是「一指标一 series」，未使用 stack，本项已符合契约；
+ *       此处补充 series 显式 `stack: undefined` 注释以防后续回退成堆叠。
+ *  另：修正 V9.2 遗留的 9px / 10px 字号（契约 §三 硬约束最小 11px）。
  *
  * 数据：data.row9（后端按 jdywh_mail_31 的 c_41f1cc4881 策略开通&触达时间分组，口径 §2.4）
  */
@@ -13,7 +22,7 @@ import { Empty, Tooltip } from 'antd';
 import type { EChartsOption } from 'echarts';
 import type { BoardData } from '@/api/crm-board';
 import EChart from '../EChart';
-import { useThemeMode } from './theme';
+import { fmtNum, useThemeMode } from './theme';
 
 export interface RunTrendProps {
   data: BoardData;
@@ -63,6 +72,24 @@ const ALL_KEYS: MetricKey[] = METRICS.map((m) => m.key);
 function num(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** R7-1：金额格式化 —— ≥ 10000 用「万元」保留 1 位小数，否则原样 ¥ 千分位
+ *  ¥466,540 → 46.7万 | ¥12,340 → 1.2万 | ¥9,800 → ¥9,800 | ¥10,000 → 1.0万
+ *  （与 RunMetrics.tsx 的 fmtMoneyWan 语义一致；theme.ts 不在本组件写作用域） */
+export function fmtMoneyWan(v: number | null | undefined): string {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return '¥0';
+  if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(1)}万`;
+  return `¥${fmtNum(n, 0)}`;
+}
+
+/** R7-1：坐标轴刻度 —— 金额轴按「万」缩写，非金额轴沿用千分位 */
+function fmtAxis(v: number, kindMoney: boolean): string {
+  const n = num(v);
+  if (kindMoney && Math.abs(n) >= 10000) return `${(n / 10000).toFixed(1)}万`;
+  if (Math.abs(n) >= 10000) return `${(n / 10000).toFixed(0)}万`;
+  return fmtNum(n, Number.isInteger(n) ? 0 : 1);
 }
 
 function fitArr(v: unknown, n: number): number[] {
@@ -119,13 +146,14 @@ const CSS = `
 .vb7-chips .lb{font-size:12px;color:var(--text3);font-weight:600;margin-right:2px;white-space:nowrap}
 .vb7-chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border-radius:8px;cursor:pointer;user-select:none;border:1px solid var(--line);background:var(--panel2);color:var(--text2);font-size:12px;font-weight:550;transition:all .15s;white-space:nowrap;font-family:inherit}
 .vb7-chip:hover{border-color:var(--c);color:var(--c)}
-.vb7-chip .sw{width:8px;height:8px;border-radius:2px;flex-shrink:0;background:var(--c);transition:box-shadow .15s}
+/* V10 R8：形状即语义 —— 柱=正方形 10×10/r2，线=窄长方形 14×4/r2（去掉「柱」「线」文字） */
+.vb7-chip .sw{flex-shrink:0;background:var(--c);transition:box-shadow .15s}
+.vb7-chip .sw.sq{width:10px;height:10px;border-radius:2px}
+.vb7-chip .sw.ln{width:14px;height:4px;border-radius:2px}
 .vb7-chip.on{border-color:var(--c);background:color-mix(in srgb,var(--c) 12%,transparent);color:var(--text);font-weight:650}
 .vb7-chip.on .sw{box-shadow:0 0 0 2px color-mix(in srgb,var(--c) 30%,transparent)}
 .vb7-chip.off{opacity:.6}
 .vb7-chip.off .sw{background:transparent;border:1.5px solid var(--c)}
-.vb7-chip .ax{font-size:12px;opacity:.65;font-weight:600}
-.vb7-chip .tp{font-size:12px;opacity:.55;font-weight:700}
 .vb7-sep{width:1px;height:14px;background:var(--line);display:inline-block;margin:0 2px}
 .vb7-all{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 9px;border-radius:8px;border:1px dashed var(--line);background:transparent;color:var(--text3);font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap}
 .vb7-all:hover{color:var(--brand);border-color:var(--brand3)}
@@ -175,13 +203,17 @@ export default function RunTrend({ data, loading, isMobile }: RunTrendProps) {
   const option = useMemo<EChartsOption>(() => {
     const visible = METRICS.filter((m) => picked.includes(m.key));
     const hasBar = visible.some((m) => m.type === 'bar');
+    /** R7-1：当前是否展示金额类指标（决定左轴刻度用「万」还是千分位） */
+    const hasMoney = visible.some((m) => m.kind === 'money');
 
     const labelFmt = (m: MetricDef) => (p: { value?: unknown }) => {
       const v = num(p.value);
       if (v === 0) return '';
       if (m.kind === 'pct') return `${(v * 100).toFixed(1)}%`;
       if (m.kind === 'ratio') return v.toFixed(3);
-      return v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(Math.round(v));
+      // R7-1：金额标签用「万元」，去掉原来的 k 缩写
+      if (m.kind === 'money') return fmtMoneyWan(v);
+      return v >= 10000 ? `${(v / 10000).toFixed(1)}万` : fmtNum(v, 0);
     };
 
     return {
@@ -205,7 +237,7 @@ export default function RunTrend({ data, loading, isMobile }: RunTrendProps) {
         data: days,
         axisTick: { show: false },
         axisLine: { lineStyle: { color: tok.line } },
-        axisLabel: { color: tok.axis, fontSize: 10, interval: isMobile ? 5 : 2 },
+        axisLabel: { color: tok.axis, fontSize: 11, interval: isMobile ? 5 : 2 },
       },
       yAxis: [
         {
@@ -219,8 +251,13 @@ export default function RunTrend({ data, loading, isMobile }: RunTrendProps) {
             if (lo === hi) return Math.max(0, Math.floor(lo * 0.9));
             return Math.max(0, Math.floor(lo - (hi - lo) * 0.12));
           },
-          nameTextStyle: { color: tok.axis, fontSize: 10, padding: [0, 0, 0, 4] },
-          axisLabel: { color: tok.axis, fontSize: 10 },
+          nameTextStyle: { color: tok.axis, fontSize: 11, padding: [0, 0, 0, 4] },
+          // R7-1：左侧刻度同样以「万元」呈现金额
+          axisLabel: {
+            color: tok.axis,
+            fontSize: 11,
+            formatter: (v: number) => fmtAxis(v, hasMoney),
+          },
           axisLine: { show: false },
           axisTick: { show: false },
           splitLine: { lineStyle: { color: tok.split, type: 'dashed' } },
@@ -236,10 +273,10 @@ export default function RunTrend({ data, loading, isMobile }: RunTrendProps) {
             const pad = (hi - lo) * 0.12 || 0.02;
             return Math.max(0, lo - pad);
           },
-          nameTextStyle: { color: tok.axis, fontSize: 10, padding: [0, 4, 0, 0] },
+          nameTextStyle: { color: tok.axis, fontSize: 11, padding: [0, 4, 0, 0] },
           axisLabel: {
             color: tok.axis,
-            fontSize: 10,
+            fontSize: 11,
             formatter: (v: number) => `${(Number(v) * 100).toFixed(1)}%`,
           },
           axisLine: { show: false },
@@ -247,10 +284,13 @@ export default function RunTrend({ data, loading, isMobile }: RunTrendProps) {
           splitLine: { show: false },
         },
       ],
+      // R7-2：一指标一 series（不堆叠），顺序与 METRICS / chip 一致
       series: visible.map((m) => {
         const base = {
           name: m.name,
           yAxisIndex: m.axis,
+          // 显式声明不堆叠：每种指标占各自独立的一条柱/线
+          stack: undefined,
           itemStyle: { color: m.color },
           emphasis: { focus: 'series' as const },
           data: seriesData[m.key],
@@ -258,7 +298,7 @@ export default function RunTrend({ data, loading, isMobile }: RunTrendProps) {
           label: {
             show: showLabels,
             position: m.type === 'bar' ? ('top' as const) : ('top' as const),
-            fontSize: 9,
+            fontSize: 11,
             color: tok.text,
             formatter: labelFmt(m),
           },
@@ -268,8 +308,9 @@ export default function RunTrend({ data, loading, isMobile }: RunTrendProps) {
               const x = num(v);
               if (m.kind === 'pct') return `${(x * 100).toFixed(2)}%`;
               if (m.kind === 'ratio') return x.toFixed(3);
-              if (m.kind === 'money') return `¥${x.toLocaleString('zh-CN')}`;
-              return x.toLocaleString('zh-CN');
+              // R7-1：tooltip 金额用「万元」
+              if (m.kind === 'money') return fmtMoneyWan(x);
+              return fmtNum(x, 0);
             },
           },
         };
@@ -357,10 +398,9 @@ export default function RunTrend({ data, loading, isMobile }: RunTrendProps) {
                     style={{ ['--c' as string]: m.color } as React.CSSProperties}
                     onClick={() => toggle(m.key)}
                   >
-                    <span className="sw" />
+                    {/* V10 R8：形状区分柱/线，右轴由 tooltip 说明，不再打文字后缀 */}
+                    <span className={`sw ${m.type === 'bar' ? 'sq' : 'ln'}`} />
                     {m.name}
-                    {m.axis === 1 && <span className="ax">右轴</span>}
-                    <span className="tp">{m.type === 'bar' ? '柱' : '线'}</span>
                   </button>
                 </Tooltip>
               );

@@ -189,7 +189,7 @@ export default function TopBar({
           />
         )}
 
-        {/* ══════════ 中：筛选浮动条（改数据） ══════════ */}
+        {/* ══════════ 中：筛选区（无外框） ══════════ */}
         <div
           style={{
             minWidth: 0,
@@ -197,12 +197,7 @@ export default function TopBar({
             flex: isMobile ? '1 0 100%' : '0 1 auto',
             order: isMobile ? 3 : 0,
             width: isMobile ? '100%' : 'auto',
-            background: 'var(--panel)',
-            border: '1px solid var(--line)',
-            borderRadius: 'var(--radius)',
-            boxShadow: 'var(--shadow)',
-            padding: 5,
-            overflow: 'hidden',
+            // V10 T7：移除浮动条外框（原 --panel 底 + --line 边 + 圆角 + 阴影）
           }}
         >
           <FilterBar

@@ -18,6 +18,8 @@ const integrations = require('../integrations');
 const ai = require('../ai');
 const aiScope = require('../ai-scope');
 const aiShares = require('../ai-shares');
+const aiTerms = require('../ai-terms');
+const aiSqlExamples = require('../ai-sql-examples');
 const audit = require('../audit');
 const departments = require('../departments');
 const projectGroups = require('../project-groups');
@@ -2389,6 +2391,109 @@ router.post('/ai/test', auth.requirePerm('ai:config'), async (req, res) => {
 router.get('/ai/providers', async (req, res) => {
   res.json({ ok: true, data: ai.publicProviders() });
 });
+
+/* ══════════════════════════════════════════════════════════
+ *  V10：AI 问数增强 —— 术语配置 / SQL 示例库 / 分享问数记录
+ * ══════════════════════════════════════════════════════════ */
+
+/** 术语列表 */
+router.get('/ai/terms', auth.requirePerm('ai:use'), async (req, res, next) => {
+  try {
+    const list = await aiTerms.list({
+      keyword: req.query.keyword,
+      category: req.query.category,
+      enabled: req.query.enabled,
+    });
+    res.json({ ok: true, data: list });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+/** 术语分类（去重） */
+router.get('/ai/terms/categories', auth.requirePerm('ai:use'), async (req, res) => {
+  try {
+    const list = await aiTerms.list({});
+    const cats = [...new Set(list.map((x) => x.category).filter(Boolean))];
+    res.json({ ok: true, data: cats });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+router.post('/ai/terms', auth.requirePerm('ai:config'), async (req, res) => {
+  try {
+    const item = await aiTerms.create(req.body || {}, req.user && req.user.id);
+    await audit.log(req, 'ai.term.create', { targetType: 'ai_term', targetId: item.id, detail: { term: item.term } });
+    res.json({ ok: true, data: item, message: '术语已创建' });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+router.put('/ai/terms/:id', auth.requirePerm('ai:config'), async (req, res) => {
+  try {
+    const item = await aiTerms.update(req.params.id, req.body || {});
+    await audit.log(req, 'ai.term.update', { targetType: 'ai_term', targetId: item.id, detail: { term: item.term } });
+    res.json({ ok: true, data: item, message: '术语已更新' });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+router.delete('/ai/terms/:id', auth.requirePerm('ai:config'), async (req, res) => {
+  try {
+    await aiTerms.remove(req.params.id);
+    await audit.log(req, 'ai.term.delete', { targetType: 'ai_term', targetId: Number(req.params.id) });
+    res.json({ ok: true, message: '术语已删除' });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+/** SQL 示例列表 */
+router.get('/ai/sql-examples', auth.requirePerm('ai:use'), async (req, res) => {
+  try {
+    const list = await aiSqlExamples.list({ keyword: req.query.keyword, datasetId: req.query.datasetId });
+    res.json({ ok: true, data: list });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+router.post('/ai/sql-examples', auth.requirePerm('ai:config'), async (req, res) => {
+  try {
+    const item = await aiSqlExamples.create(req.body || {}, req.user && req.user.id);
+    await audit.log(req, 'ai.sqlexample.create', { targetType: 'ai_sql_example', targetId: item.id, detail: { question: item.question } });
+    res.json({ ok: true, data: item, message: 'SQL 示例已创建' });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+router.put('/ai/sql-examples/:id', auth.requirePerm('ai:config'), async (req, res) => {
+  try {
+    const item = await aiSqlExamples.update(req.params.id, req.body || {});
+    res.json({ ok: true, data: item, message: 'SQL 示例已更新' });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+router.delete('/ai/sql-examples/:id', auth.requirePerm('ai:config'), async (req, res) => {
+  try {
+    await aiSqlExamples.remove(req.params.id);
+    res.json({ ok: true, message: 'SQL 示例已删除' });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+/** 试跑示例 SQL（只读，限 20 行） */
+router.post('/ai/sql-examples/:id/test', auth.requirePerm('ai:config'), async (req, res) => {
+  try {
+    const item = await aiSqlExamples.get(req.params.id);
+    if (!item) throw new Error('SQL 示例不存在');
+    const sql = String(item.sql || '').trim().replace(/;+$/, '');
+    if (!/^\s*(select|with)\b/i.test(sql)) throw new Error('只能试跑 SELECT / WITH 查询');
+    const rows = await db.query('SELECT * FROM (' + sql + ') AS _t LIMIT 20');
+    res.json({ ok: true, data: { rows: rows.slice(0, 20), count: rows.length } });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
+/** 分享下的问数记录（V10 A6） */
+router.get('/ai/shares/:id/chats', auth.requirePerm('ai:use'), async (req, res) => {
+  try {
+    const share = await aiShares.getShare(req.params.id);
+    if (!share) throw new Error('分享不存在');
+    const limit = Math.min(Number(req.query.limit) || 100, 300);
+    const rows = await ai.listChats(null, limit);
+    res.json({ ok: true, data: { share, chats: rows } });
+  } catch (err) { res.status(400).json({ ok: false, message: err.message }); }
+});
+
 
 /* ══════════════════════════════════════════════════════════
  *  数据治理

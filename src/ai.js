@@ -7,6 +7,8 @@ const reports = require('./reports');
 const datasources = require('./datasources');
 const dsMod = require('./datasource');
 const aiScope = require('./ai-scope');
+const aiTerms = require('./ai-terms');
+const aiSqlExamples = require('./ai-sql-examples');
 
 /**
  * AI 问数（V8）
@@ -520,8 +522,21 @@ function extractSql(content) {
 }
 
 /** 构造 SQL 生成的 system 提示词 */
-function buildSqlSystemPrompt(schemaText) {
-  return [
+function buildSqlSystemPrompt(schemaText, extra) {
+  /**
+   * V10：业务术语与参考 SQL 示例注入。
+   * extra = { termsBlock?: string, examplesBlock?: string }
+   * 二者都在 schema 之后、规则之前，让模型先理解业务、再看写法，最后遵守规则。
+   */
+  const extraText = (() => {
+    const e = extra || {};
+    const parts = [];
+    if (e.termsBlock) parts.push(String(e.termsBlock).trim());
+    if (e.examplesBlock) parts.push(String(e.examplesBlock).trim());
+    return parts.length ? '\n' + parts.join('\n\n') + '\n' : '';
+  })();
+
+  return ([
     '你是一个严谨的 MySQL 数据分析助手，负责把用户的自然语言问题翻译成一条可执行的 SELECT 查询。',
     '',
     '可用数据（只允许使用下面列出的逻辑表名与字段，不得使用其它任何表）。',
@@ -547,7 +562,7 @@ function buildSqlSystemPrompt(schemaText) {
       + '问「当前走到哪个节点 / 某个节点下有多少」才用存节点名的列；',
     '12. 统计「有多少个 X」（客户、记录、门店等）时用 COUNT(*)，若同一实体可能重复出现再用 COUNT(DISTINCT 标识列)，'
       + '不要给聚合结果乱加会误过滤的 WHERE 条件。',
-  ].join('\n');
+  ].join('\n')) + extraText;
 }
 
 /** 判断是否为「超时」类错误（用于 SQL 生成的重试判断） */
@@ -569,8 +584,8 @@ function isTimeoutError(err) {
  * @param {Array} [history]
  * @param {object} [opts] { config }
  */
-async function generateSql(question, schemaText, history, opts) {
-  const messages = [{ role: 'system', content: buildSqlSystemPrompt(schemaText) }];
+async function generateSql(question, schemaText, history, opts, extras) {
+  const messages = [{ role: 'system', content: buildSqlSystemPrompt(schemaText, extras) }];
   (history || []).slice(-4).forEach((h) => {
     if (h && h.role && h.content) {
       const role = h.role === 'assistant' ? 'assistant' : 'user';
@@ -666,7 +681,16 @@ async function ask(question, options) {
 
     // 3) 生成 SQL
     const cfg = opts.config || await resolveConfig();
-    const gen = await generateSql(q, schemaText, opts.history, { config: cfg });
+    /**
+     * V10：生成 SQL 前并行准备「业务术语」与「参考 SQL 示例」。
+     * 二者任一失败都不影响主流程（失败即跳过注入）。
+     */
+    const [termsBlock, examplesPack] = await Promise.all([
+      aiTerms.promptBlock(3000).catch(() => ''),
+      aiSqlExamples.pickForPrompt(q, (resolved.sources || []).map((x) => x.table).filter(Boolean), 3).catch(() => ({ items: [], block: '' })),
+    ]);
+    const examplesBlock = (examplesPack && examplesPack.block) || '';
+    const gen = await generateSql(q, schemaText, opts.history, { config: cfg }, { termsBlock, examplesBlock });
     lastSql = gen.sql;
 
     // 4) 只读校验（剥掉字符串/注释后判定）

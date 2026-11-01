@@ -145,14 +145,13 @@ const CSS = `
 .vb6-all:hover{background:var(--brandSoft);border-color:var(--brand3)}
 
 /* ── 图例 chip（全卡唯一图例） ── */
-.vb6-legend{display:flex;align-items:center;gap:6px;margin-left:auto;flex-shrink:0;flex-wrap:wrap}
+.vb6-legend{display:flex;align-items:center;gap:10px;margin-left:auto;flex-shrink:0;flex-wrap:wrap}
 .vb6-legend .lgcap{font-size:var(--fs-2xs,11px);color:var(--text3);font-weight:600;white-space:nowrap;margin-right:1px}
-.vb6-legend .lggrp{display:inline-flex;align-items:center;gap:6px;padding:2px 9px 2px 7px;border-radius:7px;background:var(--panel2);border:1px solid var(--line2)}
-.vb6-legend .lggrp .gt{font-size:var(--fs-2xs,11px);color:var(--text3);font-weight:600;white-space:nowrap;margin-right:2px}
 .vb6-lg{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none;font-size:var(--fs-2xs,11px);font-weight:600;color:var(--text2);white-space:nowrap;transition:opacity .16s ease,color .16s ease;line-height:1}
 .vb6-lg:hover{color:var(--text)}
-.vb6-lg .sw{width:9px;height:9px;border-radius:3px;flex-shrink:0}
-.vb6-lg .sw.line{width:13px;height:3px;border-radius:2px}
+/* R8：形状即语义 —— 柱=正方形 10×10/r2，线=窄长方形 14×4/r2（不再用「柱」「线」文字） */
+.vb6-lg .sw.sq{width:10px;height:10px;border-radius:2px}
+.vb6-lg .sw.ln{width:14px;height:4px;border-radius:2px}
 .vb6-lg.off{opacity:.34}
 .vb6-lg.off .sw{filter:grayscale(1)}
 
@@ -412,50 +411,41 @@ export default function SignTrend({ data, loading, isMobile }: SignTrendProps) {
 
           <div className="vb6-legend" data-legend="sign-trend">
             <span className="lgcap">图例</span>
-            {barDefs.length > 0 && (
-              <span className="lggrp">
-                <span className="gt">柱</span>
-                {barDefs.map((d) => {
-                  const off = hidden.includes(d.name);
-                  return (
-                    <span
-                      key={d.name}
-                      className={`vb6-lg${off ? ' off' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      title={`点击${off ? '显示' : '隐藏'}「${d.name}」`}
-                      onClick={() => toggleLegend(d.name)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') toggleLegend(d.name); }}
-                    >
-                      <span className="sw" style={{ background: d.color }} />
-                      {d.name}
-                    </span>
-                  );
-                })}
-              </span>
-            )}
-            {lineDefs.length > 0 && (
-              <span className="lggrp">
-                <span className="gt">线</span>
-                {lineDefs.map((d) => {
-                  const off = hidden.includes(d.name);
-                  return (
-                    <span
-                      key={d.name}
-                      className={`vb6-lg${off ? ' off' : ''}`}
-                      role="button"
-                      tabIndex={0}
-                      title={`点击${off ? '显示' : '隐藏'}「${d.name}」`}
-                      onClick={() => toggleLegend(d.name)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') toggleLegend(d.name); }}
-                    >
-                      <span className="sw line" style={{ background: d.color }} />
-                      {d.name}
-                    </span>
-                  );
-                })}
-              </span>
-            )}
+            {/* R8：柱形=正方形色块，折线=窄长方形；去掉「柱」「线」文字分组标题 */}
+            {barDefs.map((d) => {
+              const off = hidden.includes(d.name);
+              return (
+                <span
+                  key={d.name}
+                  className={`vb6-lg${off ? ' off' : ''}`}
+                  role="button"
+                  tabIndex={0}
+                  title={`点击${off ? '显示' : '隐藏'}「${d.name}」`}
+                  onClick={() => toggleLegend(d.name)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') toggleLegend(d.name); }}
+                >
+                  <span className="sw sq" style={{ background: d.color }} />
+                  {d.name}
+                </span>
+              );
+            })}
+            {lineDefs.map((d) => {
+              const off = hidden.includes(d.name);
+              return (
+                <span
+                  key={d.name}
+                  className={`vb6-lg${off ? ' off' : ''}`}
+                  role="button"
+                  tabIndex={0}
+                  title={`点击${off ? '显示' : '隐藏'}「${d.name}」`}
+                  onClick={() => toggleLegend(d.name)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') toggleLegend(d.name); }}
+                >
+                  <span className="sw ln" style={{ background: d.color }} />
+                  {d.name}
+                </span>
+              );
+            })}
           </div>
         </div>
 

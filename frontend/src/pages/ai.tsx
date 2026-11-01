@@ -54,6 +54,9 @@ import {
   ThunderboltOutlined,
   UserOutlined,
   WarningOutlined,
+  FileAddOutlined,
+  BookOutlined,
+  CodeOutlined,
 } from '@ant-design/icons';
 import { Bubble, Sender, Welcome, Prompts } from '@ant-design/x';
 import type { PromptsItemType } from '@ant-design/x';
@@ -140,10 +143,41 @@ export default function AiPage() {
   const [scopeLoading, setScopeLoading] = useState(true);
   const scopeSelectRef = useRef<any>(null);
 
+  /* ── V10 A7：把问数结果添加到报表中心 ── */
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveTarget, setSaveTarget] = useState<{ sql: string; answer: string; rowCount: number } | null>(null);
+  const [saveName, setSaveName] = useState('');
+  const [saveDesc, setSaveDesc] = useState('');
+  const [saveType, setSaveType] = useState<'chart' | 'table'>('table');
+  const [saveBusy, setSaveBusy] = useState(false);
+
+  /* ── V10 A1/A2：术语管理 + SQL 示例库 ── */
+  const [termPanelOpen, setTermPanelOpen] = useState(false);
+  const [termList, setTermList] = useState<Array<Record<string, unknown>>>([]);
+  const [termBusy, setTermBusy] = useState(false);
+  const [termForm, setTermForm] = useState({ term: '', definition: '', aliases: '', category: '' });
+
+  const [exPanelOpen, setExPanelOpen] = useState(false);
+  const [exList, setExList] = useState<Array<Record<string, unknown>>>([]);
+  const [exBusy, setExBusy] = useState(false);
+  const [exForm, setExForm] = useState({ question: '', sql: '', description: '', tags: '' });
+
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [sessionKey, setSessionKey] = useState<string>(() => newSessionKey());
+  const [sessionKey, setSessionKey] = useState<string>(() => {
+    /**
+     * V10：支持通过 ?session=xxx 恢复指定会话。
+     * 之前初始化永远新建，导致刷新页面后主聊天区永远是空的，
+     * 历史问数结果（SQL / 图表 / 添加到报表中心按钮）全部看不到。
+     */
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const key = sp.get('session');
+      if (key && key.trim()) return key.trim();
+    } catch { /* ignore */ }
+    return newSessionKey();
+  });
   const [history, setHistory] = useState<AiChatRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -328,6 +362,113 @@ export default function AiPage() {
     }
   };
 
+  /* ── V10 A1：术语管理 ── */
+  const loadTerms = useCallback(async () => {
+    setTermBusy(true);
+    try {
+      const r = await fetch('/api/ai/terms', { credentials: 'same-origin' }).then((x) => x.json());
+      setTermList(r.ok ? (r.data || []) : []);
+    } catch { setTermList([]); } finally { setTermBusy(false); }
+  }, []);
+
+  const createTerm = useCallback(async () => {
+    if (!termForm.term.trim() || !termForm.definition.trim()) { message.warning('术语名与定义必填'); return; }
+    setTermBusy(true);
+    try {
+      const r = await fetch('/api/ai/terms', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(termForm),
+      }).then((x) => x.json());
+      if (!r.ok) throw new Error(r.message || '创建失败');
+      message.success('术语已添加');
+      setTermForm({ term: '', definition: '', aliases: '', category: '' });
+      await loadTerms();
+    } catch (e) { message.error(e instanceof Error ? e.message : '创建失败'); } finally { setTermBusy(false); }
+  }, [termForm, loadTerms]);
+
+  const removeTerm = useCallback(async (id: number) => {
+    setTermBusy(true);
+    try {
+      await fetch('/api/ai/terms/' + id, { method: 'DELETE', credentials: 'same-origin' });
+      await loadTerms();
+    } finally { setTermBusy(false); }
+  }, [loadTerms]);
+
+  /* ── V10 A2：SQL 示例库 ── */
+  const loadExamples = useCallback(async () => {
+    setExBusy(true);
+    try {
+      const r = await fetch('/api/ai/sql-examples', { credentials: 'same-origin' }).then((x) => x.json());
+      setExList(r.ok ? (r.data || []) : []);
+    } catch { setExList([]); } finally { setExBusy(false); }
+  }, []);
+
+  const createExample = useCallback(async () => {
+    if (!exForm.question.trim() || !exForm.sql.trim()) { message.warning('示例问题与 SQL 必填'); return; }
+    setExBusy(true);
+    try {
+      const r = await fetch('/api/ai/sql-examples', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(exForm),
+      }).then((x) => x.json());
+      if (!r.ok) throw new Error(r.message || '创建失败');
+      message.success('SQL 示例已添加');
+      setExForm({ question: '', sql: '', description: '', tags: '' });
+      await loadExamples();
+    } catch (e) { message.error(e instanceof Error ? e.message : '创建失败'); } finally { setExBusy(false); }
+  }, [exForm, loadExamples]);
+
+  const removeExample = useCallback(async (id: number) => {
+    setExBusy(true);
+    try {
+      await fetch('/api/ai/sql-examples/' + id, { method: 'DELETE', credentials: 'same-origin' });
+      await loadExamples();
+    } finally { setExBusy(false); }
+  }, [loadExamples]);
+
+  /**
+   * V10 A7：把当前问数结果存成一个报表。
+   * 后端 POST /api/reports 接受 { name, description, reportType, config }，
+   * config 里带 sql + 结论 + 列信息，报表中心可直接复现。
+   */
+  const submitToReport = useCallback(async () => {
+    if (!saveTarget) return;
+    const nm = saveName.trim();
+    if (!nm) { message.warning('请填写报表名称'); return; }
+    setSaveBusy(true);
+    try {
+      const r = await fetch('/api/reports', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: nm,
+          description: saveDesc.trim() || undefined,
+          reportType: saveType,
+          config: {
+            source: 'ai',
+            sql: saveTarget.sql,
+            answer: saveTarget.answer,
+            rowCount: saveTarget.rowCount,
+            chartType: saveType === 'chart' ? 'bar' : 'table',
+          },
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.ok === false) throw new Error(j.message || `保存失败（HTTP ${r.status}）`);
+      message.success('已添加到报表中心');
+      setSaveOpen(false);
+      setSaveName('');
+      setSaveDesc('');
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '保存失败');
+    } finally {
+      setSaveBusy(false);
+    }
+  }, [saveTarget, saveName, saveDesc, saveType]);
+
   /** 复制文本到剪贴板（navigator.clipboard 不可用时退回 textarea + execCommand） */
   const copyText = useCallback(
     async (text: string) => {
@@ -400,6 +541,37 @@ export default function AiPage() {
     }
   };
 
+  /**
+   * V10：按 sessionKey 拉取某个会话的全部问答，渲染到主聊天区。
+   * 后端 GET /api/ai/chats?sessionKey=xxx
+   */
+  const loadSessionByKey = useCallback(async (key: string) => {
+    if (!key) return;
+    try {
+      const recs = await listAiChats(key, 100);
+      const list = Array.isArray(recs) ? recs : [];
+      if (!list.length) return;
+      setSessionKey(key);
+      // 数据库按 id DESC 返回，渲染要按时间正序
+      const ordered = [...list].reverse();
+      const msgs: ChatMessage[] = [];
+      ordered.forEach((rec) => {
+        if (rec.question) msgs.push({ key: uid(), role: 'user', content: String(rec.question) });
+        msgs.push({
+          key: uid(),
+          role: 'ai',
+          content: String(rec.answer || ''),
+          meta: {
+            sql: rec.sql_text || undefined,
+            rowCount: rec.result_rows !== undefined && rec.result_rows !== null ? Number(rec.result_rows) : undefined,
+            duration: rec.duration_ms !== undefined && rec.duration_ms !== null ? Number(rec.duration_ms) : undefined,
+                      },
+        });
+      });
+      setMessages(msgs);
+    } catch { /* 静默失败：保持当前状态 */ }
+  }, []);
+
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true);
     try {
@@ -417,6 +589,31 @@ export default function AiPage() {
     loadScope();
     loadHistory();
   }, [canUse, loadScope, loadHistory]);
+
+  /**
+   * V10：首次进入自动恢复会话。
+   *  - 有 ?session= → 加载该会话
+   *  - 否则 → 加载历史里最近的一条（让刷新后仍能看到上次问数结果）
+   * 只执行一次（用 ref 防重复）。
+   */
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (!canUse || restoredRef.current) return;
+    if (!history || !history.length) return;
+    restoredRef.current = true;
+    (async () => {
+      let key = '';
+      try {
+        const sp = new URLSearchParams(window.location.search);
+        key = (sp.get('session') || '').trim();
+      } catch { /* ignore */ }
+      if (!key) {
+        const first = history[0];
+        key = String(first && first.session_key ? first.session_key : '');
+      }
+      if (key) await loadSessionByKey(key);
+    })();
+  }, [canUse, history, loadSessionByKey]);
 
   /** 刷新：清空错误并重新拉取数据范围与历史 */
   const refresh = useCallback(async () => {
@@ -701,6 +898,25 @@ export default function AiPage() {
               )}
             </Space>
 
+            {/* V10 A7：把本次问数结果添加到报表中心 */}
+            {meta.sql && (
+              <div>
+                <Button
+                  size="small"
+                  icon={<FileAddOutlined />}
+                  onClick={() => {
+                    setSaveTarget({ sql: String(meta.sql), answer: String(m.content || ''), rowCount: Number(meta.rowCount) || 0 });
+                    setSaveName(`问数报表 ${new Date().toLocaleDateString('zh-CN')}`);
+                    setSaveDesc(String(m.content || '').slice(0, 120));
+                    setSaveType('table');
+                    setSaveOpen(true);
+                  }}
+                >
+                  添加到报表中心
+                </Button>
+              </div>
+            )}
+
             {meta.sql && (
               <Collapse
                 size="small"
@@ -743,7 +959,13 @@ export default function AiPage() {
                   dataSource={(meta.rows || []).slice(0, 30)}
                   columns={tableColumns}
                   pagination={false}
-                  scroll={{ x: 'max-content', y: 240 }}
+                  /**
+         * V10 A5：修掉「表格自动拉宽列宽」的 bug。
+         * 原来 x: 'max-content' 会让表格按最宽单元格无限撑开，长文本列把整表拉爆。
+         * 改为按列数估算的固定宽度，超出部分在容器内横向滚动。
+         */
+        scroll={{ x: Math.max(640, Math.min((tableColumns.length || 6) * 140, 1600)), y: 300 }}
+        tableLayout="fixed"
                   bordered
                 />
                 {(meta.rows.length || 0) > 30 && (
@@ -916,8 +1138,128 @@ export default function AiPage() {
   ) : null;
 
   return (
-    <Page
+    <>
+      {/* V10 A7：保存问数结果到报表中心 */}
+      <Modal
+        title="添加到报表中心"
+        open={saveOpen}
+        onCancel={() => setSaveOpen(false)}
+        onOk={submitToReport}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={saveBusy}
+        width={520}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 4 }}>报表名称</div>
+            <Input value={saveName} onChange={(e) => setSaveName(e.target.value)} placeholder="请输入报表名称" />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 4 }}>说明（可选）</div>
+            <Input.TextArea value={saveDesc} onChange={(e) => setSaveDesc(e.target.value)} rows={3} placeholder="这条报表的用途或口径说明" />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 4 }}>展示方式</div>
+            <Space>
+              <Button type={saveType === 'table' ? 'primary' : 'default'} onClick={() => setSaveType('table')}>表格</Button>
+              <Button type={saveType === 'chart' ? 'primary' : 'default'} onClick={() => setSaveType('chart')}>图表</Button>
+            </Space>
+          </div>
+          {saveTarget && (
+            <div style={{ fontSize: 11, color: NEUTRAL.textTertiary }}>
+              含 {saveTarget.rowCount} 行数据 · SQL 将一并保存
+            </div>
+          )}
+        </div>
+      </Modal>
+      {/* V10 A1：术语配置 */}
+      <Drawer
+        title="业务术语配置"
+        open={termPanelOpen}
+        onClose={() => setTermPanelOpen(false)}
+        width={isMobile ? '100%' : 720}
+        destroyOnHidden
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>
+            术语会注入 AI 的提示词，让模型正确理解业务说法（如「南区」「高净值会员」）。
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
+            <Input placeholder="术语名（如：南区）" value={termForm.term} onChange={(e) => setTermForm({ ...termForm, term: e.target.value })} />
+            <Input placeholder="分类（可选，如：区域）" value={termForm.category} onChange={(e) => setTermForm({ ...termForm, category: e.target.value })} />
+          </div>
+          <Input placeholder="别名（逗号分隔，如：南边,南方）" value={termForm.aliases} onChange={(e) => setTermForm({ ...termForm, aliases: e.target.value })} />
+          <Input.TextArea placeholder="定义（如：区域字段为「南区」的连锁）" rows={2} value={termForm.definition} onChange={(e) => setTermForm({ ...termForm, definition: e.target.value })} />
+          <Button type="primary" loading={termBusy} onClick={createTerm}>添加术语</Button>
+          <div style={{ borderTop: `1px solid ${NEUTRAL.border}`, paddingTop: 12 }}>
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 8 }}>
+              已有术语（{termList.length} 条）
+            </div>
+            {termList.length === 0 ? (
+              <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, padding: '12px 0' }}>暂无术语</div>
+            ) : termList.map((t) => (
+              <div key={String(t.id)} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: `1px solid ${NEUTRAL.border}` }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: NEUTRAL.text }}>
+                    {String(t.term || '')}
+                    {t.category ? <span style={{ fontSize: 11, color: NEUTRAL.textTertiary, marginLeft: 6 }}>[{String(t.category)}]</span> : null}
+                  </div>
+                  <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginTop: 2 }}>{String(t.definition || '')}</div>
+                  {t.aliases ? <div style={{ fontSize: 11, color: NEUTRAL.textTertiary, marginTop: 2 }}>别名：{String(t.aliases)}</div> : null}
+                </div>
+                <Button size="small" danger type="text" onClick={() => removeTerm(Number(t.id))}>删除</Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Drawer>
+
+      {/* V10 A2：SQL 示例库 */}
+      <Drawer
+        title="SQL 示例库"
+        open={exPanelOpen}
+        onClose={() => setExPanelOpen(false)}
+        width={isMobile ? '100%' : 860}
+        destroyOnHidden
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>
+            示例会按问题相似度挑选最相关的几条注入提示词，让模型模仿正确写法。
+          </div>
+          <Input placeholder="示例问题（如：本月新增了多少客户？）" value={exForm.question} onChange={(e) => setExForm({ ...exForm, question: e.target.value })} />
+          <Input.TextArea placeholder="参考 SQL" rows={4} value={exForm.sql} onChange={(e) => setExForm({ ...exForm, sql: e.target.value })}
+            style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }} />
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
+            <Input placeholder="说明（可选）" value={exForm.description} onChange={(e) => setExForm({ ...exForm, description: e.target.value })} />
+            <Input placeholder="标签（逗号分隔）" value={exForm.tags} onChange={(e) => setExForm({ ...exForm, tags: e.target.value })} />
+          </div>
+          <Button type="primary" loading={exBusy} onClick={createExample}>添加示例</Button>
+          <div style={{ borderTop: `1px solid ${NEUTRAL.border}`, paddingTop: 12 }}>
+            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 8 }}>
+              已有示例（{exList.length} 条）
+            </div>
+            {exList.length === 0 ? (
+              <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, padding: '12px 0' }}>暂无示例</div>
+            ) : exList.map((e) => (
+              <div key={String(e.id)} style={{ padding: '10px 0', borderBottom: `1px solid ${NEUTRAL.border}` }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: NEUTRAL.text }}>{String(e.question || '')}</div>
+                  <span style={{ fontSize: 11, color: NEUTRAL.textTertiary }}>命中 {String(e.useCount || 0)} 次</span>
+                  <Button size="small" danger type="text" onClick={() => removeExample(Number(e.id))}>删除</Button>
+                </div>
+                <pre style={{ margin: '6px 0 0', padding: 8, borderRadius: 6, background: NEUTRAL.surfaceSunken, fontSize: 11.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
+                  {String(e.sql || '')}
+                </pre>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Drawer>
+
+      <Page
       title="AI 问数"
+
       search={
         <Select
           ref={scopeSelectRef}
@@ -956,7 +1298,12 @@ export default function AiPage() {
           <Button icon={<LinkOutlined />} onClick={openManage}>
             分享管理
           </Button>
-          <Button icon={<ClearOutlined />} onClick={reset} disabled={!messages.length}>
+          <Button icon={<BookOutlined />} onClick={() => { setTermPanelOpen(true); void loadTerms(); }}>
+            术语配置
+          </Button>
+          <Button icon={<CodeOutlined />} onClick={() => { setExPanelOpen(true); void loadExamples(); }}>
+            SQL 示例库
+          </Button>          <Button icon={<ClearOutlined />} onClick={reset} disabled={!messages.length}>
             新会话
           </Button>
           {isMobile && (
@@ -1508,5 +1855,6 @@ export default function AiPage() {
         </Text>
       </Paragraph>
     </Page>
+    </>
   );
 }

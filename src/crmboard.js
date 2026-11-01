@@ -119,6 +119,9 @@ const NODE_OVERDUE_RULE = {
  *   策略审核: 10-22:4  10-27:1
  *   流程结束: 无独立时间列（用当前节点为空判定，不参与按日统计）
  */
+/** V10：客户 ERP 名称列（jdywh_parsed_16） */
+const ERP_COL = 'w_1793089366573';
+
 const NODE_DONE_COL = [
   { node: '销售签约', col: 'w_1793094135522_p' },
   { node: '策略开通', col: 'w_1793094135524_p' },
@@ -493,6 +496,8 @@ async function loadClients() {
     'flow_current_node',
     'flow_current_owner',
     'updated_at',
+    /* V10：ERP 分布需要「连锁ERP名称」列 */
+    ERP_COL,
   ])).filter(Boolean);
   const sql = `SELECT ${all.map((c) => `\`${c}\``).join(', ')} FROM jdywh_parsed_16 ORDER BY id ASC`;
   return db.query(sql);
@@ -1025,6 +1030,23 @@ function buildRow1(clients, staff, target) {
     signTypes,
     inProgress,
     flowStatus,
+    /**
+     * V10：客户 ERP 分布
+     * 数据源 parsed_16 的「连锁ERP名称」列（实测 97 家 / 15 个 ERP / 无空值）。
+     * 按客户数降序；前端展示 TOP5 + 「其他 N 个」聚合。
+     */
+    erpDistribution: (() => {
+      const map = new Map();
+      clients.forEach((cl) => {
+        const raw = cl.runRaw || {};
+        const erp = String(raw[ERP_COL] || '').trim();
+        const key = erp || '未填写';
+        map.set(key, (map.get(key) || 0) + 1);
+      });
+      return [...map.entries()]
+        .map(([name, cnt]) => ({ name, clients: cnt }))
+        .sort((a, b) => b.clients - a.clients || a.name.localeCompare(b.name));
+    })(),
   };
 }
 
@@ -2101,6 +2123,89 @@ async function buildDetailPage(query, page, pageSize) {
  * @param {string|number} chainId 连锁ID
  * @returns {Promise<Object|null>} 找不到返回 null
  */
+/**
+ * V10 CD：客户策略运行趋势（近 30 日）
+ *
+ * 关键：必须查 jdywh_mail_31 的**全部历史日期**。
+ * 不能用 loadRunDetail()，那个函数只返回 MAX(import_date) 一天 → 趋势只会有一个点。
+ *
+ * 实测当前 mail_31 有 4 天：2026-10-29 / 10-30 / 10-31 / 11-01，
+ * 因此轴以「数据里真实存在的日期」为准（最多 30 个），而不是自然 30 天，
+ * 前端拿到 dayCount 后据此渲染即可。
+ */
+async function buildClientTrend(chainId, now) {
+  const id = s(chainId);
+  if (!id) return null;
+  if (!(await tableExists('jdywh_mail_31'))) return null;
+
+  let rows;
+  try {
+    rows = await db.query('SELECT * FROM jdywh_mail_31');
+  } catch (_) {
+    return null;
+  }
+  if (!rows || !rows.length) return null;
+
+  /** 只保留该客户的行，并按日期归档 */
+  const byDay = new Map();
+  rows.forEach((r) => {
+    if (s(r[M.chainId]) !== id) return;
+    const raw = r.import_date;
+    const key = raw instanceof Date ? ymd(raw) : String(raw || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(r);
+  });
+  if (!byDay.size) return null;
+
+  /** 以真实数据日期为轴，取最近 30 个（升序） */
+  const allDays = [...byDay.keys()].sort();
+  const days = allDays.slice(-30);
+  const len = days.length;
+
+  const mk = () => new Array(len).fill(0);
+  const acc = {
+    reached: mk(), arrived: mk(),
+    couponIssued: mk(), couponIssuedPpl: mk(), couponUsed: mk(), couponUsedPpl: mk(),
+    channelCost: mk(), couponCost: mk(), gmv: mk(),
+  };
+  days.forEach((d, i) => {
+    byDay.get(d).forEach((r) => {
+      acc.reached[i] += n(r[M.sent]);
+      acc.arrived[i] += n(r[M.arrived]);
+      acc.couponIssuedPpl[i] += n(r[M.couponIssuedPeople]);
+      acc.couponUsedPpl[i] += n(r[M.couponUsedPeople]);
+      acc.couponIssued[i] += n(r[M.couponIssued]);
+      acc.couponUsed[i] += n(r[M.couponUsed]);
+      acc.channelCost[i] += n(r[M.channelCost]);
+      acc.couponCost[i] += n(r[M.couponCost]);
+      acc.gmv[i] += n(r[M.gmv]);
+    });
+  });
+
+  const r4 = (v) => Math.round((Number.isFinite(v) ? v : 0) * 10000) / 10000;
+
+  return {
+    days: days.map((d) => md(d)),
+    daysRaw: days,
+    daysCn: days.map((d) => mdCn(d)),
+    dayCount: len,
+    series: {
+      reached: acc.reached.map(r4),
+      /* 触达人次：汇总表无人次列，用「触达人数 + 到店人数」作为可见口径 */
+      reachedTimes: acc.reached.map((v, i) => r4(v + acc.arrived[i])),
+      reachRate: acc.reached.map((v, i) => r4(div(acc.arrived[i], v))),
+      couponIssued: acc.couponIssued.map(r4),
+      couponUsed: acc.couponUsed.map(r4),
+      couponRate: acc.couponIssuedPpl.map((v, i) => r4(div(acc.couponUsedPpl[i], v))),
+      channelCost: acc.channelCost.map(r4),
+      couponCost: acc.couponCost.map(r4),
+      totalCost: acc.channelCost.map((v, i) => r4(v + acc.couponCost[i])),
+      roi: acc.gmv.map((v, i) => r4(div(acc.channelCost[i] + acc.couponCost[i], v))),
+    },
+  };
+}
+
 async function buildClientDetail(chainId) {
   const id = s(chainId);
   if (!id) return null;
@@ -2283,6 +2388,8 @@ async function buildClientDetail(chainId) {
         roi: round(div(totalCost, gmv), 4),
       };
     })(),
+    /** V10 CD：近 30 日策略运行趋势（无数据则 null，前端降级展示） */
+    trend: await buildClientTrend(id, now),
     signAtLabel: c.signAt ? mdCn(c.signAt) : '',
     submitAtLabel: c.submitAt ? mdCn(c.submitAt) : '',
   };
@@ -2292,6 +2399,7 @@ module.exports = {
   buildBoard,
   buildDetailPage,
   buildClientDetail,
+  buildClientTrend,
   // 导出内部件便于单测
   _internal: {
     resolveDateRange,

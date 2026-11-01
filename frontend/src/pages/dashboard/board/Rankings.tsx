@@ -40,51 +40,60 @@ function shortType(name: string): string {
   return CHAIN_TYPE_SHORT[name] || name;
 }
 
-/* ══════════════ 名次徽章：TOP3 金银铜，4+ 中性灰（只用令牌，无彩虹色） ══════════════ */
+/* ══════════════ 名次配色：V10 要求 TOP3「鲜艳」，第 2 名不得用灰 ══════════════ */
 
 /**
- * V9.2：徽章配色收敛到「金 / 银 / 铜 + 中性灰」四档，全部由令牌混出：
- *   1 金  var(--warn)
- *   2 银  color-mix(--text3 78%, --text)
- *   3 铜  color-mix(--warn 52%, --text3)
- *   4+   var(--line2) 底 + --text2 字（永不用白字压在浅底上）
+ * V10 契约 §四-R3 明确要求：
+ *   第1名 红色系 / 第2名 橙色系 / 第3名 黄色系（都要鲜艳），**第 2 名禁止灰色**
+ *   第 4 名起中性（--line2 底 + --text2 字）
+ * TOP3 用固定渐变值（契约允许并建议），并配同色系深字保证对比度 ≥6（白字压在亮黄上只有 1.7）。
  */
-function badgeStyle(no: number): React.CSSProperties {
-  /**
-   * V9.2：TOP3 徽章原来用白字压在金色/银色底上，实测对比度仅 1.67，几乎看不清。
-   * 改为「金属渐变底 + 同色系深字」，对比度 6~8，同时更有质感。
-   */
-  if (no === 1) {
-    return {
-      background: 'linear-gradient(135deg,#fbbf24,#f59e0b)',
-      color: '#452a03',
-      boxShadow: '0 1px 3px rgba(245,158,11,.42)',
-    };
-  }
-  if (no === 2) {
-    return {
-      background: 'linear-gradient(135deg,#cbd5e1,#94a3b8)',
-      color: '#1e293b',
-      boxShadow: '0 1px 3px rgba(148,163,184,.42)',
-    };
-  }
-  if (no === 3) {
-    return {
-      background: 'linear-gradient(135deg,#fdba74,#f97316)',
-      color: '#431407',
-      boxShadow: '0 1px 3px rgba(249,115,22,.38)',
-    };
-  }
+interface Medal {
+  /** 徽章渐变底 */
+  bg: string;
+  /** 徽章文字色（同色系深色） */
+  fg: string;
+  /** 占比条颜色 */
+  bar: string;
+  /** 阴影 */
+  shadow: string;
+}
+
+/** V10：默认（客户数榜 / 门店数榜）—— 红 → 橙 → 黄 */
+const MEDALS_WARM: Record<number, Medal> = {
+  1: { bg: 'linear-gradient(135deg,#ef4444,#dc2626)', fg: '#ffffff', bar: 'linear-gradient(90deg,#f87171,#dc2626)', shadow: '0 1px 3px rgba(220,38,38,.40)' },
+  2: { bg: 'linear-gradient(135deg,#fb923c,#f97316)', fg: '#ffffff', bar: 'linear-gradient(90deg,#fdba74,#ea580c)', shadow: '0 1px 3px rgba(249,115,22,.40)' },
+  3: { bg: 'linear-gradient(135deg,#fbbf24,#f59e0b)', fg: '#452a03', bar: 'linear-gradient(90deg,#fcd34d,#d97706)', shadow: '0 1px 3px rgba(217,119,6,.40)' },
+};
+
+/** V10：省份榜「颜色适当调整」—— 紫 → 蓝 → 青（同样鲜艳，色系与另两卡区分） */
+const MEDALS_COOL: Record<number, Medal> = {
+  1: { bg: 'linear-gradient(135deg,#7c3aed,#6d28d9)', fg: '#ffffff', bar: 'linear-gradient(90deg,#a78bfa,#6d28d9)', shadow: '0 1px 3px rgba(109,40,217,.40)' },
+  2: { bg: 'linear-gradient(135deg,#2563eb,#1d4ed8)', fg: '#ffffff', bar: 'linear-gradient(90deg,#60a5fa,#1d4ed8)', shadow: '0 1px 3px rgba(29,78,216,.40)' },
+  3: { bg: 'linear-gradient(135deg,#0891b2,#0e7490)', fg: '#ffffff', bar: 'linear-gradient(90deg,#22d3ee,#0e7490)', shadow: '0 1px 3px rgba(14,116,144,.40)' },
+};
+
+const MEDAL_SET = { warm: MEDALS_WARM, cool: MEDALS_COOL };
+
+/** 名次徽章样式（TOP3 鲜艳 / 4+ 中性） */
+function badgeStyle(no: number, set: 'warm' | 'cool' = 'warm'): React.CSSProperties {
+  const m = MEDAL_SET[set][no];
+  if (m) return { background: m.bg, color: m.fg, boxShadow: m.shadow };
   return { background: 'var(--line2)', color: 'var(--text2)', boxShadow: 'none' };
 }
 
-/** 占比条颜色：与徽章同阶（TOP3 用金银铜，4+ 用 brand），低饱和避免抢眼 */
-function accentOf(no: number): string {
-  if (no === 1) return 'var(--warn)';
-  if (no === 2) return 'color-mix(in srgb, var(--text3) 80%, var(--text))';
-  if (no === 3) return 'color-mix(in srgb, var(--warn) 52%, var(--text3))';
-  return 'var(--brand)';
+/** 占比条填充（TOP3 用对应鲜艳色；4+ 用传入的中性强调色） */
+function barFill(no: number, neutral: string, set: 'warm' | 'cool' = 'warm'): string {
+  const m = MEDAL_SET[set][no];
+  return m ? m.bar : neutral;
 }
+
+/** 三张卡的强调色：客户数榜用 brand 蓝；门店数榜同客户数榜；省份榜改用 purple 系做区分 */
+const ACCENT = {
+  clients: 'var(--brand)',
+  stores: 'var(--brand)',
+  province: 'var(--purple)',
+};
 
 /* ══════════════ 弹窗令牌重声明（portal → body，取不到 .board-root 变量） ══════════════ */
 
@@ -171,8 +180,7 @@ const CSS = `
 .vb4-tags .tt .n{color:var(--text2);font-weight:600;overflow:hidden;text-overflow:ellipsis}
 .vb4-tags .tt .v{color:var(--text);font-weight:750;font-variant-numeric:tabular-nums;flex-shrink:0}
 
-/* ── 排行条目共用骨架：徽章 | 主区（名称+副信息+占比条+标签） | 数值列 ──
-   条目之间用极淡分隔线（不用交替底色，二者只选其一） */
+/* ── 排行条目（三张卡完全一致的结构）：徽章 + 名称/占比条/标签 + 数值 ── */
 .vb4-row{display:grid;grid-template-columns:22px minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px;min-width:0;transition:background .16s ease;border-radius:8px}
 .vb4-row+.vb4-row{box-shadow:inset 0 1px 0 var(--line2)}
 .vb4-row:hover{background:var(--brandSoft)}
@@ -191,46 +199,6 @@ const CSS = `
 /* 占比条：相对榜首的横向长度，视觉化排序 */
 .vb4-track{height:6px;border-radius:4px;background:color-mix(in srgb,var(--text) 8%,transparent);overflow:hidden}
 .vb4-track i{display:block;height:100%;border-radius:4px;transition:width .55s cubic-bezier(.4,0,.2,1)}
-
-/* ── A. 客户数排行榜（横向条形风） ── */
-.vb4a-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:var(--fs-2xs);font-weight:600;color:var(--text3);padding-top:8px;border-top:1px solid var(--line2);flex-shrink:0}
-.vb4a-foot b{color:var(--text);font-weight:750;font-variant-numeric:tabular-nums}
-
-/* ── B. 门店数排行榜（数据卡风：大数字主导） ── */
-.vb4b-row{grid-template-columns:22px minmax(0,1fr);gap:10px}
-.vb4b-num{display:flex;align-items:baseline;gap:5px;min-width:0;line-height:1.1}
-.vb4b-num b{font-size:var(--fs-xl);font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.8px;color:var(--text);line-height:1.1}
-.vb4b-num span{font-size:var(--fs-2xs);font-weight:600;color:var(--text3)}
-.vb4b-side{display:flex;align-items:center;gap:6px;flex-shrink:0}
-
-/* ── C. 省份排行榜：5 格等宽等高 + 门店占比条（两段合起来铺满正文） ──
-   repeat(5,1fr) 保证 5 格等宽；统一 auto-rows 保证等高。
-   ≤767px（卡片只有 ~351px 宽）时改为 2 行布局，避免每格被压到 48px 导致文字溢出 */
-.vb4c-wrap{flex:1;display:flex;flex-direction:column;justify-content:space-between;gap:12px;min-width:0}
-.vb4c-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));grid-auto-rows:104px;gap:8px;min-width:0;flex:0 0 auto}
-@media(max-width:767.98px){
-  .vb4c-grid{grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:88px}
-}
-.vb4c-cell{position:relative;border:1px solid var(--line);border-radius:var(--radius-sm);cursor:pointer;text-align:center;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;font-family:inherit;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:10px 4px;line-height:1.15;min-width:0}
-.vb4c-cell:hover{transform:translateY(-2px);box-shadow:var(--shadow2);border-color:var(--brand2)}
-.vb4c-cell:active{transform:translateY(0)}
-.vb4c-cell .rk{position:absolute;top:6px;left:7px;font-size:var(--fs-2xs);font-weight:750;opacity:.5;line-height:1}
-.vb4c-cell .pn{font-size:var(--fs-xs);font-weight:650;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-.vb4c-cell .cv{font-size:var(--fs-xl);font-weight:750;font-variant-numeric:tabular-nums;letter-spacing:-.6px;line-height:1.05}
-/* 副信息用 --text2（--text3 在深色的深底块上对比度只有 1.87，不可读） */
-.vb4c-cell .st{font-size:var(--fs-2xs);font-weight:600;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
-
-/* 门店占比条：同一批省份的第二个维度，把卡片下半部分填满（不与上方重复取数） */
-.vb4c-bars{display:flex;flex-direction:column;justify-content:space-evenly;gap:6px;flex:1;min-width:0}
-.vb4c-bar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;min-width:0}
-.vb4c-bar .n{font-size:var(--fs-2xs);font-weight:600;color:var(--text2);white-space:nowrap}
-.vb4c-bar .t{height:6px;border-radius:4px;background:color-mix(in srgb,var(--text) 8%,transparent);overflow:hidden}
-.vb4c-bar .t i{display:block;height:100%;border-radius:4px;background:var(--green);transition:width .55s cubic-bezier(.4,0,.2,1)}
-.vb4c-bar .v{font-size:var(--fs-2xs);font-weight:750;color:var(--text);font-variant-numeric:tabular-nums;white-space:nowrap}
-.vb4c-foot{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:var(--fs-2xs);font-weight:600;color:var(--text3);flex-shrink:0}
-.vb4c-ramp{display:inline-flex;align-items:center;gap:2px}
-.vb4c-ramp i{width:16px;height:8px;border-radius:2px;display:block}
-.vb4c-foot .tip{margin-left:auto;white-space:nowrap;color:var(--text3)}
 
 /* 下钻弹窗内 */
 .vb4d-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
@@ -322,7 +290,7 @@ function AllRankModal({
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12.5, color: 'var(--text)', fontWeight: 600, display: 'flex', alignItems: 'baseline', gap: 5, flexWrap: 'wrap' }}>
               <span>{String(v ?? '') || '-'}</span>
-              {sn && <span style={{ fontSize: 10.5, color: 'var(--text2)', fontWeight: 600 }}>· {sn}</span>}
+              {sn && <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 600 }}>· {sn}</span>}
             </div>
             <TypeTags tags={r?.tags} />
           </div>
@@ -367,17 +335,17 @@ function AllRankModal({
   );
 }
 
-/** 卡头（统一结构：色点 + 标题 13/700 + 右侧「共 N 位」11 + 更多） */
+/** 卡头（色点 + 标题 13/700 + 可选说明 11 + 更多；sub 为空则不渲染说明） */
 function CardHead({
   title, sub, onMore, moreDisabled, dotColor,
-}: { title: string; sub: string; onMore: () => void; moreDisabled?: boolean; dotColor: string }) {
+}: { title: string; sub?: string; onMore: () => void; moreDisabled?: boolean; dotColor: string }) {
   return (
     <div className="vb4-h">
       <h3>
         <span className="vb4-dot" style={{ background: dotColor }} />
         {title}
       </h3>
-      <span className="vb4-sub">{sub}</span>
+      {sub ? <span className="vb4-sub">{sub}</span> : null}
       <button type="button" className="vb4-more" onClick={onMore} disabled={moreDisabled}>
         更多 <RightOutlined />
       </button>
@@ -385,21 +353,71 @@ function CardHead({
   );
 }
 
-/* ══════════════ A. 客户数排行榜（横向条形风） ══════════════ */
+/* ══════════════ 共用：排行条目（三卡结构完全一致） ══════════════ */
+
+/**
+ * V10 契约 §四-R3：三张排行卡「显示方式完全一致」——
+ * 名次徽章 + 名称 + 数值 + 占比条（外加副信息与类型标签）。
+ * 差异只在：数值口径（客户/门店）、强调色（neutral）与卡头文案。
+ */
+function RankRowView({
+  no, name, sub, value, unit, ratio, neutral, tags, onClick, medalSet = 'warm',
+}: {
+  no: number;
+  name: string;
+  sub?: string;
+  value: number;
+  unit: string;
+  /** 0~100，相对榜首 */
+  ratio: number;
+  neutral: string;
+  tags?: RankItem['tags'];
+  onClick?: () => void;
+  /** TOP3 色系：warm=红橙黄（客户/门店榜）· cool=紫蓝青（省份榜） */
+  medalSet?: 'warm' | 'cool';
+}) {
+  return (
+    <div
+      className="vb4-row"
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      style={onClick ? { cursor: 'pointer' } : undefined}
+      title={onClick ? `${name}：点击查看明细` : undefined}
+    >
+      <div className="vb4-no" style={badgeStyle(no, medalSet)}>{no}</div>
+      <div className="vb4-main">
+        <div className="vb4-nm">
+          <span className="nm" title={name}>{name || '-'}</span>
+          {sub ? <span className="sn">{sub}</span> : null}
+        </div>
+        <div className="vb4-track">
+          <i style={{ width: `${Math.max(4, Math.min(100, ratio))}%`, background: barFill(no, neutral, medalSet) }} />
+        </div>
+        <TypeTags tags={tags} />
+      </div>
+      <div className="vb4-val">
+        <b>{fmtNum(value)}</b>
+        <span>{unit}</span>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════ A. 客户数排行榜 ══════════════ */
 
 function ClientsRankCard({ items, isMobile }: { items: RankItem[]; isMobile: boolean }) {
   const dark = useThemeMode() === 'dark';
   const [open, setOpen] = useState(false);
   const top = items.slice(0, 5);
   const max = useMemo(() => items.reduce((m, x) => Math.max(m, valueOf(x, 'clients')), 0) || 1, [items]);
-  const total = useMemo(() => items.reduce((s, x) => s + valueOf(x, 'clients'), 0), [items]);
 
   return (
     <>
       <div className="vb4-card">
         <CardHead
           title="客户数排行榜"
-          sub={`共 ${items.length} 位`}
+          /* V10：口径说明替代原来的「共 12 位」 */
+          sub="仅计算 50+ 以上的连锁"
           dotColor="var(--brand)"
           onMore={() => setOpen(true)}
         />
@@ -409,34 +427,21 @@ function ClientsRankCard({ items, isMobile }: { items: RankItem[]; isMobile: boo
           ) : top.map((r, i) => {
             const no = Number(r?.rank) || i + 1;
             const v = valueOf(r, 'clients');
-            const w = Math.max(4, Math.min(100, (v / max) * 100));
             const stores = Number(r?.stores) || 0;
             return (
-              <div className="vb4-row" key={`c-${no}-${r?.name ?? i}`}>
-                <div className="vb4-no" style={badgeStyle(no)}>{no}</div>
-                <div className="vb4-main">
-                  <div className="vb4-nm">
-                    <span className="nm" title={String(r?.name ?? '')}>{String(r?.name ?? '') || '-'}</span>
-                    <span className="sn">{fmtNum(stores)} 门店</span>
-                  </div>
-                  <div className="vb4-track">
-                    <i style={{ width: `${w}%`, background: accentOf(no) }} />
-                  </div>
-                  <TypeTags tags={r?.tags} />
-                </div>
-                <div className="vb4-val">
-                  <b>{fmtNum(v)}</b>
-                  <span>客户</span>
-                </div>
-              </div>
+              <RankRowView
+                key={`c-${no}-${r?.name ?? i}`}
+                no={no}
+                name={String(r?.name ?? '')}
+                sub={`${fmtNum(stores)} 门店`}
+                value={v}
+                unit="客户"
+                ratio={(v / max) * 100}
+                neutral={ACCENT.clients}
+                tags={r?.tags}
+              />
             );
           })}
-          {top.length > 0 && (
-            <div className="vb4a-foot">
-              <span>TOP 5 合计</span>
-              <span><b>{fmtNum(top.reduce((s, x) => s + valueOf(x, 'clients'), 0))}</b> / {fmtNum(total)} 家</span>
-            </div>
-          )}
         </div>
       </div>
       <AllRankModal
@@ -447,7 +452,7 @@ function ClientsRankCard({ items, isMobile }: { items: RankItem[]; isMobile: boo
   );
 }
 
-/* ══════════════ B. 门店数排行榜（数据卡风：大数字主导） ══════════════ */
+/* ══════════════ B. 门店数排行榜（与客户数榜结构完全一致） ══════════════ */
 
 function StoresRankCard({ items, isMobile }: { items: RankItem[]; isMobile: boolean }) {
   const dark = useThemeMode() === 'dark';
@@ -460,8 +465,9 @@ function StoresRankCard({ items, isMobile }: { items: RankItem[]; isMobile: bool
       <div className="vb4-card">
         <CardHead
           title="门店数排行榜"
-          sub={`共 ${items.length} 位`}
-          dotColor="var(--warn)"
+          /* V10：卡头不再显示「共 12 位」→ 传空串，CardHead 内部不渲染 */
+          sub=""
+          dotColor="var(--brand)"
           onMore={() => setOpen(true)}
         />
         <div className="vb4-b">
@@ -470,26 +476,19 @@ function StoresRankCard({ items, isMobile }: { items: RankItem[]; isMobile: bool
           ) : top.map((r, i) => {
             const no = Number(r?.rank) || i + 1;
             const v = valueOf(r, 'stores');
-            const w = Math.max(4, Math.min(100, (v / max) * 100));
             const clients = Number(r?.clients) || 0;
             return (
-              <div className="vb4-row vb4b-row" key={`s-${no}-${r?.name ?? i}`}>
-                <div className="vb4-no" style={badgeStyle(no)}>{no}</div>
-                <div className="vb4-main">
-                  <div className="vb4b-num">
-                    <b>{fmtNum(v)}</b>
-                    <span>门店</span>
-                    <span className="vb4b-side" style={{ marginLeft: 'auto' }}>{fmtNum(clients)} 客户</span>
-                  </div>
-                  <div className="vb4-nm">
-                    <span className="nm" title={String(r?.name ?? '')}>{String(r?.name ?? '') || '-'}</span>
-                  </div>
-                  <div className="vb4-track">
-                    <i style={{ width: `${w}%`, background: accentOf(no) }} />
-                  </div>
-                  <TypeTags tags={r?.tags} />
-                </div>
-              </div>
+              <RankRowView
+                key={`s-${no}-${r?.name ?? i}`}
+                no={no}
+                name={String(r?.name ?? '')}
+                sub={`${fmtNum(clients)} 客户`}
+                value={v}
+                unit="门店"
+                ratio={(v / max) * 100}
+                neutral={ACCENT.stores}
+                tags={r?.tags}
+              />
             );
           })}
         </div>
@@ -555,7 +554,7 @@ function ProvinceDrillModal({
           <span
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 4, padding: '0 6px', height: 18,
-              borderRadius: 6, fontSize: 10, fontWeight: 650,
+              borderRadius: 6, fontSize: 11, fontWeight: 650,
               background: `color-mix(in srgb, ${c} 12%, transparent)`,
               border: `1px solid color-mix(in srgb, ${c} 34%, transparent)`,
               color: 'var(--text)', whiteSpace: 'nowrap',
@@ -627,7 +626,7 @@ function ProvinceDrillModal({
                 {g.name}
                 <b>{fmtNum(g.clients)}</b>
                 <span className="bar"><i style={{ width: `${Math.max(8, (g.clients / maxSales) * 100)}%` }} /></span>
-                <span style={{ fontSize: 10, color: 'var(--text2)', fontWeight: 600 }}>{fmtNum(g.stores)} 店</span>
+                <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 600 }}>{fmtNum(g.stores)} 店</span>
               </span>
             ))}
           </div>
@@ -655,89 +654,55 @@ function ProvinceRankCard({
   const [listOpen, setListOpen] = useState(false);
   const [drill, setDrill] = useState<RankItem | null>(null);
 
-  const max = useMemo(() => items.reduce((m, x) => Math.max(m, valueOf(x, 'clients')), 0) || 1, [items]);
-  const total = useMemo(() => items.reduce((s, x) => s + valueOf(x, 'clients'), 0), [items]);
-  const maxStores = useMemo(() => items.slice(0, 5).reduce((m, x) => Math.max(m, Number(x?.stores) || 0), 0) || 1, [items]);
-  const totalStores = useMemo(() => items.slice(0, 5).reduce((s, x) => s + (Number(x?.stores) || 0), 0), [items]);
+  /* V10：按**客户数**排名（后端 provinceRank 已按 clients 降序，rank 字段即该口径） */
+  const sorted = useMemo(
+    () => items.slice().sort((a, b) => valueOf(b, 'clients') - valueOf(a, 'clients')),
+    [items],
+  );
+  const top = sorted.slice(0, 5);
+  const max = useMemo(() => sorted.reduce((m, x) => Math.max(m, valueOf(x, 'clients')), 0) || 1, [sorted]);
 
   return (
     <>
       <div className="vb4-card">
         <CardHead
           title="省份排行榜"
-          sub={`共 ${items.length} 个省`}
-          dotColor="var(--green)"
+          /* V10：文案改为「已覆盖 N 个省市」 */
+          sub={`已覆盖 ${items.length} 个省市`}
+          dotColor="var(--purple)"
           onMore={() => setListOpen(true)}
         />
         <div className="vb4-b">
-          {items.length === 0 ? (
+          {top.length === 0 ? (
             <div className="vb4-empty"><Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无数据" /></div>
-          ) : (
-            <>
-              {/* 5 格严格等宽等高 + 单色相（--brand）深浅 */}
-              <div className="vb4c-wrap">
-                <div className="vb4c-grid">
-                  {items.slice(0, 5).map((r, i) => {
-                    const no = Number(r?.rank) || i + 1;
-                    const v = valueOf(r, 'clients');
-                    const stores = Number(r?.stores) || 0;
-                    /* 12%~42% 混入 brand：只在一个色相内做深浅，正文一律 --text，明暗都达标 */
-                    const heat = Math.round(12 + 30 * (v / max));
-                    return (
-                      <button
-                        type="button"
-                        key={`p-${no}-${r?.name ?? i}`}
-                        className="vb4c-cell"
-                        onClick={() => setDrill(r)}
-                        title={`${r?.name ?? ''}：${v} 家客户 / ${fmtNum(stores)} 门店${r?.salesName ? ` · 主销售 ${r.salesName}` : ''}（点击查看明细）`}
-                        style={{
-                          background: `color-mix(in srgb, var(--brand) ${heat}%, var(--panel))`,
-                          borderColor: `color-mix(in srgb, var(--brand) ${Math.min(55, heat + 14)}%, var(--line))`,
-                          color: 'var(--text)',
-                        }}
-                      >
-                        <span className="rk">{no}</span>
-                        <span className="pn">{shortProvince(String(r?.name ?? ''))}</span>
-                        <span className="cv">{fmtNum(v)}</span>
-                        <span className="st">{fmtNum(stores)} 门店</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {/* 门店占比：同一批 5 个省的第二维度，把卡片下半部分填满 */}
-                <div className="vb4c-bars">
-                  {items.slice(0, 5).map((r, i) => {
-                    const no = Number(r?.rank) || i + 1;
-                    const stores = Number(r?.stores) || 0;
-                    const w = maxStores > 0 ? Math.max(3, Math.min(100, (stores / maxStores) * 100)) : 3;
-                    return (
-                      <div className="vb4c-bar" key={`sb-${no}-${r?.name ?? i}`}>
-                        <span className="n">{shortProvince(String(r?.name ?? ''))}</span>
-                        <span className="t"><i style={{ width: `${w}%` }} /></span>
-                        <span className="v">{fmtNum(stores)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="vb4c-foot">
-                  <span>客户 少</span>
-                  <span className="vb4c-ramp">
-                    {[12, 22, 32, 42].map((h) => (
-                      <i key={h} style={{ background: `color-mix(in srgb, var(--brand) ${h}%, var(--panel))` }} />
-                    ))}
-                  </span>
-                  <span>多</span>
-                  <span className="tip">门店 {fmtNum(totalStores)}</span>
-                </div>
-              </div>
-            </>
-          )}
+          ) : top.map((r, i) => {
+            const no = Number(r?.rank) || i + 1;
+            const v = valueOf(r, 'clients');
+            const stores = Number(r?.stores) || 0;
+            const sales = String(r?.salesName ?? '').trim();
+            return (
+              <RankRowView
+                key={`p-${no}-${r?.name ?? i}`}
+                no={no}
+                name={shortProvince(String(r?.name ?? ''))}
+                sub={sales ? `${sales} · ${fmtNum(stores)} 门店` : `${fmtNum(stores)} 门店`}
+                value={v}
+                unit="客户"
+                ratio={(v / max) * 100}
+                /* V10：省份榜换 purple/blue/cyan 色系，与客户数/门店数榜（红橙黄）区分 */
+                neutral={ACCENT.province}
+                medalSet="cool"
+                tags={r?.tags}
+                onClick={() => setDrill(r)}
+              />
+            );
+          })}
         </div>
       </div>
 
-      {/* V8.1 E3：「更多」→ 中国地图 */}
+      {/* 「更多」→ 中国地图（保留） */}
       <ProvinceMapModal
-        items={items}
+        items={sorted}
         open={listOpen}
         onClose={() => setListOpen(false)}
         dark={dark}
