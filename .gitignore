@@ -41,3 +41,13 @@ ant-design/
 # 根目录误建的空文件
 /integrations.tsx
 /-w
+
+
+# ── 看板（不开源）：仅本地保留，不推送 GitHub / Gitee ──
+frontend/src/pages/dashboard/board/
+frontend/src/pages/dashboard/Board.tsx
+frontend/src/pages/dashboard/TopBar.tsx
+frontend/src/pages/dashboard/CrmDashboard.tsx
+frontend/src/pages/dashboard/EChart.tsx
+frontend/src/pages/share-view.tsx
+views/share-view.ejs
