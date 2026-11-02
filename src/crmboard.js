@@ -1088,12 +1088,86 @@ function groupBy(list, keyFn, rowFn) {
  *   - avgHours：平均耗时（小时，浮点），前端据此按 <1天 显示 X.X时 / X.X天
  *   - hasTime：该节点是否有「耗时」概念（销售签约、流程结束 为 false）
  */
+/**
+ * V12：计算「每个节点已完成客户的平均耗时」。
+ *
+ * 口径：本节点完成时间 − 上一节点完成时间
+ *   - 只统计两个时间都存在且时间差 >= 0 的样本
+ *   - 第一个节点（销售签约）没有上一节点，返回 null（该节点 hasTime 也为 false）
+ *   - 与「当前是否停留该节点」无关 → clients=0 的节点也能算出耗时
+ *
+ * @param {Array} clients normalizeClient 之后的客户数组（含 runRaw 原始行）
+ * @returns {Map<string, {doneCount:number, validCount:number, avgDoneDays:number|null, avgDoneHours:number|null}>}
+ */
+function buildNodeDoneDurationMap(clients) {
+  const map = new Map();
+
+  /* 只取有完成时间列的节点（流程结束无完成时间列，不参与） */
+  const pairs = NODE_DONE_COL.filter((x) => x.col);
+
+  pairs.forEach((cur, i) => {
+    const prev = i > 0 ? pairs[i - 1] : null;
+    let doneCount = 0;
+    let validCount = 0;
+    let sumDays = 0;
+
+    clients.forEach((c) => {
+      const raw = c.runRaw || {};
+      const curAt = toDate(raw[cur.col]);
+      if (!curAt) return;
+      doneCount += 1;
+
+      /* 首个节点没有上一节点 → 无法计算区间耗时 */
+      if (!prev) return;
+
+      const prevAt = toDate(raw[prev.col]);
+      if (!prevAt) return;
+
+      const days = (curAt.getTime() - prevAt.getTime()) / 86400000;
+      /* 负数说明数据录入顺序异常，跳过，避免污染平均 */
+      if (days < 0) return;
+
+      validCount += 1;
+      sumDays += days;
+    });
+
+    const avg = validCount > 0 ? sumDays / validCount : null;
+
+    map.set(cur.node, {
+      doneCount,
+      validCount,
+      avgDoneDays: avg === null ? null : round(avg, 1),
+      avgDoneHours: avg === null ? null : round(avg * 24, 1),
+    });
+  });
+
+  return map;
+}
+
 function buildRow2(clients) {
   const total = clients.length;
   const excluded = clients.filter((c) => RATIO_EXCLUDED.includes(c.node)).length;
   const denominator = Math.max(0, total - excluded);
   /** 没有耗时概念的节点：起点与终点 */
   const NO_TIME_NODES = ['销售签约', '流程结束'];
+
+  /**
+   * V12：新的「平均耗时」口径
+   *
+   * 需求：「平均耗时指的是当前节点已完成的客户，在这个节点的平均耗时；
+   *        计算时间是当前节点时间 − 上一节点的时间」
+   *
+   * 旧实现（错误）：只看「当前停留该节点」的客户，算 now − enterAt，
+   *                即「还在这个节点的客户已经等了多久」，与需求定义相反；
+   *                且 clients=0 的节点（策略开通/策略审核）算不出耗时。
+   *
+   * 新实现：遍历所有客户的节点完成时间列（NODE_DONE_COL），
+   *        对每个节点取「本节点完成时间 − 上一节点完成时间」的有效样本求平均。
+   *        → 已完成过该节点的客户才计入，与「当前是否停留」无关。
+   *
+   * 实测（108 客户）：策略审核 clients=0 但有 5 家已完成、3 对有效样本，平均 1.68 天。
+   */
+  const doneDurMap = buildNodeDoneDurationMap(clients);
 
   const nodes = FLOW_NODES.map((name) => {
     const list = clients.filter((c) => c.node === name);
@@ -1104,6 +1178,9 @@ function buildRow2(clients) {
     const avgHours = list.length
       ? round((list.reduce((sum, c) => sum + c.nodeDays, 0) / list.length) * 24, 1)
       : 0;
+
+    /* V12：已完成客户的平均耗时（新口径） */
+    const dur = doneDurMap.get(name) || { doneCount: 0, validCount: 0, avgDoneDays: null, avgDoneHours: null };
 
     /* V7.1：正常/超期改用「工作日」口径（c.isOverdue 已在 normalizeClient 算好） */
     const overdue = list.filter((c) => c.isOverdue).length;
@@ -1138,6 +1215,11 @@ function buildRow2(clients) {
       stores,
       avgDays,
       avgHours,
+      /* V12：已完成客户的平均耗时（前端耗时长改用这两个字段） */
+      avgDoneDays: dur.avgDoneDays,
+      avgDoneHours: dur.avgDoneHours,
+      doneCount: dur.doneCount,
+      doneValidCount: dur.validCount,
       hasTime: !NO_TIME_NODES.includes(name),
       /* V7.1 超期（工作日口径） */
       normal,
