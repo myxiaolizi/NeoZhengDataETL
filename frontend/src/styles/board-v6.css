@@ -223,3 +223,27 @@ html[data-theme='dark'] .ant-picker-body { background: transparent; }
 /* 气泡 */
 html[data-theme='dark'] .ant-tooltip-inner { background: #14233c; color: #e2e8f0; }
 html[data-theme='dark'] .ant-tooltip-arrow::before { background: #14233c; }
+
+/* ══════════════════════════════════════════════════════════
+ * V15：汇总区（TypeSummary 5.2 / Rankings 6.2）
+ * 原为组件内联 <style> 硬编码 hex，统一抽到此处并全部改用令牌，
+ * 使明暗两套主题自动跟随，且组件内不再重复声明。
+ * ══════════════════════════════════════════════════════════ */
+.vb3-sum-box{
+  display:flex;flex-direction:column;gap:8px;margin-bottom:12px;padding:10px 12px;
+  border-radius:10px;background:var(--panel2);border:1px solid var(--line);
+}
+.vb3-sum-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}
+.vb3-sum-group{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.vb3-sum-lbl{font-size:12px;font-weight:700;color:var(--text2);white-space:nowrap}
+.vb3-sum-tag{
+  display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 9px;
+  border-radius:6px;font-size:12px;font-weight:600;background:var(--panel);
+  border:1px solid var(--line);color:var(--text);cursor:pointer;white-space:nowrap;
+  transition:all .15s ease;
+}
+.vb3-sum-tag:hover{border-color:var(--brand);color:var(--brand)}
+.vb3-sum-tag.active{background:var(--brand);border-color:var(--brand);color:#fff}
+.vb3-sum-tag b{color:var(--brand);font-weight:750;font-variant-numeric:tabular-nums}
+.vb3-sum-tag.active b{color:#fff}
+

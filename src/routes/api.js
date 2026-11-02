@@ -3154,8 +3154,13 @@ router.get('/crm/board/client/:id', auth.requirePerm('report:read'), async (req,
  */
 router.post('/crm/board/columns', auth.requirePerm('report:read'), async (req, res) => {
   try {
+    /* 只接受字符串列 key。此前的 `String(x || '')` 会把误传的对象压成
+     * "[object Object]" 并持久化，导致前端列设置失效 —— 这里显式过滤非字符串。 */
     const cols = Array.isArray(req.body && req.body.columns)
-      ? req.body.columns.map((x) => String(x || '').trim()).filter(Boolean)
+      ? req.body.columns
+        .filter((x) => typeof x === 'string')
+        .map((x) => x.trim())
+        .filter(Boolean)
       : [];
     await settings.set('crmboard_detail_columns', cols.length ? JSON.stringify(cols) : '');
     res.json({ ok: true, data: { columns: cols } });
