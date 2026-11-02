@@ -769,6 +769,11 @@ function normalizeClient(raw, staff, runMap, now) {
 
 /** 明细行（弹窗用，字段名对齐契约 DetailRow） */
 function toDetailRow(c) {
+  const rawVer = c.version || '';
+  const versionShort = /^有券/.test(rawVer)
+    ? '有券版本'
+    : (/^无券/.test(rawVer) ? '无券版本' : (rawVer || '-'));
+  const signAt = c.signAt || c.submitAt;
   return {
     chainId: c.chainId,
     region: c.region,
@@ -786,6 +791,13 @@ function toDetailRow(c) {
     /** 显式标记是否已结束（前端可据此判断真实节点是否为空） */
     isCompleted: !!c.isCompleted,
     owner: c.owner,
+    /** V15 4.5：补充岗位、省份、签约时间、对接版本，供明细弹窗多维度汇总与列渲染 */
+    ownerRole: c.ownerRoles && c.ownerRoles.length ? c.ownerRoles[0] : '未分配',
+    ownerRoles: c.ownerRoles && c.ownerRoles.length ? c.ownerRoles : ['未分配'],
+    province: c.province || '未填写',
+    version: rawVer || '-',
+    versionShort,
+    signDate: signAt ? mdCn(signAt) : '-',
     enterNodeAt: c.enterAt ? c.enterAt.toISOString() : '',
     enterNodeDate: c.enterAt ? md(c.enterAt) : '',
     nodeDays: c.nodeDays,
@@ -809,12 +821,13 @@ function toFullRow(c, seq) {
   const arrived = n(run[M.arrived]);
   const couponIssued = n(run[M.couponIssuedPeople]);
   const couponUsed = n(run[M.couponUsedPeople]);
+  const base = toDetailRow(c);
   return {
-    ...toDetailRow(c),
+    ...base,
     seq,
     signType: c.signType,
     province: c.province,
-    signDate: c.signAt ? mdCn(c.signAt) : '',
+    signDate: c.signAt ? mdCn(c.signAt) : (c.submitAt ? mdCn(c.submitAt) : ''),
     submitLabel: c.submitAt ? mdCn(c.submitAt) : '',
     submitDays: c.totalDays,
     openedStrategies: opened,
@@ -1112,6 +1125,35 @@ function buildRow1(clients, staff, target) {
       return [...map.entries()]
         .map(([name, cnt]) => ({ name, clients: cnt }))
         .sort((a, b) => b.clients - a.clients || a.name.localeCompare(b.name));
+    })(),
+    /**
+     * V15 3.1：对接版本汇总（有券版本 vs 无券版本）
+     * 数据源 parsed_16 的 w_1792577110570 列，实测 113 家客户（有券版本 105 家，无券版本 8 家）。
+     */
+    erpVersionSummary: (() => {
+      const withCoupon = { south: 0, north: 0, total: 0 };
+      const withoutCoupon = { south: 0, north: 0, total: 0 };
+      let unknown = 0;
+      clients.forEach((cl) => {
+        const ver = String(cl.version || '').trim();
+        if (/^有券|有券版本/.test(ver)) {
+          withCoupon.total += 1;
+          if (cl.region === '南区') withCoupon.south += 1;
+          else if (cl.region === '北区') withCoupon.north += 1;
+        } else if (/^无券|无券版本/.test(ver)) {
+          withoutCoupon.total += 1;
+          if (cl.region === '南区') withoutCoupon.south += 1;
+          else if (cl.region === '北区') withoutCoupon.north += 1;
+        } else {
+          unknown += 1;
+        }
+      });
+      return {
+        withCoupon,
+        withoutCoupon,
+        unknown,
+        total: clients.length,
+      };
     })(),
   };
 }
@@ -1812,6 +1854,7 @@ function aggregateRow7(rows, chainRegion) {
       gmv: round(a.gmv, 2),
       perCapita: round(div(a.gmv, a.arrived), 2),
       sent: round(a.sent, 2),
+      arrived: round(a.arrived, 2),
       couponIssuedPpl: round(a.couponIssuedPpl, 2),
       channelCost: round(a.channelCost, 2),
       couponCost: round(a.couponCost, 2),
@@ -1849,6 +1892,7 @@ function aggregateRow7(rows, chainRegion) {
   };
   out.people = {
     reached: withSplit((x) => x.sent),
+    arrived: withSplit((x) => x.arrived),
     couponIssued: withSplit((x) => x.couponIssuedPpl),
   };
   /* V7 新增成本类指标 */
@@ -1885,7 +1929,7 @@ function buildRow7(run30, chainRegion) {
  * @param {Map} chainRegion 连锁ID → 区域
  * @param {Object} [range] { from, to } 过滤条件（按 touchAt，格式 YYYYMMDD 比较）
  */
-function buildRow8(run31, chainRegion, range) {
+function buildRow8(run31, chainRegion, range, allClients) {
   let rows = run31.rows || [];
 
   /* ── V7 日期筛选：按「策略开通&触达时间」过滤 ── */
@@ -1900,6 +1944,12 @@ function buildRow8(run31, chainRegion, range) {
       return true;
     });
   }
+
+  /* 连锁ID → 客户档案（名称/类型/区域/签约时间/对接版本） */
+  const infoMap = new Map();
+  (allClients || []).forEach((c) => {
+    if (c.chainId) infoMap.set(c.chainId, c);
+  });
 
   const groups = new Map();
   rows.forEach((r) => {
@@ -1927,7 +1977,11 @@ function buildRow8(run31, chainRegion, range) {
         reachRate: g(agg.reachRate),
         couponRate: g(agg.couponRate),
         conversion: { ...g(agg.conversion), perCapita: agg.conversion.perCapita },
-        people: { reached: agg.people.reached, couponIssued: agg.people.couponIssued },
+        people: {
+          reached: agg.people.reached,
+          arrived: agg.people.arrived,
+          couponIssued: agg.people.couponIssued,
+        },
         /** V7 成本指标组 */
         cost: agg.cost,
       };
@@ -1941,10 +1995,68 @@ function buildRow8(run31, chainRegion, range) {
     };
   };
 
+  /**
+   * V15 11.1：构建某策略类型下「有运行当前策略的连锁明细」（16 列）
+   */
+  const buildTypeChains = (list) => {
+    const byChain = new Map();
+    list.forEach((r) => {
+      const cid = s(r[M.chainId]);
+      if (!cid) return;
+      const reg = chainRegion.get(cid) || '';
+      if (reg !== '南区' && reg !== '北区') return;
+      if (!byChain.has(cid)) byChain.set(cid, []);
+      byChain.get(cid).push(r);
+    });
+    const out = [];
+    byChain.forEach((cRows, cid) => {
+      const info = infoMap.get(cid) || null;
+      const sum = (k) => cRows.reduce((a, r) => a + n(r[k]), 0);
+      const max = (k) => cRows.reduce((a, r) => Math.max(a, n(r[k])), 0);
+      const running = max(M.runningStrategies);
+      const sent = sum(M.sent);
+      if (running <= 0 && sent <= 0) return;
+      const arrived = sum(M.arrived);
+      const gmv = sum(M.gmv);
+      const cIssuedPpl = sum(M.couponIssuedPeople);
+      const cUsedPpl = sum(M.couponUsedPeople);
+      const cIssued = sum(M.couponIssued);
+      const cUsed = sum(M.couponUsed);
+      const channelCost = sum(M.channelCost);
+      const couponCost = sum(M.couponCost);
+      const signAt = info ? (info.signAt || info.submitAt) : null;
+      const rawVer = info ? (info.version || '') : '';
+      const versionShort = /^有券/.test(rawVer)
+        ? '有券版本'
+        : (/^无券/.test(rawVer) ? '无券版本' : (rawVer || '-'));
+      out.push({
+        signDate: signAt ? mdCn(signAt) : '-',
+        region: (info && info.region) || chainRegion.get(cid) || '未知',
+        chainId: cid,
+        chainName: (info && info.chainName) || `连锁 ${cid}`,
+        chainType: (info && info.chainType) || '未分类',
+        version: rawVer || '-',
+        versionShort,
+        reachedPeople: round(sent, 2),
+        arrivedPeople: round(arrived, 2),
+        reachRate: round(div(arrived, sent), 4),
+        gmv: round(gmv, 2),
+        couponIssued: round(cIssued, 2),
+        couponUsed: round(cUsed, 2),
+        couponRate: round(div(cUsedPpl, cIssuedPpl), 4),
+        couponCost: round(couponCost, 2),
+        channelCost: round(channelCost, 2),
+        roi: round(div(channelCost + couponCost, gmv), 4),
+      });
+    });
+    return out.sort((a, b) => b.reachedPeople - a.reachedPeople || a.chainName.localeCompare(b.chainName, 'zh-CN'));
+  };
+
   const items = Array.from(groups.values()).map((g) => ({
     model: g.model,
     type: g.type,
     ...buildTriple(g.rows),
+    chains: buildTypeChains(g.rows),
   }));
 
   items.sort((a, b) => {
@@ -2199,35 +2311,35 @@ async function buildRow9(now) {
  * 运行类指标（开通/运行策略数、触达人数、到店率）口径 = jdywh_mail_30 快照（见 toFullRow）。
  */
 const DETAIL_COLUMNS = [
-  { key: 'seq', title: '序号', width: 56, default: true, align: 'center' },
-  { key: 'region', title: '区域', width: 62, default: true, align: 'center' },
-  { key: 'chainId', title: '连锁ID', width: 88, default: true },
-  { key: 'chainName', title: '连锁名称', width: 140, default: true },
-  { key: 'chainType', title: '连锁类型', width: 84, default: true, align: 'center' },
-  { key: 'signType', title: '签约类型', width: 92, default: true, align: 'center' },
-  { key: 'sales', title: '销售', width: 72, default: true },
-  { key: 'solution', title: '解决方案', width: 88, default: true },
-  { key: 'node', title: '当前节点', width: 92, default: true, align: 'center' },
-  { key: 'status', title: '状态', width: 62, default: true, align: 'center' },
-  { key: 'currentNodeDuration', title: '当前节点时长', width: 98, default: true, align: 'right' },
-  { key: 'openedStrategies', title: '开通策略数', width: 92, default: true, align: 'right', format: 'num' },
-  { key: 'runningStrategies', title: '运行策略数', width: 92, default: true, align: 'right', format: 'num' },
-  { key: 'reachedPeople', title: '触达人数', width: 92, default: true, align: 'right', format: 'num' },
-  { key: 'reachRate', title: '到店率', width: 74, default: true, align: 'right', format: 'percent' },
+  { key: 'seq', title: '流水号', width: 52, default: true, align: 'center' },
+  { key: 'region', title: '区域', width: 54, default: true, align: 'center' },
+  { key: 'chainId', title: '连锁ID', width: 72, default: true, align: 'center' },
+  { key: 'chainName', title: '连锁名称', width: 124, default: true },
+  { key: 'chainType', title: '连锁类型', width: 74, default: true, align: 'center' },
+  { key: 'signType', title: '签约类型', width: 82, default: true, align: 'center' },
+  { key: 'sales', title: '销售', width: 62, default: true, align: 'center' },
+  { key: 'solution', title: '解决方案', width: 68, default: true, align: 'center' },
+  { key: 'node', title: '当前节点', width: 76, default: true, align: 'center' },
+  { key: 'status', title: '状态', width: 54, default: true, align: 'center' },
+  { key: 'currentNodeDuration', title: '当前节点时长', width: 86, default: true, align: 'right' },
+  { key: 'openedStrategies', title: '开通策略数', width: 78, default: true, align: 'right', format: 'num' },
+  { key: 'runningStrategies', title: '运行策略数', width: 78, default: true, align: 'right', format: 'num' },
+  { key: 'reachedPeople', title: '触达人数', width: 78, default: true, align: 'right', format: 'num' },
+  { key: 'reachRate', title: '到店率', width: 64, default: true, align: 'right', format: 'percent' },
+  { key: 'stores', title: '门店数', width: 66, default: true, align: 'right', format: 'num' },
   // ── 以下为可选列（默认隐藏） ──
-  { key: 'stores', title: '门店数', width: 80, default: false, align: 'right', format: 'num' },
-  { key: 'service', title: '客服', width: 72, default: false },
-  { key: 'trainer', title: '培训人', width: 72, default: false },
-  { key: 'currentOwner', title: '当前处理人', width: 92, default: false, align: 'center' },
-  { key: 'submitLabel', title: '提交时间', width: 100, default: false, align: 'center' },
-  { key: 'submitDays', title: '提交时长（天）', width: 104, default: false, align: 'right', format: 'num' },
-  { key: 'couponRate', title: '优惠券核销率', width: 104, default: false, align: 'right', format: 'percent' },
-  { key: 'province', title: '省份', width: 92, default: false },
-  { key: 'owner', title: '处理人', width: 84, default: false },
-  { key: 'ownerRole', title: '负责人岗位', width: 96, default: false },
-  { key: 'nodeDays', title: '当前节点时长（天）', width: 120, default: false, align: 'right', format: 'num' },
-  { key: 'totalDays', title: '连锁总时长（天）', width: 116, default: false, align: 'right', format: 'num' },
-  { key: 'signDate', title: '签约日期', width: 100, default: false, align: 'center' },
+  { key: 'service', title: '客服', width: 66, default: false, align: 'center' },
+  { key: 'trainer', title: '培训人', width: 66, default: false, align: 'center' },
+  { key: 'currentOwner', title: '当前处理人', width: 80, default: false, align: 'center' },
+  { key: 'submitLabel', title: '提交时间', width: 88, default: false, align: 'center' },
+  { key: 'submitDays', title: '提交时长（天）', width: 96, default: false, align: 'right', format: 'num' },
+  { key: 'couponRate', title: '优惠券核销率', width: 96, default: false, align: 'right', format: 'percent' },
+  { key: 'province', title: '省份', width: 80, default: false, align: 'center' },
+  { key: 'owner', title: '处理人', width: 74, default: false, align: 'center' },
+  { key: 'ownerRole', title: '负责人岗位', width: 86, default: false, align: 'center' },
+  { key: 'nodeDays', title: '当前节点时长（天）', width: 108, default: false, align: 'right', format: 'num' },
+  { key: 'totalDays', title: '连锁总时长（天）', width: 104, default: false, align: 'right', format: 'num' },
+  { key: 'signDate', title: '签约日期', width: 88, default: false, align: 'center' },
 ];
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2284,15 +2396,40 @@ async function buildBoard(query) {
     loadFlowEvents(),
   ]);
 
-  // 运行数据按连锁ID 建索引（mail_30 是最新快照）
+  // 运行数据按连锁ID 建索引（mail_30 是最新快照，缺失时回退 mail_31 按连锁聚合）
   const runMap = new Map();
   (run30.rows || []).forEach((r) => {
     const id = s(r[M.chainId]);
     if (id) runMap.set(id, r);
   });
+  // V15：补充 mail_31 聚合兜底，避免在 mail_31 有数据但 mail_30 缺失的客户显示 0
+  const byChain31 = new Map();
+  (run31.rows || []).forEach((r) => {
+    const id = s(r[M.chainId]);
+    if (!id) return;
+    if (!byChain31.has(id)) byChain31.set(id, []);
+    byChain31.get(id).push(r);
+  });
+  byChain31.forEach((list, id) => {
+    if (runMap.has(id)) return;
+    const sum = (k) => list.reduce((acc, r) => acc + n(r[k]), 0);
+    const max = (k) => list.reduce((acc, r) => Math.max(acc, n(r[k])), 0);
+    const out = {};
+    [M.sent, M.arrived, M.gmv, M.couponIssuedPeople, M.couponUsedPeople,
+      M.couponIssued, M.couponUsed, M.couponGmv, M.couponCost, M.channelCost,
+    ].forEach((k) => { out[k] = sum(k); });
+    out[M.runningStrategies] = max(M.runningStrategies);
+    out[M.openedStrategies] = max(M.openedStrategies);
+    runMap.set(id, out);
+  });
 
   // 标准化全部客户
   const allClients = rawClients.map((r) => normalizeClient(r, staff, runMap, now));
+  // 分配固定客户流水号（1 .. N，按入库顺序）
+  const seqMap = new Map();
+  allClients.forEach((c, idx) => {
+    seqMap.set(c.chainId || `${idx}`, idx + 1);
+  });
 
   // 连锁ID → 区域（运行数据分南北区用）
   const chainRegion = new Map();
@@ -2319,13 +2456,28 @@ async function buildBoard(query) {
    * 顶部全局日期筛选同步到此处（契约 §F4）。
    */
   const row8Range = resolveRow8Range(query, range, now);
-  const row8 = buildRow8(run31, chainRegion, row8Range);
+  const row8 = buildRow8(run31, chainRegion, row8Range, allClients);
   /** V14 B4：连锁排名（按触达人数降序），与 row8 共用日期区间口径 */
   const chainRanking = buildChainRanking(run31, allClients, row8Range);
   const row9 = await buildRow9(now);
 
-  // 明细表
-  const detailRows = clients.map((c, i) => toFullRow(c, i + 1));
+  // V15 13.5：明细表流水号按整表降序显示（首行最大，末行最小）
+  const detailRows = clients
+    .map((c, i) => toFullRow(c, seqMap.get(c.chainId) || (i + 1)))
+    .sort((a, b) => b.seq - a.seq);
+
+  // V15 13.4：读取服务端保存的客户明细列设置（对分享页生效）
+  let savedColumns = null;
+  try {
+    const settings = require('./settings');
+    const rawSaved = await settings.get('crmboard_detail_columns', '');
+    if (rawSaved) {
+      const parsed = JSON.parse(rawSaved);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        savedColumns = parsed.map((x) => String(x));
+      }
+    }
+  } catch (_) { /* ignore */ }
 
   /**
    * V14 B2：筛选选项与计数一律基于**全量**客户（allClients），不是筛选后的 clients。
@@ -2378,6 +2530,7 @@ async function buildBoard(query) {
     detail: {
       columns: DETAIL_COLUMNS,
       rows: detailRows,
+      savedColumns,
     },
   };
 }
@@ -2663,16 +2816,55 @@ async function buildClientDetail(chainId) {
       const couponCost = g(M.couponCost);
       const totalCost = channelCost + couponCost;
       /** V13 A6：开通了哪些「策略类型」（来源 mail_31 的 M.type 列，按连锁去重排序） */
+      const clientRun31 = (run31.rows || []).filter((x) => s(x[M.chainId]) === id);
       const openedStrategyTypes = Array.from(new Set(
-        (run31.rows || [])
-          .filter((x) => s(x[M.chainId]) === id)
+        clientRun31
           .map((x) => s(x[M.type]))
           .filter(Boolean),
       )).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+
+      /**
+       * V15 14.6：按策略类型分组聚合该客户的运行明细（11 列）
+       * 表头：策略类型, 触达人数, 到店人数, 到店率, 转化销售额, 发放优惠券, 核销优惠券, 优惠券核销率, 优惠券成本, 渠道成本, ROI
+       */
+      const byType = new Map();
+      clientRun31.forEach((row) => {
+        const tp = s(row[M.type]) || '未分类';
+        if (!byType.has(tp)) byType.set(tp, []);
+        byType.get(tp).push(row);
+      });
+      const strategyTypes = Array.from(byType.entries()).map(([tp, list]) => {
+        const sum = (k) => list.reduce((acc, row) => acc + n(row[k]), 0);
+        const tSent = sum(M.sent);
+        const tArr = sum(M.arrived);
+        const tGmv = sum(M.gmv);
+        const tIssPpl = sum(M.couponIssuedPeople);
+        const tUsePpl = sum(M.couponUsedPeople);
+        const tIss = sum(M.couponIssued);
+        const tUse = sum(M.couponUsed);
+        const tChCost = sum(M.channelCost);
+        const tCpCost = sum(M.couponCost);
+        const tTotCost = tChCost + tCpCost;
+        return {
+          type: tp,
+          reachedPeople: round(tSent, 2),
+          arrivedPeople: round(tArr, 2),
+          reachRate: round(div(tArr, tSent), 4),
+          gmv: round(tGmv, 2),
+          couponIssued: round(tIss, 2),
+          couponUsed: round(tUse, 2),
+          couponRate: round(div(tUsePpl, tIssPpl), 4),
+          couponCost: round(tCpCost, 2),
+          channelCost: round(tChCost, 2),
+          roi: round(div(tTotCost, tGmv), 4),
+        };
+      }).sort((a, b) => b.reachedPeople - a.reachedPeople || a.type.localeCompare(b.type, 'zh-CN'));
+
       return {
         /** 数据来源：mail_30（当日快照）或 mail_31（按连锁聚合兜底），null 表示无运行数据 */
         source: runSourceKind,
         openedStrategyTypes,
+        strategyTypes,
         openedStrategies: round(opened, 2),
         runningStrategies: round(running, 2),
         reachedPeople: round(sent, 2),

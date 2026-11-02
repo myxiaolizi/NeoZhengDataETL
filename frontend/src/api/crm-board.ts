@@ -148,6 +148,13 @@ export interface DetailRow {
   /** V14：是否已流程结束（含「当前节点为空」与「策略审核已完成」两种情形） */
   isCompleted?: boolean;
   owner: string;             // 处理人
+  /** V15 4.5：补充岗位、省份、签约时间、对接版本 */
+  ownerRole?: string;
+  ownerRoles?: string[];
+  province?: string;
+  version?: string;
+  versionShort?: string;
+  signDate?: string;
   enterNodeAt: string;       // ISO，进入当前节点时间
   enterNodeDate: string;     // 'MM/DD'
   nodeDays: number | null;   // 当前节点时长（天）；流程已结束为 null
@@ -175,6 +182,8 @@ export interface DetailFullRow extends DetailRow {
   reachRate: number;         // 到店率 0~1
   couponRate: number;        // 优惠券核销率 0~1
   ownerRole: string;         // 当前负责人岗位
+  version?: string;
+  versionShort?: string;
   /* ── V7 新增列 ── */
   currentOwner: string;      // 当前处理人
   /** 当前节点时长（小时）；V14：流程已结束为 null */
@@ -263,6 +272,13 @@ export interface FlowStatusBlock {
   notOpenedNorth?: number;
 }
 
+export interface ErpVersionSummary {
+  withCoupon: SplitValue;
+  withoutCoupon: SplitValue;
+  unknown?: number;
+  total: number;
+}
+
 export interface Row1Data {
   totalClients: number;
   totalClientsByRegion: RegionSplit;
@@ -272,6 +288,8 @@ export interface Row1Data {
   signTypes: SignTypeItem[];
   inProgress: InProgressBlock;
   flowStatus: FlowStatusBlock;
+  erpDistribution?: { name: string; clients: number }[];
+  erpVersionSummary?: ErpVersionSummary;
 }
 
 /* ══════════════ 第 2 排：流程状态分布 ══════════════ */
@@ -428,6 +446,7 @@ export interface AmountMetric {
 /** 人数类指标 */
 export interface PeopleMetric {
   reached: MetricPair;       // 触达人数
+  arrived?: MetricPair;      // 到店人数（V15 新增，供模块级重算到店率与人均销售额）
   couponIssued: MetricPair;  // 优惠券发放人数
 }
 
@@ -461,12 +480,35 @@ export interface Row7Data {
 
 /* ══════════════ 第 8 排：按策略模型×类型 ══════════════ */
 
+/** V15 11.1：有运行当前策略的连锁明细行（16 列） */
+export interface StrategyChainRow {
+  signDate: string;
+  region: string;
+  chainId: string;
+  chainName: string;
+  chainType: string;
+  version: string;
+  versionShort?: string;
+  reachedPeople: number;
+  arrivedPeople: number;
+  reachRate: number;
+  gmv: number;
+  couponIssued: number;
+  couponUsed: number;
+  couponRate: number;
+  couponCost: number;
+  channelCost: number;
+  roi: number;
+}
+
 export interface ModelTypeItem {
   model: string;             // 策略模块
   type: string;              // 策略类型
   south: Row7Data;
   north: Row7Data;
   total: Row7Data;
+  /** V15 11.1：有运行当前策略的连锁明细列表 */
+  chains?: StrategyChainRow[];
 }
 
 /** V7：按模块聚合的树（模块 → 类型） */
@@ -581,7 +623,50 @@ export interface BoardData {
   row9: RunTrendData;
   /** V14：连锁排名（按触达人数降序），排在「策略运行情况」板块上方 */
   chainRanking: ChainRankingData;
-  detail: { columns: DetailColumnConf[]; rows: DetailFullRow[] };
+  detail: { columns: DetailColumnConf[]; rows: DetailFullRow[]; savedColumns?: string[] | null };
+}
+
+/**
+ * V15：获取单个客户详情（自动识别公开分享页 /s/:token 与系统内看板）
+ */
+export async function fetchClientDetail(chainId: string): Promise<unknown> {
+  const id = String(chainId || '').trim();
+  if (!id) throw new Error('缺少连锁ID');
+  let url = `/api/crm/board/client/${encodeURIComponent(id)}`;
+  if (typeof window !== 'undefined') {
+    const m = window.location.pathname.match(/^\/s\/([^/?#]+)/);
+    if (m && m[1]) {
+      const sp = new URLSearchParams(window.location.search);
+      const q = new URLSearchParams();
+      q.set('token', decodeURIComponent(m[1]));
+      const pwd = sp.get('pwd') || (window as unknown as { __SHARE_PWD__?: string }).__SHARE_PWD__ || '';
+      if (pwd) q.set('pwd', pwd);
+      url = `/api/public/board/client/${encodeURIComponent(id)}?${q.toString()}`;
+    }
+  }
+  const res = await fetch(url, { credentials: 'same-origin' });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.ok === false) {
+    throw new Error(json.message || `加载失败（HTTP ${res.status}）`);
+  }
+  return json.data;
+}
+
+/**
+ * V15 13.4：保存客户明细列设置到服务端（对公开分享页生效；分享页自身只读不写）
+ */
+export async function saveBoardColumns(columns: string[]): Promise<void> {
+  if (typeof window !== 'undefined' && /^\/s\//.test(window.location.pathname)) {
+    return;
+  }
+  try {
+    await fetch('/api/crm/board/columns', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns }),
+    });
+  } catch { /* ignore */ }
 }
 
 /* ══════════════ 请求 ══════════════ */

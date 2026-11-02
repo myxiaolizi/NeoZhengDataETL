@@ -196,6 +196,35 @@ router.get('/public/board', async (req, res) => {
 });
 
 /**
+ * V15：看板公开分享下的单个客户详情（无需登录，校验分享 token 后返回）
+ */
+router.get('/public/board/client/:id', async (req, res) => {
+  try {
+    const token = String(req.query.token || '').trim();
+    const pwd = req.query.pwd !== undefined ? String(req.query.pwd) : '';
+    if (!token) return res.status(400).json({ ok: false, message: '缺少分享令牌' });
+
+    const chk = await reports.accessShare(token, pwd);
+    if (!chk || chk.ok !== true) {
+      const code = (chk && chk.code) || 'not_found';
+      const status = code === 'password' ? 403 : 404;
+      return res.status(status).json({ ok: false, code, message: (chk && chk.message) || '分享链接不可用' });
+    }
+    if (chk.targetType !== 'board') {
+      return res.status(400).json({ ok: false, message: '该分享不是看板类型' });
+    }
+
+    const crmboard = require('../crmboard');
+    const data = await crmboard.buildClientDetail(req.params.id);
+    if (!data) return res.status(404).json({ ok: false, message: '未找到该客户' });
+    res.json({ ok: true, data });
+  } catch (err) {
+    console.error('[public/board/client]', err);
+    res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+/**
  * V8：AI 分享的公开元信息（无需登录，必须放在 requireAuthApi 之前）
  *
  * 只返回「标题 / 是否需要密码 / 数据范围名称与行数 / 欢迎语」，
@@ -3116,6 +3145,22 @@ router.get('/crm/board/client/:id', auth.requirePerm('report:read'), async (req,
     res.json({ ok: true, data });
   } catch (err) {
     console.error('[crm/board/client]', err);
+    res.status(500).json({ ok: false, message: err.message });
+  }
+});
+
+/**
+ * V15 13.4：保存用户「客户明细」列设置到服务端（对公开分享页生效）
+ */
+router.post('/crm/board/columns', auth.requirePerm('report:read'), async (req, res) => {
+  try {
+    const cols = Array.isArray(req.body && req.body.columns)
+      ? req.body.columns.map((x) => String(x || '').trim()).filter(Boolean)
+      : [];
+    await settings.set('crmboard_detail_columns', cols.length ? JSON.stringify(cols) : '');
+    res.json({ ok: true, data: { columns: cols } });
+  } catch (err) {
+    console.error('[crm/board/columns]', err);
     res.status(500).json({ ok: false, message: err.message });
   }
 });
