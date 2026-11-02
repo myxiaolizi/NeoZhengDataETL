@@ -133,16 +133,16 @@ export const THEME = {
     Input: {
       activeBorderColor: PALETTE.primary,
       hoverBorderColor: NEUTRAL.borderStrong,
-      activeShadow: '0 0 0 3px rgba(22,104,227,.14)',
+      activeShadow: '0 0 0 3px rgba(22,119,255,.14)',
       paddingBlock: 6,
     },
     Select: {
-      optionSelectedBg: 'rgba(22,104,227,.12)',
+      optionSelectedBg: 'rgba(22,119,255,.12)',
       optionSelectedColor: PALETTE.primaryDeep,
       optionActiveBg: NEUTRAL.surfaceAlt,
     },
     Button: {
-      primaryShadow: '0 2px 6px rgba(22,104,227,.22)',
+      primaryShadow: '0 2px 6px rgba(22,119,255,.22)',
       defaultShadow: 'none',
       fontWeight: 500,
       paddingInline: 14,

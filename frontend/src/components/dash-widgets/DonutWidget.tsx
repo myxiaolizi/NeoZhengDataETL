@@ -38,7 +38,7 @@ export default function DonutWidget({ widget, rows, columns, isMobile, dark }: W
         avoidLabelOverlap: true,
         label: { show: false },
         labelLine: { show: false },
-        emphasis: { scale: true, scaleSize: 4, itemStyle: { shadowBlur: 12, shadowColor: 'rgba(37,99,235,.28)' } },
+        emphasis: { scale: true, scaleSize: 4, itemStyle: { shadowBlur: 12, shadowColor: 'rgba(22,119,255,.28)' } },
         itemStyle: { borderColor: dark ? '#101d33' : C.panel, borderWidth: 2 },
         data: cats.map((name, i) => ({ name, value: vals[i] ?? 0 })),
       },

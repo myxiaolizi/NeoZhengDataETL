@@ -194,465 +194,6 @@ interface ShareResult {
   expiresLabel: string;
 }
 
-interface ShareModalProps {
-  open: boolean;
-  target: ShareTarget | null;
-  isMobile: boolean;
-  /** 是否有 share:write 权限（只有 share:read 时展示链接设置但不能创建） */
-  canCreate: boolean;
-  onClose: () => void;
-  /** 新建成功后通知父级刷新分享数 */
-  onCreated?: (target: ShareTarget) => void;
-}
-
-function ShareModal({ open, target, isMobile, canCreate, onClose, onCreated }: ShareModalProps) {
-  const { message } = AntApp.useApp();
-
-  const [title, setTitle] = useState('');
-  const [password, setPassword] = useState('');
-  const [expiresDays, setExpiresDays] = useState<number>(7);
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<ShareResult | null>(null);
-
-  const [shares, setShares] = useState<ShareItem[]>([]);
-  const [listLoading, setListLoading] = useState(false);
-  const [listError, setListError] = useState('');
-
-  const kindLabel = target?.kind === 'board' ? '内置看板' : '报表';
-
-  /** 拉取该目标已有的分享（GET /shares 返回全量，按 targetType + targetId 过滤） */
-  const loadShares = useCallback(
-    async (silent = false) => {
-      if (!target) return;
-      if (!silent) setListLoading(true);
-      setListError('');
-      try {
-        const all = await listShares();
-        const mine = (Array.isArray(all) ? all : []).filter(
-          (s) => s.targetType === target.kind && Number(s.targetId) === Number(target.id)
-        );
-        setShares(mine);
-      } catch (e) {
-        // 列表权限是 share:write，只有 share:read 的账号会 403 → 静默降级，不影响新建分享
-        setShares([]);
-        setListError(e instanceof Error ? e.message : '已有分享加载失败');
-      } finally {
-        if (!silent) setListLoading(false);
-      }
-    },
-    [target]
-  );
-
-  /* 每次打开（或切换目标）重置表单并加载已有分享 */
-  useEffect(() => {
-    if (!open || !target) return;
-    setTitle(target.name);
-    setPassword('');
-    setExpiresDays(7);
-    setResult(null);
-    setShares([]);
-    loadShares();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, target?.kind, target?.id]);
-
-  const expiresLabelOf = (d: number) => (d === 0 ? '永久有效' : `${d} 天有效`);
-
-  const submit = async () => {
-    if (!target) return;
-    const t = title.trim() || target.name;
-    setSubmitting(true);
-    try {
-      const share = await createShare({
-        targetType: target.kind,
-        targetId: target.id,
-        title: t,
-        password: password.trim() || undefined,
-        expiresDays: expiresDays > 0 ? expiresDays : undefined,
-      });
-      const url = shareUrlOf(share);
-      setResult({ url, title: t, password: password.trim(), expiresLabel: expiresLabelOf(expiresDays) });
-      message.success('分享链接已创建');
-      onCreated?.(target);
-      loadShares(true);
-    } catch {
-      /* client 已提示（如「系统已关闭公开分享功能」） */
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const copyOnly = async () => {
-    if (!result) return;
-    const ok = await copyText(result.url);
-    message[ok ? 'success' : 'warning'](ok ? '分享链接已复制' : '复制失败，请手动选择链接复制');
-  };
-
-  /** 链接 + 密码一起复制（访问页支持 ?pwd= 直达） */
-  const copyWithPwd = async () => {
-    if (!result) return;
-    const link = result.password
-      ? `${result.url}${result.url.includes('?') ? '&' : '?'}pwd=${encodeURIComponent(result.password)}`
-      : result.url;
-    const text = result.password ? `链接：${link}\n密码：${result.password}` : `链接：${link}`;
-    const ok = await copyText(text);
-    message[ok ? 'success' : 'warning'](ok ? (result.password ? '链接与密码已复制' : '分享链接已复制') : '复制失败，请手动选择复制');
-  };
-
-  const handleToggle = async (s: ShareItem, enabled: boolean) => {
-    try {
-      await toggleShare(s.id, enabled ? 1 : 0);
-      message.success(enabled ? '分享已启用' : '分享已停用');
-      loadShares(true);
-    } catch {
-      /* client 已提示 */
-    }
-  };
-
-  const handleDelete = async (s: ShareItem) => {
-    try {
-      await deleteShare(s.id);
-      message.success('分享已删除');
-      loadShares(true);
-    } catch {
-      /* client 已提示 */
-    }
-  };
-
-  return (
-    <Modal
-      title={
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: NEUTRAL.text, fontSize: 16, fontWeight: 700 }}>
-          <ShareAltOutlined style={{ color: PALETTE.primary }} />
-          分享{kindLabel}
-        </span>
-      }
-      open={open}
-      onCancel={onClose}
-      footer={null}
-      width={isMobile ? '94vw' : 560}
-      destroyOnHidden
-      styles={{
-        body: { paddingTop: 6, color: NEUTRAL.text },
-        header: { borderBottom: `1px solid ${NEUTRAL.borderSubtle}`, paddingBottom: 12 },
-      }}
-    >
-      {!target ? null : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, color: NEUTRAL.text }}>
-          {/* 目标对象 */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '10px 12px',
-              borderRadius: 10,
-              background: NEUTRAL.surfaceAlt,
-              border: `1px solid ${NEUTRAL.border}`,
-              minWidth: 0,
-            }}
-          >
-            <div
-              style={{
-                width: 32,
-                height: 32,
-                flex: '0 0 32px',
-                borderRadius: 9,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: NEUTRAL.textInverse,
-                background: `linear-gradient(135deg, ${target.kind === 'board' ? PALETTE.green : PALETTE.primary}, ${SIDER.bgTo})`,
-                fontSize: 15,
-              }}
-            >
-              {target.kind === 'board' ? <FundOutlined /> : <BarChartOutlined />}
-            </div>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div
-                style={{
-                  fontWeight: 700,
-                  fontSize: 13.5,
-                  color: NEUTRAL.text,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {target.name}
-              </div>
-              <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {target.hint || (target.kind === 'board' ? `系统内置看板 · board#${target.id}` : `报表 · #${target.id}`)}
-              </div>
-            </div>
-            <Tag bordered={false} style={{ marginInlineEnd: 0, background: NEUTRAL.surfaceSunken, color: PALETTE.primary }}>
-              {kindLabel}
-            </Tag>
-          </div>
-
-          {/* 分享标题 */}
-          <div>
-            <FieldLabel>分享标题</FieldLabel>
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder={target.name}
-              maxLength={60}
-              size={isMobile ? 'large' : 'middle'}
-            />
-          </div>
-
-          {/* 访问密码 */}
-          <div>
-            <FieldLabel extra="留空表示无密码，任何人拿到链接即可查看">访问密码</FieldLabel>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <Input.Password
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="留空则不设密码"
-                  maxLength={32}
-                  size={isMobile ? 'large' : 'middle'}
-                  prefix={<LockOutlined style={{ color: NEUTRAL.textQuaternary }} />}
-                />
-              </div>
-              <Button
-                size={isMobile ? 'large' : 'middle'}
-                icon={<ReloadOutlined />}
-                onClick={() => setPassword(genPassword(6))}
-                style={{ flexShrink: 0 }}
-              >
-                随机生成
-              </Button>
-            </div>
-          </div>
-
-          {/* 有效期 */}
-          <div>
-            <FieldLabel>有效期</FieldLabel>
-            <Segmented
-              block
-              value={expiresDays}
-              onChange={(v) => setExpiresDays(Number(v))}
-              options={SHARE_EXPIRES.map((o) => ({ label: o.label, value: o.value }))}
-            />
-          </div>
-
-          <Button
-            type="primary"
-            block
-            icon={<LinkOutlined />}
-            loading={submitting}
-            disabled={!canCreate}
-            onClick={submit}
-            size={isMobile ? 'large' : 'middle'}
-          >
-            生成分享链接
-          </Button>
-          {!canCreate && (
-            <div style={{ fontSize: 11.5, color: PALETTE.orange, marginTop: -6 }}>
-              当前账号只有「查看分享」权限，无法创建新分享（需要 share:write）。
-            </div>
-          )}
-
-          {/* 生成结果 */}
-          {result && (
-            <div
-              style={{
-                padding: 12,
-                borderRadius: 10,
-                border: `1px solid ${PALETTE.primarySoft}`,
-                background: '#F6FAFF',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                <CheckCircleOutlined style={{ color: PALETTE.green }} />
-                <span style={{ fontSize: 13, fontWeight: 700, color: NEUTRAL.text }}>分享链接已生成</span>
-                <Tag bordered={false} style={{ marginInlineEnd: 0, background: PALETTE.primarySoft, color: PALETTE.primaryDeep }}>
-                  {result.expiresLabel}
-                </Tag>
-                {result.password ? (
-                  <Tag bordered={false} color="orange" style={{ marginInlineEnd: 0 }}>
-                    已加密
-                  </Tag>
-                ) : (
-                  <Tag bordered={false} style={{ marginInlineEnd: 0, background: NEUTRAL.surfaceSunken, color: NEUTRAL.textSecondary }}>
-                    无密码
-                  </Tag>
-                )}
-              </div>
-
-              <div
-                style={{
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                  fontSize: 12,
-                  lineHeight: 1.6,
-                  color: NEUTRAL.text,
-                  background: NEUTRAL.surface,
-                  border: `1px solid ${NEUTRAL.border}`,
-                  borderRadius: 8,
-                  padding: '8px 10px',
-                  wordBreak: 'break-all',
-                  maxHeight: 96,
-                  overflowY: 'auto',
-                }}
-              >
-                {result.url}
-              </div>
-
-              {result.password && (
-                <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 12.5 }}>
-                  <span style={{ color: NEUTRAL.textSecondary }}>访问密码：</span>
-                  <span
-                    style={{
-                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-                      fontWeight: 700,
-                      letterSpacing: 1.5,
-                      color: PALETTE.primaryDeep,
-                      background: NEUTRAL.surfaceSunken,
-                      border: `1px solid ${NEUTRAL.border}`,
-                      borderRadius: 6,
-                      padding: '2px 8px',
-                    }}
-                  >
-                    {result.password}
-                  </span>
-                  <span style={{ fontSize: 11.5, color: NEUTRAL.textTertiary }}>仅本次显示，请立即复制</span>
-                </div>
-              )}
-
-              <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <Button type="primary" icon={<CopyOutlined />} onClick={copyWithPwd} size={isMobile ? 'middle' : 'small'}>
-                  {result.password ? '复制链接+密码' : '复制链接'}
-                </Button>
-                <Button icon={<CopyOutlined />} onClick={copyOnly} size={isMobile ? 'middle' : 'small'}>
-                  仅复制链接
-                </Button>
-                <Button
-                  type="link"
-                  onClick={() => window.open(result.url, '_blank', 'noopener')}
-                  size={isMobile ? 'middle' : 'small'}
-                >
-                  打开链接
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* 已有分享 */}
-          <div>
-            <Divider style={{ margin: '2px 0 10px' }} />
-            <FieldLabel
-              extra={
-                <Button
-                  type="link"
-                  size="small"
-                  icon={<ReloadOutlined />}
-                  onClick={() => loadShares()}
-                  style={{ padding: 0, height: 'auto', fontSize: 11.5 }}
-                >
-                  刷新
-                </Button>
-              }
-            >
-              已有分享{shares.length ? `（${shares.length}）` : ''}
-            </FieldLabel>
-
-            {listLoading ? (
-              <div style={{ padding: 16, textAlign: 'center' }}>
-                <Spin size="small" />
-              </div>
-            ) : listError ? (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: NEUTRAL.textTertiary,
-                  padding: '10px 12px',
-                  borderRadius: 8,
-                  background: NEUTRAL.surfaceAlt,
-                  border: `1px dashed ${NEUTRAL.border}`,
-                }}
-              >
-                无法读取已有分享（{listError}）。仍可正常生成新链接。
-              </div>
-            ) : shares.length === 0 ? (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: NEUTRAL.textTertiary,
-                  padding: '10px 12px',
-                  borderRadius: 8,
-                  background: NEUTRAL.surfaceAlt,
-                  border: `1px dashed ${NEUTRAL.border}`,
-                }}
-              >
-                暂无分享记录，点击上方「生成分享链接」创建第一条。
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
-                {shares.map((s) => {
-                  const active = Number(s.status) === 1;
-                  return (
-                    <div
-                      key={s.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '8px 10px',
-                        borderRadius: 9,
-                        border: `1px solid ${NEUTRAL.border}`,
-                        background: active ? NEUTRAL.surface : NEUTRAL.surfaceAlt,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div
-                          style={{
-                            fontSize: 12.5,
-                            fontWeight: 600,
-                            color: NEUTRAL.text,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {s.title || target.name}
-                        </div>
-                        <div style={{ fontSize: 11, color: NEUTRAL.textTertiary, marginTop: 2 }}>
-                          {s.hasPassword ? '有密码' : '无密码'} ·{' '}
-                          {s.expiresAt ? `${fmtTime(s.expiresAt, 'MM-DD HH:mm')} 到期` : '永久有效'} · 浏览 {fmtNum(s.viewCount || 0)}
-                        </div>
-                      </div>
-                      <Space size={4} wrap>
-                        <Tag bordered={false} color={active ? 'green' : undefined} style={{ marginInlineEnd: 0 }}>
-                          {active ? '启用中' : '已停用'}
-                        </Tag>
-                        <Tooltip title={active ? '停用该分享' : '重新启用'}>
-                          <Button
-                            size="small"
-                            icon={active ? <StopOutlined /> : <CheckCircleOutlined />}
-                            onClick={() => handleToggle(s, !active)}
-                          />
-                        </Tooltip>
-                        <Tooltip title="删除该分享（链接立即失效）">
-                          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDelete(s)} />
-                        </Tooltip>
-                      </Space>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, lineHeight: 1.6 }}>
-            分享链接为公开访问地址（无需登录）。设置密码后，访问者需输入密码才能查看；「复制链接+密码」生成的是可直接打开的带密码链接。
-          </div>
-        </div>
-      )}
-    </Modal>
-  );
-}
 
 export default function ReportsPage() {
   const navigate = useNavigate();
@@ -837,26 +378,23 @@ export default function ReportsPage() {
     });
   };
 
-  /* ── V7.1 需求 L：分享弹窗状态 ── */
-  const [shareOpen, setShareOpen] = useState(false);
-  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null);
-
-  /** 打开分享弹窗（报表 / 内置看板共用一个弹窗） */
-  const openShare = useCallback((target: ShareTarget) => {
-    setShareTarget(target);
-    setShareOpen(true);
-  }, []);
-
-  /** 新建分享后同步卡片上的「分享数」（内置看板不在报表列表里，跳过） */
-  const handleShareCreated = useCallback((target: ShareTarget) => {
-    if (target.kind !== 'report') return;
-    setReports((prev) => prev.map((r) => (r.id === target.id ? { ...r, shareCount: (r.shareCount || 0) + 1 } : r)));
-  }, []);
-
-  /** 打开某个报表的分享弹窗 */
-  const openReportShare = useCallback(
-    (r: ReportItem) => openShare({ kind: 'report', id: r.id, name: r.name, hint: r.code ? `报表 · ${r.code}` : `报表 · #${r.id}` }),
-    [openShare]
+  /**
+   * ══════ V13 B3 / V14：分享入口统一到「分享中心」
+   *
+   * 根因：V12 之前报表中心和 AI 问数**各自**有一套分享弹窗（本文件的 ShareModal），
+   * 两处创建、两处管理，用户要在两个页面分别找自己的分享 —— 分散且容易漏看。
+   * V13 把分享统一收敛到 `/shares`（分享中心）双标签（报表分享 / AI 问数分享）。
+   * 这里不再自建弹窗，点「分享」直接跳到分享中心并带上目标 ID，由分享中心承接创建与管理。
+   * 只读的「分享数」列（Badge）保留，它不产生新入口。
+   */
+  const goShareCentre = useCallback(
+    (targetId?: number | string) => {
+      const q = targetId !== undefined && targetId !== null && targetId !== ''
+        ? `?tab=report&target=${encodeURIComponent(String(targetId))}`
+        : '?tab=report';
+      navigate(`/shares${q}`);
+    },
+    [navigate],
   );
 
   const columns: ProColumns<ReportItem>[] = [
@@ -951,7 +489,7 @@ export default function ReportsPage() {
           </a>
         ) : null,
         canShare ? (
-          <a key="share" onClick={() => openReportShare(r)}>
+          <a key="share" onClick={() => goShareCentre(r.id)}>
             分享
           </a>
         ) : null,
@@ -1038,14 +576,7 @@ export default function ReportsPage() {
           <Button
             size={isMobile ? 'middle' : 'small'}
             icon={<ShareAltOutlined />}
-            onClick={() =>
-              openShare({
-                kind: 'board',
-                id: b.shareTargetId,
-                name: b.name,
-                hint: `系统内置看板 · ${b.path}`,
-              })
-            }
+            onClick={() => goShareCentre(b.shareTargetId)}
             style={{ minHeight: 32 }}
           >
             分享
@@ -1145,7 +676,7 @@ export default function ReportsPage() {
             <Button
               size={isMobile ? 'middle' : 'small'}
               icon={<ShareAltOutlined />}
-              onClick={() => openReportShare(r)}
+              onClick={() => goShareCentre(r.id)}
               style={{ minHeight: 32 }}
             >
               分享
@@ -1307,15 +838,8 @@ export default function ReportsPage() {
         </>
       )}
 
-      {/* V7.1 需求 L：分享弹窗（报表 / 内置看板共用） */}
-      <ShareModal
-        open={shareOpen}
-        target={shareTarget}
-        isMobile={isMobile}
-        canCreate={canShareWrite}
-        onClose={() => setShareOpen(false)}
-        onCreated={handleShareCreated}
-      />
+      {/* V13 B3：分享弹窗已移除 —— 分享统一由 `/shares`（分享中心）承接，
+        * 本页所有「分享」按钮通过 goShareCentre() 跳转过去。 */}
 
       {/* 新建报表 */}
       <Modal

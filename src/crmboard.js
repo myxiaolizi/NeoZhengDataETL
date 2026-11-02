@@ -238,6 +238,15 @@ function s(v) {
   return String(v).trim();
 }
 
+/**
+ * V14：判断某个时间列是否「真的有值」。
+ * 排除 NULL / 空串 / MySQL 零值日期 '0000-00-00 00:00:00'。
+ */
+function hasTime(v) {
+  const t = s(v);
+  return !!t && !t.startsWith('0000-00-00');
+}
+
 /** 安全除，分母 0 返回 0 */
 function div(a, b) {
   const x = n(a);
@@ -641,16 +650,59 @@ function normalizeClient(raw, staff, runMap, now) {
   const chainId = s(raw[C.chainId]);
   const currentNodeRaw = s(raw[C.currentNode]);
   const nodeFieldRaw = s(raw[C.nodeField]);
-  // 流程完成判定：flow_current_node 为空（口径 §3.2-2）
-  const isCompleted = !currentNodeRaw;
+
+  /**
+   * ══════ V14 B1：流程结束判定（数据错误修复）══════
+   *
+   * 用户报障：连锁 10147 / 15374 / 15654 实际已「流程结束」，看板仍显示「策略审核」。
+   *
+   * 根因（实测 `_work/v14-flow-diag2.js` + `_work/v14-rule-verify.js`）：
+   *   `flow_current_node` 是**流程引擎的「当前停留节点」**，节点完成后**不会清空**，
+   *   只有走到终点（流程归档）才被置空 —— 因此已完成的连锁仍停在「策略审核」上。
+   *   实测这 3 家：flow_current_node='策略审核'、nodeField='流程结束'、flow_state=1、
+   *   且「策略审核完成时间」(w_1793094135608_p) 已有值（2026-11-02 16:04/16:05）。
+   *   而旧代码只用 `!currentNodeRaw` 判定完成 → 这 6 家被误判为「仍在策略审核」。
+   *
+   * 全量口径（113 行实测）：
+   *   flow_current_node 为空 4 条；策略审核时间非空 11 条；flow_state=1 共 10 条；
+   *   nodeField ∈ {流程结束,流程完成} 共 10 条。
+   *
+   * 新规则（对 113 行实测 10/10 完全一致，0 不一致）：
+   *   当前节点为空  →  流程结束
+   *   当前节点=策略审核 且 策略审核完成时间有值  →  流程结束
+   *
+   * 反例保护：连锁 15497 当前节点='连锁使用'、flow_state=0、nodeField='连锁使用'，
+   *   虽然策略审核时间有值，但按规则仍为未完成 —— 正确，不得误判。
+   */
+  const strategyAuditDone = hasTime(raw[C.tStrategyAudit]);
+  const nodeEmpty = !currentNodeRaw;
+  /** 策略审核完成 = 流程终点（策略审核是 9 节点里最后一个有业务的节点） */
+  const auditFinished = !nodeEmpty && mapNode(currentNodeRaw || nodeFieldRaw) === '策略审核'
+    && strategyAuditDone;
+  const isCompleted = nodeEmpty || auditFinished;
+
   const node = isCompleted ? '流程结束' : mapNode(currentNodeRaw || nodeFieldRaw);
 
   const owner = s(raw[C.currentOwner]);
   const roles = ownerRoles(owner, staff);
 
-  const enterAt = isCompleted ? toDate(raw[C.tChainUse]) || toDate(raw[C.tSubmit]) : enterNodeTime(raw, node);
+  /**
+   * 进入时间：
+   *   - 普通已完成（当前节点为空）：沿用「连锁使用完成时间」兜底提交时间
+   *   - V14 新增：策略审核完成 → 用「策略审核完成时间」作为流程结束时间
+   *   - 未完成：进入当前节点的时间
+   */
+  const enterAt = nodeEmpty
+    ? (toDate(raw[C.tChainUse]) || toDate(raw[C.tSubmit]))
+    : (auditFinished
+      ? (toDate(raw[C.tStrategyAudit]) || toDate(raw[C.tChainUse]) || toDate(raw[C.tSubmit]))
+      : enterNodeTime(raw, node));
   const submitAt = toDate(raw[C.tSubmit]) || toDate(raw[C.signTime]);
-  const nodeDays = daysSince(enterAt, now);
+  /**
+   * V14：流程已结束的客户「当前节点时长」应显式为 null（不参与超期/平均耗时），
+   * 而不是拿「进入上一节点至今」的天数继续算 —— 那是旧口径的残留。
+   */
+  const nodeDays = isCompleted ? null : daysSince(enterAt, now);
   const totalDays = daysSince(submitAt, now);
 
   /**
@@ -723,7 +775,16 @@ function toDetailRow(c) {
     chainName: c.chainName,
     chainType: c.chainType,
     stores: c.stores,
-    node: c.isCompleted ? '' : c.node,
+    /**
+     * V14 B1：流程已结束的客户，「当前节点」显示「流程结束」而不是空串。
+     *
+     * 旧实现是 `c.isCompleted ? '' : c.node` —— 明细表「当前节点」列对已完成客户渲染空白；
+     * 用户要求「客户的流程状态以当前节点为准」，故直接给出终态标签。
+     * c.node 在 normalizeClient 里已算成 '流程结束'。
+     */
+    node: c.node,
+    /** 显式标记是否已结束（前端可据此判断真实节点是否为空） */
+    isCompleted: !!c.isCompleted,
     owner: c.owner,
     enterNodeAt: c.enterAt ? c.enterAt.toISOString() : '',
     enterNodeDate: c.enterAt ? md(c.enterAt) : '',
@@ -766,14 +827,19 @@ function toFullRow(c, seq) {
     /* ── V7 新增列 ── */
     /** 当前处理人（CurrentOwner，流程推送的当前负责人） */
     currentOwner: c.owner || '',
-    /** 当前节点处理时长 = 当前时间 − 进入当前节点时间（小时） */
-    currentNodeHours: round(c.nodeDays * 24, 1),
+    /**
+     * V14：流程已结束的客户「当前节点时长」为 null（不参与超期），
+     * 前端渲染为「—」，不再拿旧口径的天数充数。
+     */
+    currentNodeHours: c.nodeDays == null ? null : round(c.nodeDays * 24, 1),
     /** 上节点时间（进入当前节点的时间即为「上个节点完成时间」） */
     lastNodeAt: c.enterAt ? c.enterAt.toISOString() : '',
-    /** 格式化后的当前节点处理时长：<24h 用 X.X时，否则 X.X天 */
-    currentNodeDuration: c.nodeDays < 1
-      ? `${round(c.nodeDays * 24, 1)}时`
-      : `${round(c.nodeDays, 1)}天`,
+    /** 格式化后的当前节点时长：<24h 用 X.X时，否则 X.X天；已完成显示「—」 */
+    currentNodeDuration: c.nodeDays == null
+      ? '—'
+      : (c.nodeDays < 1
+        ? `${round(c.nodeDays * 24, 1)}时`
+        : `${round(c.nodeDays, 1)}天`),
   };
 }
 
@@ -1173,10 +1239,10 @@ function buildRow2(clients) {
     const list = clients.filter((c) => c.node === name);
     const stores = list.reduce((sum, c) => sum + c.stores, 0);
     const avgDays = list.length
-      ? round(list.reduce((sum, c) => sum + c.nodeDays, 0) / list.length, 1)
+      ? round(list.reduce((sum, c) => sum + (c.nodeDays || 0), 0) / list.length, 1)
       : 0;
     const avgHours = list.length
-      ? round((list.reduce((sum, c) => sum + c.nodeDays, 0) / list.length) * 24, 1)
+      ? round((list.reduce((sum, c) => sum + (c.nodeDays || 0), 0) / list.length) * 24, 1)
       : 0;
 
     /* V12：已完成客户的平均耗时（新口径） */
@@ -1912,6 +1978,118 @@ function buildRow8(run31, chainRegion, range) {
 }
 
 /**
+ * V14 B4：连锁排名（按触达人数降序）。
+ *
+ * 数据源：`jdywh_mail_31`（按日明细），按连锁聚合 —— 与下方「策略运行情况」口径一致，
+ * 并沿用同一个日期区间（策略开通&触达时间），保证上下两块板数字可互相印证。
+ *
+ * 口径要点（与 aggregateRow7 保持一致，避免同一屏出现两套数）：
+ *   - 触达人数 / 到店人数 / 金额 / 券数 / 成本 → 求和
+ *   - 运行策略数 → 按「当日最大」而非求和（同一策略可能每天运行，求和会重复计数）
+ *   - 到店率 = 到店 ÷ 触达；优惠券核销率 = 用券人数 ÷ 发券人数
+ *   - ROI = (渠道成本 + 优惠券成本) ÷ 转化销售额
+ *
+ * 区域/连锁类型/连锁名来自 parsed_16（allClients），mail_31 只有连锁ID。
+ * 按「当前节点为空」等业务条件以外，这里不做节点过滤 —— 排名看的是运行效果。
+ *
+ * @param {Object} run31 { rows, importDate }
+ * @param {Array} allClients 全量标准化客户（取 chainName/chainType/region）
+ * @param {Object} [range] { from, to } 按 touchAt 过滤（YYYY-MM-DD）
+ */
+function buildChainRanking(run31, allClients, range) {
+  let rows = run31.rows || [];
+
+  /* ── 与 buildRow8 同一日期口径：按「策略开通&触达时间」过滤 ── */
+  if (range && (range.from || range.to)) {
+    const fromKey = range.from ? range.from.replace(/-/g, '') : '';
+    const toKey = range.to ? range.to.replace(/-/g, '') : '';
+    rows = rows.filter((r) => {
+      const k = s(r[M.touchAt]).replace(/[^\d]/g, '');
+      if (k.length !== 8) return false;
+      if (fromKey && k < fromKey) return false;
+      if (toKey && k > toKey) return false;
+      return true;
+    });
+  }
+
+  /* 连锁ID → 客户档案（名称/类型/区域） */
+  const infoMap = new Map();
+  (allClients || []).forEach((c) => {
+    if (c.chainId) infoMap.set(c.chainId, c);
+  });
+
+  /* 按连锁分组 */
+  const byChain = new Map();
+  rows.forEach((r) => {
+    const id = s(r[M.chainId]);
+    if (!id) return;
+    if (!byChain.has(id)) byChain.set(id, []);
+    byChain.get(id).push(r);
+  });
+
+  const items = [];
+  byChain.forEach((list, id) => {
+    const info = infoMap.get(id) || null;
+    const sum = (k) => list.reduce((a, r) => a + n(r[k]), 0);
+    const max = (k) => list.reduce((a, r) => Math.max(a, n(r[k])), 0);
+
+    const sent = sum(M.sent);
+    const arrived = sum(M.arrived);
+    const gmv = sum(M.gmv);
+    const cIssuedPpl = sum(M.couponIssuedPeople);
+    const cUsedPpl = sum(M.couponUsedPeople);
+    const cIssued = sum(M.couponIssued);
+    const cUsed = sum(M.couponUsed);
+    const channelCost = sum(M.channelCost);
+    const couponCost = sum(M.couponCost);
+
+    /** 运行策略数：按日 MAX（不可求和，同 buildRow9 口径） */
+    const runningStrategies = max(M.runningStrategies);
+
+    /** 运行策略：策略类型去重（中文本地化排序） */
+    const runningStrategyTypes = Array.from(new Set(
+      list.map((r) => s(r[M.type])).filter(Boolean),
+    )).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+
+    const region = (info && info.region) || '未知';
+
+    items.push({
+      chainId: id,
+      chainName: (info && info.chainName) || `连锁 ${id}`,
+      chainType: (info && info.chainType) || '未分类',
+      region,
+      runningStrategyTypes,
+      runningStrategies,
+      reachedPeople: round(sent, 2),
+      arrivedPeople: round(arrived, 2),
+      reachRate: round(div(arrived, sent), 4),
+      gmv: round(gmv, 2),
+      couponIssued: round(cIssued, 2),
+      couponUsed: round(cUsed, 2),
+      /** 核销率按「人」口径（与 row8 一致），不是按张数 */
+      couponRate: round(div(cUsedPpl, cIssuedPpl), 4),
+      couponCost: round(couponCost, 2),
+      channelCost: round(channelCost, 2),
+      roi: round(div(channelCost + couponCost, gmv), 4),
+    });
+  });
+
+  /**
+   * 排序：触达人数降序。
+   * 并列时用连锁名中文排序兜底，保证每次请求顺序稳定（否则同值行会随机漂移）。
+   * 只保留真正有触达数据的连锁。
+   */
+  const ranked = items
+    .filter((x) => x.reachedPeople > 0)
+    .sort((a, b) => {
+      if (b.reachedPeople !== a.reachedPeople) return b.reachedPeople - a.reachedPeople;
+      return a.chainName.localeCompare(b.chainName, 'zh-CN');
+    });
+
+  return { items: ranked, total: ranked.length };
+}
+
+/**
  * 第 9 排：近 30 日运行趋势（策略开通&触达时间维度）。
  *
  * V7 修复：V6 用 `jdywh_mail_30` 按 `DATE(import_date)` 分组，但 mail_30 是「整体汇总快照」，
@@ -2011,36 +2189,45 @@ async function buildRow9(now) {
  * 十四、第 10 排：明细表列配置
  * ══════════════════════════════════════════════════════════════════ */
 
+/**
+ * V14 B5：明细表列配置。
+ *
+ * 默认显示列改为用户指定的 15 列（顺序即下表），并把列宽整体收紧，
+ * 目标是 1440px 下同屏可见 ≥14 列（旧配置 chainName 240 + 列宽普遍偏大，一屏只看到 8~9 列）。
+ *
+ * 「当前节点处理时长」→「当前节点时长」：key 保持 currentNodeDuration（前端依赖），只改 title。
+ * 运行类指标（开通/运行策略数、触达人数、到店率）口径 = jdywh_mail_30 快照（见 toFullRow）。
+ */
 const DETAIL_COLUMNS = [
-  { key: 'seq', title: '序号', width: 88, default: true, align: 'center' },
-  { key: 'region', title: '区域', width: 80, default: true, align: 'center' },
-  { key: 'chainId', title: '连锁ID', width: 100, default: true },
-  { key: 'chainName', title: '连锁名称', width: 240, default: true },
-  { key: 'chainType', title: '连锁类型', width: 100, default: true, align: 'center' },
-  { key: 'signType', title: '签约类型', width: 120, default: true, align: 'center' },
-  { key: 'stores', title: '门店数', width: 90, default: true, align: 'right', format: 'num' },
-  { key: 'sales', title: '销售', width: 90, default: true },
-  { key: 'service', title: '客服', width: 90, default: true },
-  { key: 'solution', title: '解决方案', width: 100, default: true },
-  { key: 'trainer', title: '培训人', width: 90, default: true },
-  { key: 'node', title: '当前节点', width: 110, default: true, align: 'center' },
-  { key: 'currentOwner', title: '当前处理人', width: 110, default: true, align: 'center' },
-  { key: 'currentNodeDuration', title: '当前节点处理时长', width: 140, default: true, align: 'right' },
-  { key: 'submitLabel', title: '提交时间', width: 110, default: true, align: 'center' },
-  { key: 'submitDays', title: '提交时长（天）', width: 120, default: true, align: 'right', format: 'num' },
-  { key: 'openedStrategies', title: '开通策略数', width: 110, default: true, align: 'right', format: 'num' },
-  { key: 'runningStrategies', title: '运行策略数', width: 110, default: true, align: 'right', format: 'num' },
-  { key: 'reachedPeople', title: '触达人数', width: 100, default: true, align: 'right', format: 'num' },
-  { key: 'reachRate', title: '到店率', width: 100, default: true, align: 'right', format: 'percent' },
-  { key: 'couponRate', title: '优惠券核销率', width: 120, default: true, align: 'right', format: 'percent' },
-  // 可选列
-  { key: 'province', title: '省份', width: 110, default: false },
-  { key: 'owner', title: '处理人', width: 100, default: false },
-  { key: 'ownerRole', title: '负责人岗位', width: 110, default: false },
-  { key: 'nodeDays', title: '当前节点时长（天）', width: 140, default: false, align: 'right', format: 'num' },
-  { key: 'totalDays', title: '连锁总时长（天）', width: 130, default: false, align: 'right', format: 'num' },
-  { key: 'status', title: '状态', width: 80, default: false, align: 'center' },
-  { key: 'signDate', title: '签约日期', width: 110, default: false, align: 'center' },
+  { key: 'seq', title: '序号', width: 56, default: true, align: 'center' },
+  { key: 'region', title: '区域', width: 62, default: true, align: 'center' },
+  { key: 'chainId', title: '连锁ID', width: 88, default: true },
+  { key: 'chainName', title: '连锁名称', width: 140, default: true },
+  { key: 'chainType', title: '连锁类型', width: 84, default: true, align: 'center' },
+  { key: 'signType', title: '签约类型', width: 92, default: true, align: 'center' },
+  { key: 'sales', title: '销售', width: 72, default: true },
+  { key: 'solution', title: '解决方案', width: 88, default: true },
+  { key: 'node', title: '当前节点', width: 92, default: true, align: 'center' },
+  { key: 'status', title: '状态', width: 62, default: true, align: 'center' },
+  { key: 'currentNodeDuration', title: '当前节点时长', width: 98, default: true, align: 'right' },
+  { key: 'openedStrategies', title: '开通策略数', width: 92, default: true, align: 'right', format: 'num' },
+  { key: 'runningStrategies', title: '运行策略数', width: 92, default: true, align: 'right', format: 'num' },
+  { key: 'reachedPeople', title: '触达人数', width: 92, default: true, align: 'right', format: 'num' },
+  { key: 'reachRate', title: '到店率', width: 74, default: true, align: 'right', format: 'percent' },
+  // ── 以下为可选列（默认隐藏） ──
+  { key: 'stores', title: '门店数', width: 80, default: false, align: 'right', format: 'num' },
+  { key: 'service', title: '客服', width: 72, default: false },
+  { key: 'trainer', title: '培训人', width: 72, default: false },
+  { key: 'currentOwner', title: '当前处理人', width: 92, default: false, align: 'center' },
+  { key: 'submitLabel', title: '提交时间', width: 100, default: false, align: 'center' },
+  { key: 'submitDays', title: '提交时长（天）', width: 104, default: false, align: 'right', format: 'num' },
+  { key: 'couponRate', title: '优惠券核销率', width: 104, default: false, align: 'right', format: 'percent' },
+  { key: 'province', title: '省份', width: 92, default: false },
+  { key: 'owner', title: '处理人', width: 84, default: false },
+  { key: 'ownerRole', title: '负责人岗位', width: 96, default: false },
+  { key: 'nodeDays', title: '当前节点时长（天）', width: 120, default: false, align: 'right', format: 'num' },
+  { key: 'totalDays', title: '连锁总时长（天）', width: 116, default: false, align: 'right', format: 'num' },
+  { key: 'signDate', title: '签约日期', width: 100, default: false, align: 'center' },
 ];
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2133,12 +2320,23 @@ async function buildBoard(query) {
    */
   const row8Range = resolveRow8Range(query, range, now);
   const row8 = buildRow8(run31, chainRegion, row8Range);
+  /** V14 B4：连锁排名（按触达人数降序），与 row8 共用日期区间口径 */
+  const chainRanking = buildChainRanking(run31, allClients, row8Range);
   const row9 = await buildRow9(now);
 
   // 明细表
   const detailRows = clients.map((c, i) => toFullRow(c, i + 1));
 
-  const { options, counts } = buildOptionsAndCounts(clients);
+  /**
+   * V14 B2：筛选选项与计数一律基于**全量**客户（allClients），不是筛选后的 clients。
+   *
+   * 根因（用户报障「选南区后北区选项消失」）：
+   *   原实现用的是 `clients`（已筛选）→ 选了南区，"北区"自然不在集合里，
+   *   下拉选项当场消失，用户无法再切回北区/多选。
+   * 修复：顶部筛选框 = 全部数据，选项集合与计数恒为全量口径。
+   * 各排数据仍按筛选后的 `clients` 计算（下方 row1..row9 / detailRows 不变）。
+   */
+  const { options, counts } = buildOptionsAndCounts(allClients);
 
   return {
     meta: {
@@ -2175,6 +2373,8 @@ async function buildBoard(query) {
     row7,
     row8,
     row9,
+    /** V14 B4：连锁排名（策略运行情况板块上方的从左至右卡片） */
+    chainRanking,
     detail: {
       columns: DETAIL_COLUMNS,
       rows: detailRows,
@@ -2417,8 +2617,11 @@ async function buildClientDetail(chainId) {
       owner: c.owner,
       ownerRoles: c.ownerRoles,
       enterAtLabel: c.enterAt ? mdCn(c.enterAt) : '',
-      nodeDays: round(c.nodeDays, 1),
-      currentNodeDuration: c.nodeDays < 1 ? `${round(c.nodeDays * 24, 1)}时` : `${round(c.nodeDays, 1)}天`,
+      /** V14：流程已结束 → 当前节点时长无意义，返回 null（前端显示「—」） */
+      nodeDays: c.nodeDays == null ? null : round(c.nodeDays, 1),
+      currentNodeDuration: c.nodeDays == null
+        ? '—'
+        : (c.nodeDays < 1 ? `${round(c.nodeDays * 24, 1)}时` : `${round(c.nodeDays, 1)}天`),
       totalDays: round(c.totalDays, 1),
       status: c.status,
       isOverdue: c.isOverdue,
@@ -2433,10 +2636,18 @@ async function buildClientDetail(chainId) {
     run: c.run || null,
     /**
      * V8.1：把 run（mail_30 原始行）解析成结构化指标，前端直接渲染，
-     * 不再需要自己认 c_xxxx 列名。run 为 null 时各字段为 0。
+     * 不再需要自己认 c_xxxx 列名。run 为 null 时返回 null。
+     *
+     * V13 A6 根因修复：
+     *   原实现第 1 行是 `const r = c.run;`，只读 mail_30 快照。
+     *   实测 mail_30 最新日仅 19 个连锁，与 parsed_16 的 112 个客户交集只有 15 个，
+     *   其余 97 个客户的 runMetrics 恒为 null → 客户详情「策略与运行」永远显示
+     *   「暂无运行数据」。而上面 L2341 已经算好了 runSource（mail_30 优先、
+     *   缺失回退 mail_31 按连锁聚合），却从未被使用（死代码）。
+     *   现在真正接上 runSource，并回传 source 让前端标注数据来源。
      */
     runMetrics: (() => {
-      const r = c.run;
+      const r = runSource;
       if (!r) return null;
       const g = (k) => n(r[k]);
       const opened = g(M.openedStrategies);
@@ -2451,7 +2662,17 @@ async function buildClientDetail(chainId) {
       const channelCost = g(M.channelCost);
       const couponCost = g(M.couponCost);
       const totalCost = channelCost + couponCost;
+      /** V13 A6：开通了哪些「策略类型」（来源 mail_31 的 M.type 列，按连锁去重排序） */
+      const openedStrategyTypes = Array.from(new Set(
+        (run31.rows || [])
+          .filter((x) => s(x[M.chainId]) === id)
+          .map((x) => s(x[M.type]))
+          .filter(Boolean),
+      )).sort((a, b) => a.localeCompare(b, 'zh-CN'));
       return {
+        /** 数据来源：mail_30（当日快照）或 mail_31（按连锁聚合兜底），null 表示无运行数据 */
+        source: runSourceKind,
+        openedStrategyTypes,
         openedStrategies: round(opened, 2),
         runningStrategies: round(running, 2),
         reachedPeople: round(sent, 2),

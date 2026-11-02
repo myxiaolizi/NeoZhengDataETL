@@ -20,7 +20,7 @@ const DEFAULTS = {
   site_logo_text: 'N',
   site_description: '企业多系统数据整合 · 统一主数据管理 · 数据治理 · 报表 BI · 可视化大屏 · AI 问数',
   site_footer: '',
-  theme_color: '#3687FF',
+  theme_color: '#1677FF',
   theme_style: 'light',
 
   // ---------- 安全 ----------
@@ -63,7 +63,7 @@ const DEFAULTS = {
   report_theme: 'light',
   report_default_rows: '1000',
   report_cache_ttl: '0',
-  chart_palette: '#45B4FF,#FFC000,#3687FF,#A2D73C,#EC673C,#73DBFF,#003378,#B5B5B6',
+  chart_palette: '#45B4FF,#FFC000,#1677FF,#A2D73C,#EC673C,#73DBFF,#003378,#B5B5B6',
   allow_public_share: '1',
   share_default_expires: '0',
 
@@ -137,7 +137,7 @@ const GROUPS = [
       { key: 'site_logo_text', label: 'Logo 文字', type: 'text', placeholder: 'N', hint: '侧边栏与登录页的方形图标文字，建议 1 个字符' },
       { key: 'site_description', label: '平台描述', type: 'textarea', placeholder: '数据集成 · 数据治理 · 报表开发 · BI · 可视化大屏 · AI 问数' },
       { key: 'site_footer', label: '页脚版权', type: 'text', placeholder: '© 2026 某某公司' },
-      { key: 'theme_color', label: '主题色', type: 'color', hint: '默认主色 #3687FF，影响按钮、链接与高亮色' },
+      { key: 'theme_color', label: '主题色', type: 'color', hint: '默认主色 #1677FF，影响按钮、链接与高亮色' },
     ],
   },
   {
@@ -210,7 +210,7 @@ const GROUPS = [
       ] },
       { key: 'report_default_rows', label: '报表默认取数行数', type: 'number', min: 100, max: 10000 },
       { key: 'report_cache_ttl', label: '报表缓存（秒）', type: 'number', min: 0, max: 86400, hint: '0 表示不缓存' },
-      { key: 'chart_palette', label: '图表配色', type: 'text', placeholder: '#3687FF,#45B4FF,...', hint: '逗号分隔的十六进制颜色' },
+      { key: 'chart_palette', label: '图表配色', type: 'text', placeholder: '#1677FF,#45B4FF,...', hint: '逗号分隔的十六进制颜色' },
       { key: 'allow_public_share', label: '允许公开分享', type: 'switch', hint: '关闭后无法创建分享链接' },
       { key: 'share_default_expires', label: '分享默认有效期（天）', type: 'number', min: 0, max: 3650, hint: '0 表示永久有效' },
     ],

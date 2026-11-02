@@ -144,11 +144,13 @@ export interface DetailRow {
   chainName: string;
   chainType: string;
   stores: number;
-  node: string;              // 当前节点（流程完成时为空串）
+  node: string;              // 当前节点；V14 起流程已结束显示「流程结束」（不再为空串）
+  /** V14：是否已流程结束（含「当前节点为空」与「策略审核已完成」两种情形） */
+  isCompleted?: boolean;
   owner: string;             // 处理人
   enterNodeAt: string;       // ISO，进入当前节点时间
   enterNodeDate: string;     // 'MM/DD'
-  nodeDays: number;          // 当前节点时长（天）
+  nodeDays: number | null;   // 当前节点时长（天）；流程已结束为 null
   submitAt: string;          // ISO
   submitDate: string;        // 'MM/DD'
   totalDays: number;         // 连锁总时长（天）
@@ -175,8 +177,10 @@ export interface DetailFullRow extends DetailRow {
   ownerRole: string;         // 当前负责人岗位
   /* ── V7 新增列 ── */
   currentOwner: string;      // 当前处理人
-  currentNodeHours: number;  // 当前节点处理时长（小时）
-  currentNodeDuration: string; // 当前节点处理时长（<24h 显示 X.X时，否则 X.X天）
+  /** 当前节点时长（小时）；V14：流程已结束为 null */
+  currentNodeHours: number | null;
+  /** 当前节点时长（<24h 显示 X.X时，否则 X.X天）；V14：流程已结束显示「—」 */
+  currentNodeDuration: string;
   lastNodeAt: string;        // 上节点时间（= 进入当前节点时间）
 }
 
@@ -501,6 +505,42 @@ export interface RunTrendData {
   roi?: number[];
 }
 
+/* ══════════════ V14：连锁排名（策略运行情况上方） ══════════════ */
+
+/**
+ * V14 连锁排名行：按「触达人数」降序。
+ * 数据源 jdywh_mail_31 按连锁聚合，口径与 row8（策略运行情况）完全一致。
+ */
+export interface ChainRankRow {
+  chainId: string;
+  chainName: string;
+  chainType: string;
+  /** 南区 / 北区 / 未知 */
+  region: string;
+  /** 运行策略：策略类型列表（已去重、中文本地化排序） */
+  runningStrategyTypes: string[];
+  /** 运行策略数（按日 MAX，不可求和） */
+  runningStrategies: number;
+  /** 触达人数（= mail_31 发送人数求和） */
+  reachedPeople: number;
+  arrivedPeople: number;     // 到店人数
+  reachRate: number;         // 到店率 = 到店 ÷ 触达（0~1）
+  gmv: number;               // 到店销售额（T+30 转化口径）
+  couponIssued: number;      // 发放优惠券（张）
+  couponUsed: number;        // 核销优惠券（张）
+  couponRate: number;        // 优惠券核销率 = 用券人数 ÷ 发券人数（0~1）
+  couponCost: number;        // 优惠券成本
+  channelCost: number;       // 渠道成本
+  roi: number;               // ROI = (渠道成本 + 优惠券成本) ÷ 转化销售额
+}
+
+export interface ChainRankingData {
+  /** 已按 reachedPeople 降序（后端排序，前端不得重排） */
+  items: ChainRankRow[];
+  /** 参与排名的连锁数 */
+  total: number;
+}
+
 /* ══════════════ 第 10 排：明细表 ══════════════ */
 
 export interface DetailColumnConf {
@@ -539,6 +579,8 @@ export interface BoardData {
   row7: Row7Data;
   row8: Row8Data;
   row9: RunTrendData;
+  /** V14：连锁排名（按触达人数降序），排在「策略运行情况」板块上方 */
+  chainRanking: ChainRankingData;
   detail: { columns: DetailColumnConf[]; rows: DetailFullRow[] };
 }
 
@@ -592,9 +634,9 @@ export function fetchBoardDetail(
 /* ══════════════ 图表配色（V7 语义色，契约 §2.1） ══════════════ */
 
 export const PALETTE = {
-  brand: '#2563eb',
-  brand2: '#3b82f6',
-  brand3: '#60a5fa',
+  brand: '#1677FF',
+  brand2: '#4C93FF',
+  brand3: '#4C93FF',
   green: '#10b981',
   warn: '#f59e0b',
   danger: '#ef4444',
@@ -603,10 +645,10 @@ export const PALETTE = {
   yellow: '#eab308',
   gray: '#94a3b8',
   /* 兼容 V5/V6 命名 */
-  primary: '#2563eb',
-  primaryDeep: '#1d4ed8',
-  primaryLight: '#3b82f6',
-  primarySoft: '#93c5fd',
+  primary: '#1677FF',
+  primaryDeep: '#0B57D0',
+  primaryLight: '#4C93FF',
+  primarySoft: '#BFD8FF',
   ink: '#16253d',
   orange: '#f59e0b',
   red: '#ef4444',
@@ -617,16 +659,16 @@ export const PALETTE = {
 
 /** 图表序列色（按序取） */
 export const CHART_SERIES = [
-  '#2563eb', '#10b981', '#f59e0b', '#8b5cf6',
-  '#06b6d4', '#ef4444', '#3b82f6', '#94a3b8',
+  '#1677FF', '#10b981', '#f59e0b', '#8b5cf6',
+  '#06b6d4', '#ef4444', '#4C93FF', '#94a3b8',
 ] as const;
 
 /**
  * 区域固定配色（契约 §2.1）
- *   南区 = 蓝 #2563eb，北区 = 绿 #10b981
+ *   南区 = 蓝 #1677FF，北区 = 绿 #10b981
  */
 export const REGION_COLORS: Record<string, string> = {
-  南区: '#2563eb',
+  南区: '#1677FF',
   北区: '#10b981',
 };
 

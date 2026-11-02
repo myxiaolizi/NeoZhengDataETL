@@ -189,7 +189,18 @@ export default function SettingsPage() {
       setGroups(data.groups);
       setValues(data.values);
       setMailReady(data.mailReady);
-      setActiveKey((prev) => (data.groups.some((g) => g.key === prev) ? prev : data.groups[0]?.key || 'site'));
+      /**
+       * V13 B5：显式优先「站点信息」作为默认页（用户原话「进入后默认显示站点信息」）。
+       *
+       * 原实现回退到 `data.groups[0]?.key`，即**依赖后端下发顺序**——
+       * 后端 adjust 分组顺序就会改变默认页，属于隐式契约。
+       * 现在：已选且仍存在 → 保留；否则优先 'site'；'site' 不存在才退回第一组。
+       */
+      setActiveKey((prev) => {
+        if (data.groups.some((g) => g.key === prev)) return prev;
+        if (data.groups.some((g) => g.key === 'site')) return 'site';
+        return data.groups[0]?.key || 'site';
+      });
     } catch {
       /* client 已提示 */
     } finally {
@@ -638,16 +649,20 @@ export default function SettingsPage() {
   /**
    * V9：设置分组标签（与邮件推送 / 用户管理同一套样式）。
    *
-   * 首项固定为「关于」（显示版本号），其后是后端下发的全部设置分组。
+   * V13 B5 修复（用户原话：「关于放在最后，进入后默认显示站点信息」）：
+   *   原来「关于」是 tabItems 的**第一项**，后端下发的设置分组全部排在其后，
+   *   所以用户进来第一眼看到的是版本号面板，而真正的设置分组被挤到后面。
+   *   现在把「关于」追加到数组**末位**，顺序恢复为「站点信息 → …各分组… → 关于」。
+   *
    * 徽标复用 `groupBadge`：状态类显示「已配置/已启用」，其余显示字段数量。
    */
   const tabItems = useMemo(() => [
-    { key: 'about', label: pageTabLabel(<InfoCircleOutlined />, '关于', <PageTabTag color={PALETTE.green}>{APP_VERSION}</PageTabTag>), children: aboutPanel },
     ...groups.map((g) => ({
       key: g.key,
       label: pageTabLabel(GROUP_ICONS[g.key] || <SettingOutlined />, g.title, groupBadge(g)),
       children: formPanel,
     })),
+    { key: 'about', label: pageTabLabel(<InfoCircleOutlined />, '关于', <PageTabTag color={PALETTE.green}>{APP_VERSION}</PageTabTag>), children: aboutPanel },
   ], [groups, aboutPanel, formPanel, groupBadge, values, mailReady]);
 
   return (

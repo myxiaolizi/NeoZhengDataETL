@@ -516,7 +516,8 @@ export default function DatasetsPage() {
       title: (
         <Space size={4} direction="vertical" style={{ lineHeight: 1.25 }}>
           <span style={{ fontSize: 12.5, fontWeight: 600, color: NEUTRAL.text }}>{c.name}</span>
-          <span style={{ fontSize: 10.5, color: NEUTRAL.textTertiary, fontWeight: 400 }}>{c.type}</span>
+          {/* V13：字号下限 11px（原 10.5px 违反「无 <11px 文本」的验收红线） */}
+          <span style={{ fontSize: 11, color: NEUTRAL.textTertiary, fontWeight: 400 }}>{c.type}</span>
         </Space>
       ),
       dataIndex: c.name,

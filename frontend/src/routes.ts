@@ -79,7 +79,7 @@ export const ROUTES: RouteConf[] = [
   { path: '/reports', name: '报表中心', icon: 'BarChartOutlined', permission: 'report:read', group: 'analysis', component: 'reports', mobile: true },
   { path: '/reports/:id/design', name: '报表设计', permission: 'report:write', hideInMenu: true, group: 'analysis', component: 'reports/Design' },
   { path: '/reports/:id/view', name: '报表查看', permission: 'report:read', hideInMenu: true, group: 'analysis', component: 'reports/View', mobile: true },
-  { path: '/shares', name: '分享管理', icon: 'ShareAltOutlined', permission: 'share:read', group: 'analysis', component: 'shares', mobile: true },
+  { path: '/shares', name: '分享中心', icon: 'ShareAltOutlined', permission: 'share:read', group: 'analysis', component: 'shares', mobile: true },
   { path: '/ai', name: 'AI 问数', icon: 'RobotOutlined', permission: 'ai:read', group: 'analysis', component: 'ai', mobile: true },
   /**
    * V8：AI 问数**公开分享页**（无需登录，独立布局不套 BasicLayout）。

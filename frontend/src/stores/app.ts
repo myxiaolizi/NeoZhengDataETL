@@ -18,8 +18,21 @@ export const DEFAULT_SITE_LOGO_TEXT = 'N';
 export const DEFAULT_SITE_DESCRIPTION = '';
 /** 页脚文案兜底（空串 = 不展示） */
 export const DEFAULT_SITE_FOOTER = '';
-/** 品牌区版本号（唯一出处，不要在组件里写死版本串） */
-export const APP_VERSION = 'V9.0';
+/**
+ * 品牌区版本号（唯一出处，不要在组件里写死版本串）。
+ *
+ * V13 B5 真实缺陷修复（用户原话：「修复版本号错误的问题」）：
+ *   这里是**硬编码字符串字面量 `'V9.0'`**，从 V9.0 迭代起就没有再改过，
+ *   而 V10 / V11 / V12 三次版本迭代只改了 package.json。
+ *   该常量渲染在系统设置「关于」面板的「当前版本号」一行（settings.tsx），
+ *   导致 V10/V11/V12 的用户在界面上看到的都是 **V9.0**。
+ *
+ * 修复：改为从构建期注入的 `__FE_VERSION__` 派生（vite define，
+ *   值取自 frontend/package.json，见 frontend/vite.config.ts）。
+ *   - `13.0.0` → `V13.0`（取前两段，与 intro.tsx 的 versionKey() 归一化口径一致）
+ *   - `__FE_VERSION__` 缺失/为空时回退 `'0.0'` → `V0.0`，保证不会抛错
+ */
+export const APP_VERSION = 'V' + (__FE_VERSION__ || '0.0').split('.').slice(0, 2).join('.');
 
 /* ══════════ 站点信息：结构 / 缓存 ══════════ */
 

@@ -51,3 +51,10 @@ frontend/src/pages/dashboard/CrmDashboard.tsx
 frontend/src/pages/dashboard/EChart.tsx
 frontend/src/pages/share-view.tsx
 views/share-view.ejs
+
+# 看板独立部署版（PHP 只读 API + pc/mobile 前端 HTML）—— 同属看板，不开源
+zk1-board/
+# 看板需求与迭代文档（含业务口径、客户数据结构，不外发）
+需求/
+req/
+docs/board/

@@ -26,9 +26,9 @@ export interface WidgetProps {
 /* ══════════════ 契约 §2.1 令牌（字面色值，echarts 内使用） ══════════════ */
 
 export const C = {
-  brand: '#2563eb',
-  brand2: '#3b82f6',
-  brand3: '#60a5fa',
+  brand: '#1677FF',
+  brand2: '#4C93FF',
+  brand3: '#4C93FF',
   brandSoft: '#e9f2ff',
   green: '#10b981',
   green2: '#34d399',
@@ -108,9 +108,9 @@ const LIGHT_VARS: CSSProperties = {
   '--text': '#16253d',
   '--text2': '#5a7191',
   '--text3': '#93a7c2',
-  '--brand': '#2563eb',
-  '--brand2': '#3b82f6',
-  '--brand3': '#60a5fa',
+  '--brand': '#1677FF',
+  '--brand2': '#4C93FF',
+  '--brand3': '#4C93FF',
   '--brandSoft': '#e9f2ff',
   '--green': '#10b981',
   '--green2': '#34d399',
@@ -139,9 +139,9 @@ const DARK_VARS: CSSProperties = {
   '--text': '#e2e8f0',
   '--text2': '#94a8c4',
   '--text3': '#6b82a3',
-  '--brand': '#3b82f6',
-  '--brand2': '#60a5fa',
-  '--brand3': '#93c5fd',
+  '--brand': '#4C93FF',
+  '--brand2': '#4C93FF',
+  '--brand3': '#BFD8FF',
   '--brandSoft': '#16294a',
   '--green': '#34d399',
   '--greenSoft': '#0f2e26',
@@ -668,7 +668,7 @@ export function chartStr(widget: DashboardWidget, key: string, fallback = ''): s
 
 /** 看板卡片 hover 效果（内联无法表达 :hover，用 style 标签一次性注入） */
 export const DASH_HOVER_CSS = `
-.dash-card-clickable:hover{border-color:var(--brand3,#60a5fa)!important;box-shadow:var(--shadow2)!important;transform:translateY(-1px)}
+.dash-card-clickable:hover{border-color:var(--brand3,#4C93FF)!important;box-shadow:var(--shadow2)!important;transform:translateY(-1px)}
 .dash-card-clickable:active{transform:translateY(0)}
 `;
 

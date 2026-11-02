@@ -8,7 +8,7 @@ import type { WidgetProps } from './shared';
 
 /** 拆分小卡（南区/北区那种） */
 function SplitBox({ label, value, unit, tone }: { label: string; value: number; unit?: string; tone: 'brand' | 'green' }) {
-  const color = tone === 'brand' ? 'var(--brand, #2563eb)' : 'var(--green, #10b981)';
+  const color = tone === 'brand' ? 'var(--brand, #1677FF)' : 'var(--green, #10b981)';
   const bg =
     tone === 'brand'
       ? 'linear-gradient(180deg, color-mix(in srgb, var(--brand) 8%, transparent), color-mix(in srgb, var(--brand) 4%, transparent))'
@@ -53,7 +53,7 @@ export default function KpiWidget({ widget, rows, columns, isMobile }: WidgetPro
 
   const unit = chartStr(widget, 'unit', '');
   const caption = chartStr(widget, 'caption', '');
-  const color = DOT_COLORS[dotOf(widget)] || 'var(--brand, #2563eb)';
+  const color = DOT_COLORS[dotOf(widget)] || 'var(--brand, #1677FF)';
   const value = totalOf(rows, f.metric, widget.agg);
   const extraMetrics = f.metrics.filter((m) => m !== f.metric).slice(0, 2);
   const wantSplit = chartBool(widget, 'split', true);
@@ -120,7 +120,7 @@ export default function KpiWidget({ widget, rows, columns, isMobile }: WidgetPro
               }}
             >
               <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m}</span>
-              <b style={{ fontVariantNumeric: 'tabular-nums', color: i === 0 ? 'var(--brand, #2563eb)' : 'var(--green, #10b981)', fontWeight: 750 }}>
+              <b style={{ fontVariantNumeric: 'tabular-nums', color: i === 0 ? 'var(--brand, #1677FF)' : 'var(--green, #10b981)', fontWeight: 750 }}>
                 {compactNum(totalOf(rows, m, widget.agg))}
               </b>
             </div>

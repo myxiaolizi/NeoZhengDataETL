@@ -1,8 +1,18 @@
 /**
- * 分享管理（V6.1 统一规范）
- * - Page 标准结构：title="分享管理" + search + actions(创建分享) + stats(4个数据卡片) + 列表
- * - 列表（ProTable / 移动端卡片）：链接、对象、有效期、访问次数、密码保护、启停
- * - 创建分享：选择报表 + 有效期 + 访问密码 + 是否允许导出 → 生成链接并一键复制
+ * 分享中心（V13 B3 改名，原「分享管理」）
+ *
+ * 用户原话：「报表中心和 AI 问数的分享都统一放到分享中心」
+ *
+ * 根因：分享能力此前被实现了两遍、且互不可见 ——
+ *   · 报表中心 reports.tsx 内含完整 ShareModal + 3 处分享按钮，数据走 /api/shares；
+ *   · AI 问数 ai.tsx 内含独立的创建弹窗 + 「分享管理」抽屉，数据走 /api/ai/shares；
+ *   · 而本页（原「分享管理」）只展示报表分享，看不到 AI 问数分享。
+ *   → 用户在三处看到三套不同的分享界面，AI 问数的分享在这里完全不可见。
+ *
+ * 现在本页升级为**双标签页**：
+ *   · 报表分享：原有实现原样搬进 Tab
+ *   · AI 问数分享：新增，数据来自 listAiShares()
+ * 两个来源在同一处管理；报表中心与 AI 问数页的操作都改为跳到这里（?tab=report|ai）。
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -37,8 +47,9 @@ import {
 } from '@ant-design/icons';
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Page from '@/components/Page';
+import PageTabs, { PageTabTag, pageTabLabel } from '@/components/PageTabs';
 import type { StatCardItem } from '@/components/StatCards';
 import { NEUTRAL, PALETTE } from '@/theme';
 import { useAppStore } from '@/stores/app';
@@ -53,6 +64,13 @@ import {
   type ReportItem,
   type ShareItem,
 } from '@/api/reports';
+import {
+  aiShareUrl,
+  listAiShares,
+  removeAiShare,
+  setAiShareStatus,
+  type AiShareItem,
+} from '@/api/ai';
 
 const { useBreakpoint } = Grid;
 const { Text, Paragraph } = Typography;
@@ -69,13 +87,28 @@ function isExpired(s: ShareItem): boolean {
   return !!s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();
 }
 
+/** AI 问数分享的有效性判定（字段与 ShareItem 不同：状态同为 1/0，到期字段同名） */
+function isAiExpired(s: AiShareItem): boolean {
+  return !!s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();
+}
+
 export default function SharesPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { message, modal } = AntApp.useApp();
   const { can } = useAppStore();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const canWrite = can(['share:write', 'share:read']);
+
+  /**
+   * V13 B3：当前标签页。支持 URL `?tab=report|ai` 指定初始 Tab，
+   * 以便报表中心 / AI 问数页跳过来时直接落到正确来源（用户从哪来就看哪一份）。
+   */
+  const [tab, setTab] = useState<string>(() => {
+    const t = searchParams.get('tab');
+    return t === 'ai' ? 'ai' : 'report';
+  });
 
   const [list, setList] = useState<ShareItem[]>([]);
   const [reports, setReports] = useState<ReportItem[]>([]);
@@ -83,6 +116,11 @@ export default function SharesPage() {
   const [loadError, setLoadError] = useState('');
   const [keyword, setKeyword] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'disabled' | 'expired'>('all');
+
+  /* V13 B3：AI 问数分享（数据源 /api/ai/shares） */
+  const [aiList, setAiList] = useState<AiShareItem[]>([]);
+  const [aiLoading, setAiLoading] = useState(true);
+  const [aiError, setAiError] = useState('');
 
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -107,9 +145,39 @@ export default function SharesPage() {
     }
   }, []);
 
+  const loadAi = useCallback(async () => {
+    setAiLoading(true);
+    setAiError('');
+    try {
+      const shares = await listAiShares();
+      setAiList(shares || []);
+    } catch (e) {
+      setAiList([]);
+      setAiError(e instanceof Error ? e.message : '加载 AI 问数分享失败');
+    } finally {
+      setAiLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadAi();
+  }, [load, loadAi]);
+
+  /** 切换 Tab 时同步 URL（conservative：用 replace 避免污染浏览历史） */
+  const onTabChange = (k: string) => {
+    setTab(k);
+    setKeyword('');
+    setStatusFilter('all');
+    try {
+      /* 不用 navigate 是为了避免与 react-router 的 effect 竞争；直接改 history 即可 */
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', k);
+      window.history.replaceState(null, '', url.toString());
+    } catch {
+      /* ignore */
+    }
+  };
 
   const filtered = useMemo(() => {
     const kw = keyword.trim().toLowerCase();
@@ -124,8 +192,20 @@ export default function SharesPage() {
     });
   }, [list, keyword, statusFilter]);
 
-  /** V6.1 数据卡片（4 个：分享数 / 有效 / 已过期 / 总访问） */
+  /** V6.1 数据卡片（4 个：分享数 / 有效 / 已过期 / 总访问）—— V13 B3：按当前 Tab 分别统计 */
   const statItems = useMemo<StatCardItem[]>(() => {
+    if (tab === 'ai') {
+      const totalAi = aiList.length;
+      const validAi = aiList.filter((s) => Number(s.status) === 1 && !isAiExpired(s)).length;
+      const expiredAi = aiList.filter((s) => isAiExpired(s)).length;
+      const viewsAi = aiList.reduce((sum, s) => sum + (s.viewCount || 0), 0);
+      return [
+        { key: 'total', label: 'AI 分享数', value: fmtNum(totalAi), suffix: '个', color: PALETTE.primary },
+        { key: 'valid', label: '有效', value: fmtNum(validAi), suffix: '个', color: PALETTE.green },
+        { key: 'expired', label: '已过期', value: fmtNum(expiredAi), suffix: '个', color: expiredAi > 0 ? PALETTE.red : PALETTE.yellow },
+        { key: 'views', label: '总访问', value: fmtNum(viewsAi), suffix: '次', color: PALETTE.cyan },
+      ];
+    }
     const total = list.length;
     const valid = list.filter((s) => Number(s.status) === 1 && !isExpired(s)).length;
     const expired = list.filter((s) => isExpired(s)).length;
@@ -164,7 +244,7 @@ export default function SharesPage() {
         color: PALETTE.cyan,
       },
     ];
-  }, [list]);
+  }, [list, aiList, tab]);
 
   const openCreate = (reportId?: number) => {
     form.resetFields();
@@ -344,6 +424,202 @@ export default function SharesPage() {
     },
   ];
 
+  /* ══════════ V13 B3：AI 问数分享（第二种分享来源） ══════════ */
+
+  const aiFiltered = useMemo(() => {
+    const kw = keyword.trim().toLowerCase();
+    return aiList.filter((s) => {
+      if (statusFilter === 'active' && (Number(s.status) !== 1 || isAiExpired(s))) return false;
+      if (statusFilter === 'disabled' && Number(s.status) === 1) return false;
+      if (statusFilter === 'expired' && !isAiExpired(s)) return false;
+      if (!kw) return true;
+      return [s.title, s.token]
+        .filter((v) => v !== undefined && v !== null)
+        .some((v) => String(v).toLowerCase().includes(kw));
+    });
+  }, [aiList, keyword, statusFilter]);
+
+  const aiStatusTag = (s: AiShareItem) => {
+    if (Number(s.status) !== 1) return <Tag color={PALETTE.gray}>已停用</Tag>;
+    if (isAiExpired(s)) return <Tag color={PALETTE.red}>已过期</Tag>;
+    return <Tag color={PALETTE.green}>生效中</Tag>;
+  };
+
+  const copyAiLink = async (s: AiShareItem) => {
+    const url = s.url || aiShareUrl(s.token);
+    const ok = await copyText(url);
+    if (ok) message.success('链接已复制到剪贴板');
+    else message.warning('复制失败，请手动选择链接复制');
+  };
+
+  const handleAiToggle = async (s: AiShareItem, checked: boolean) => {
+    try {
+      const next = await setAiShareStatus(s.id, checked ? 1 : 0);
+      setAiList((prev) => prev.map((x) => (x.id === s.id ? { ...x, status: next ? next.status : (checked ? 1 : 0) } : x)));
+      message.success(checked ? '分享已启用' : '分享已停用');
+    } catch {
+      /* client 已提示 */
+    }
+  };
+
+  const handleAiDelete = (s: AiShareItem) => {
+    modal.confirm({
+      title: '删除该 AI 问数分享？',
+      content: '删除后原链接立即失效，且不可恢复。',
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        await removeAiShare(s.id);
+        message.success('分享已删除');
+        setAiList((prev) => prev.filter((x) => x.id !== s.id));
+      },
+    });
+  };
+
+  const aiColumns: ProColumns<AiShareItem>[] = [
+    {
+      title: '分享标题',
+      dataIndex: 'title',
+      sorter: (a, b) => String(a.title || '').localeCompare(String(b.title || '')),
+      render: (_, s) => (
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 13.5, color: NEUTRAL.text, wordBreak: 'break-all' }}>
+            {s.title || `AI 分享 #${s.id}`}
+          </div>
+          <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary }}>
+            数据范围 {Array.isArray(s.scope) ? s.scope.length : 0} 项
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: '分享链接',
+      dataIndex: 'token',
+      width: 240,
+      render: (_, s) => (
+        <Space size={6}>
+          <Text code style={{ fontSize: 11.5 }}>
+            /a/{s.token.slice(0, 10)}…
+          </Text>
+          <Tooltip title="复制完整链接">
+            <Button size="small" type="text" icon={<CopyOutlined />} onClick={() => copyAiLink(s)} />
+          </Tooltip>
+        </Space>
+      ),
+    },
+    { title: '状态', dataIndex: 'status', width: 90, render: (_, s) => aiStatusTag(s) },
+    {
+      title: '保护',
+      dataIndex: 'hasPassword',
+      width: 80,
+      align: 'center',
+      render: (_, s) => (s.hasPassword ? (
+        <Tooltip title="需要访问密码">
+          <LockOutlined style={{ color: PALETTE.yellow }} />
+        </Tooltip>
+      ) : (
+        <span style={{ color: NEUTRAL.textQuaternary }}>—</span>
+      )),
+    },
+    {
+      title: '有效期至',
+      dataIndex: 'expiresAt',
+      width: 150,
+      render: (_, s) => (
+        <span style={{ fontSize: 12, color: isAiExpired(s) ? PALETTE.red : NEUTRAL.textSecondary }}>
+          {s.expiresAt ? fmtTime(s.expiresAt, 'YYYY-MM-DD HH:mm') : '永久有效'}
+        </span>
+      ),
+    },
+    { title: '访问', dataIndex: 'viewCount', width: 80, align: 'right', render: (_, s) => fmtNum(s.viewCount || 0) },
+    { title: '问数', dataIndex: 'askCount', width: 80, align: 'right', render: (_, s) => fmtNum(s.askCount || 0) },
+    {
+      title: '创建时间',
+      dataIndex: 'createdAt',
+      width: 130,
+      render: (_, s) => (
+        <Tooltip title={s.createdAt ? fmtTime(s.createdAt) : '-'}>
+          <span style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>{s.createdAt ? fmtAgo(s.createdAt) : '-'}</span>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '启用',
+      dataIndex: 'enable',
+      width: 75,
+      align: 'center',
+      render: (_, s) => (
+        <Switch size="small" checked={Number(s.status) === 1} disabled={!canWrite} onChange={(v) => handleAiToggle(s, v)} />
+      ),
+    },
+    {
+      title: '操作',
+      valueType: 'option',
+      width: 150,
+      fixed: 'right',
+      render: (_, s) => [
+        <a key="open" onClick={() => window.open(s.url || aiShareUrl(s.token), '_blank')}>
+          打开
+        </a>,
+        <a key="copy" onClick={() => copyAiLink(s)}>
+          复制
+        </a>,
+        canWrite ? (
+          <a key="del" style={{ color: PALETTE.red }} onClick={() => handleAiDelete(s)}>
+            删除
+          </a>
+        ) : null,
+      ],
+    },
+  ];
+
+  const renderAiCard = (s: AiShareItem) => (
+    <Card
+      key={s.id}
+      style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12 }}
+      styles={{ body: { padding: 14 } }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 14.5, color: NEUTRAL.text, wordBreak: 'break-all' }}>
+            {s.title || `AI 分享 #${s.id}`}
+          </div>
+          <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, marginTop: 2 }}>
+            {s.createdAt ? `${fmtTime(s.createdAt, 'YYYY-MM-DD HH:mm')} 创建` : '—'}
+          </div>
+        </div>
+        {aiStatusTag(s)}
+      </div>
+      <div style={{ marginTop: 10, display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12, color: NEUTRAL.textSecondary }}>
+        <span><EyeOutlined /> {fmtNum(s.viewCount || 0)} 次访问</span>
+        <span>问数 {fmtNum(s.askCount || 0)} 次</span>
+        <span>{s.expiresAt ? `至 ${fmtTime(s.expiresAt, 'YYYY-MM-DD')}` : '永久有效'}</span>
+        {s.hasPassword && <span style={{ color: PALETTE.yellow }}><LockOutlined /> 有密码</span>}
+      </div>
+      <div style={{ marginTop: 10, padding: '6px 8px', background: NEUTRAL.surfaceSunken, borderRadius: 6, fontSize: 11.5, color: NEUTRAL.textSecondary, wordBreak: 'break-all' }}>
+        {s.url || aiShareUrl(s.token)}
+      </div>
+      <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button size="middle" icon={<CopyOutlined />} onClick={() => copyAiLink(s)} style={{ minHeight: 44 }}>复制</Button>
+        <Button size="middle" icon={<LinkOutlined />} onClick={() => window.open(s.url || aiShareUrl(s.token), '_blank')} style={{ minHeight: 44 }}>打开</Button>
+        {canWrite && (
+          <>
+            <Button size="middle" onClick={() => handleAiToggle(s, Number(s.status) !== 1)} style={{ minHeight: 44 }}>
+              {Number(s.status) === 1 ? '停用' : '启用'}
+            </Button>
+            <Button danger size="middle" icon={<DeleteOutlined />} onClick={() => handleAiDelete(s)} style={{ minHeight: 44 }}>删除</Button>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+
+  /** 当前 Tab 的运行态（空态文案 / 加载 / 错误都跟着 Tab 走） */
+  const isAiTab = tab === 'ai';
+  const currentLoading = isAiTab ? aiLoading : loading;
+  const currentError = isAiTab ? aiError : loadError;
+
   const renderCard = (s: ShareItem) => (
     <Card
       key={s.id}
@@ -422,7 +698,7 @@ export default function SharesPage() {
 
   return (
     <Page
-      title="分享管理"
+      title="分享中心"
       search={
         <>
           <Select
@@ -438,7 +714,7 @@ export default function SharesPage() {
           />
           <Input.Search
             allowClear
-            placeholder="搜索标题 / 报表名 / token"
+            placeholder="搜索标题 / 名称 / token"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onSearch={(v) => setKeyword(v)}
@@ -447,29 +723,80 @@ export default function SharesPage() {
         </>
       }
       actions={
-        canWrite ? (
+        /* 只有「报表分享」支持在本页创建（AI 问数分享需选数据范围，在 AI 问数页发起更合理）。
+           切到「AI 问数分享」时给出去 AI 问数页的入口，而不是留一个点了没反应的按钮。 */
+        isAiTab ? (
+          <Button icon={<ShareAltOutlined />} onClick={() => navigate('/ai')}>
+            去 AI 问数创建
+          </Button>
+        ) : canWrite ? (
           <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
             创建分享
           </Button>
         ) : undefined
       }
       stats={statItems}
+      subTabs={
+        <PageTabs
+          activeKey={tab}
+          onChange={onTabChange}
+          items={[
+            { key: 'report', label: pageTabLabel(<ShareAltOutlined />, '报表分享', list.length ? <PageTabTag color={PALETTE.primary}>{list.length}</PageTabTag> : undefined) },
+            { key: 'ai', label: pageTabLabel(<ShareAltOutlined />, 'AI 问数分享', aiList.length ? <PageTabTag color={PALETTE.primary}>{aiList.length}</PageTabTag> : undefined) },
+          ]}
+        />
+      }
     >
-      {loadError && (
+      {currentError && (
         <Alert
           type="error"
           showIcon
           style={{ marginBottom: 12 }}
-          title="加载分享列表失败"
-          description={loadError}
+          title={isAiTab ? '加载 AI 问数分享失败' : '加载分享列表失败'}
+          description={currentError}
           action={
-            <Button size="small" onClick={load}>
+            <Button size="small" onClick={isAiTab ? loadAi : load}>
               重试
             </Button>
           }
         />
       )}
 
+      {isAiTab ? (
+        currentLoading ? (
+          <div style={{ padding: 60, textAlign: 'center' }}>
+            <Spin size="large" />
+          </div>
+        ) : aiFiltered.length === 0 ? (
+          <Card style={{ border: `1px dashed ${NEUTRAL.border}`, borderRadius: 12 }}>
+            <Empty description={keyword || statusFilter !== 'all' ? '没有符合条件的 AI 问数分享' : '还没有 AI 问数分享，请到「AI 问数」页选择数据范围后创建'}>
+              <Button type="primary" icon={<ShareAltOutlined />} onClick={() => navigate('/ai')}>去 AI 问数</Button>
+            </Empty>
+          </Card>
+        ) : isMobile ? (
+          <Row gutter={[10, 10]}>
+            {aiFiltered.map((s) => (
+              <Col xs={24} key={s.id}>
+                {renderAiCard(s)}
+              </Col>
+            ))}
+          </Row>
+        ) : (
+          <Card styles={{ body: { padding: 0 } }} style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 12, overflow: 'hidden' }}>
+            <ProTable<AiShareItem>
+              rowKey="id"
+              columns={aiColumns}
+              dataSource={aiFiltered}
+              search={false}
+              options={{ reload: false, density: false, setting: false }}
+              toolBarRender={false}
+              scroll={{ x: 'max-content' }}
+              pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 个 AI 问数分享` }}
+            />
+          </Card>
+        )
+      ) : (
+      <>
       {loading ? (
         <div style={{ padding: 60, textAlign: 'center' }}>
           <Spin size="large" />
@@ -501,6 +828,8 @@ export default function SharesPage() {
             pagination={{ pageSize: 10, showSizeChanger: true, showTotal: (t) => `共 ${t} 个分享` }}
           />
         </Card>
+      )}
+      </>
       )}
 
       {/* 创建分享 */}

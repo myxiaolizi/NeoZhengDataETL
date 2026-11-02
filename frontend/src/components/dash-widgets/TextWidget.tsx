@@ -87,7 +87,7 @@ export default function TextWidget({ widget, isMobile }: WidgetProps) {
         if (/^[-*]\s+/.test(line)) {
           return (
             <div key={key} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', textAlign: 'left' }}>
-              <span style={{ color: 'var(--brand, #2563eb)', lineHeight: 'inherit' }}>•</span>
+              <span style={{ color: 'var(--brand, #1677FF)', lineHeight: 'inherit' }}>•</span>
               <span style={{ minWidth: 0 }}>{inline(line.replace(/^[-*]\s+/, ''), key)}</span>
             </div>
           );

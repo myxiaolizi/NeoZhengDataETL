@@ -229,7 +229,8 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
           <div
             title={brandSubtitle}
             style={{
-              fontSize: 10.5,
+              /* V13：字号下限 11px（原 10.5px 违反「无 <11px 文本」的验收红线）。 */
+              fontSize: 11,
               color: SIDER.groupTitleColor,
               lineHeight: 1.2,
               whiteSpace: 'nowrap',

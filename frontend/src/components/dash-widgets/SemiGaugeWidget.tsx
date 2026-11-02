@@ -20,7 +20,7 @@ function niceMax(v: number): number {
 /** 单条进度（pg-top + pg-track + pg-fill） */
 function Bar({ label, value, max, unit, green }: { label: string; value: number; max: number; unit?: string; green?: boolean }) {
   const percent = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
-  const color = green ? 'var(--green, #10b981)' : 'var(--brand, #2563eb)';
+  const color = green ? 'var(--green, #10b981)' : 'var(--brand, #1677FF)';
   return (
     <div style={{ minWidth: 0 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
@@ -50,7 +50,7 @@ function Bar({ label, value, max, unit, green }: { label: string; value: number;
             minWidth: percent > 0 ? 3 : 0,
             background: green
               ? 'linear-gradient(90deg, var(--green, #10b981), var(--green2, #34d399))'
-              : 'linear-gradient(90deg, var(--brand, #2563eb), var(--brand3, #60a5fa))',
+              : 'linear-gradient(90deg, var(--brand, #1677FF), var(--brand3, #4C93FF))',
             transition: 'width .7s cubic-bezier(.4,0,.2,1)',
           }}
         />

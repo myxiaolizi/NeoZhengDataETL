@@ -11,7 +11,7 @@ import type { WidgetProps } from './shared';
 const TAG_STYLES = [
   { bg: C.danger, border: 'color-mix(in srgb, #ef4444 26%, transparent)' },
   { bg: C.warn, border: 'color-mix(in srgb, #f59e0b 26%, transparent)' },
-  { bg: C.brand, border: 'color-mix(in srgb, #2563eb 26%, transparent)' },
+  { bg: C.brand, border: 'color-mix(in srgb, #1677FF 26%, transparent)' },
   { bg: C.slate, border: 'color-mix(in srgb, #94a3b8 30%, transparent)' },
 ];
 
@@ -25,7 +25,7 @@ function RankNo({ index }: { index: number }) {
     color = '#fff';
     shadow = `0 2px 7px color-mix(in srgb, ${MEDAL_COLORS[n - 1]} 38%, transparent)`;
   } else if (n <= 5) {
-    bg = 'var(--brand, #2563eb)';
+    bg = 'var(--brand, #1677FF)';
     color = '#fff';
     shadow = '0 2px 7px color-mix(in srgb, var(--brand) 32%, transparent)';
   }

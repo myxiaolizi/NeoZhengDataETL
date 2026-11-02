@@ -6,7 +6,7 @@ import React, { useMemo } from 'react';
 import { EmptyBox, chartNum, chartStr, compactNum, matrixOf, resolveFields } from './shared';
 import type { WidgetProps } from './shared';
 
-/** 品牌色 rgb（= #2563eb），用于 alpha 梯度 */
+/** 品牌色 rgb（= #1677FF），用于 alpha 梯度 */
 const BRAND_RGB = '37,99,235';
 
 export default function HeatmapWidget({ widget, rows, columns, isMobile }: WidgetProps) {

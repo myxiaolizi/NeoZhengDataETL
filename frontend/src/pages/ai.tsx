@@ -21,7 +21,6 @@ import {
   Button,
   Card,
   Collapse,
-  Drawer,
   Empty,
   Grid,
   Input,
@@ -44,7 +43,7 @@ import {
   DeleteOutlined,
   ExportOutlined,
   HistoryOutlined,
-  LinkOutlined,
+  MessageOutlined,
   ReloadOutlined,
   RobotOutlined,
   SendOutlined,
@@ -62,15 +61,15 @@ import { Bubble, Sender, Welcome, Prompts } from '@ant-design/x';
 import type { PromptsItemType } from '@ant-design/x';
 import { useNavigate } from 'react-router-dom';
 import Page from '@/components/Page';
+import PageTabs, { PageTabTag, pageTabLabel } from '@/components/PageTabs';
 import type { StatCardItem } from '@/components/StatCards';
 import { useAppStore } from '@/stores/app';
 import { PALETTE, NEUTRAL } from '@/theme';
 import { fmtNum, fmtTime } from '@/utils';
 import { askAi, listAiChats, classifyAiError, getAiScopeOptions, normalizeScopeOptions,
   scopeGroup, scopeKey, scopeRefKey, SCOPE_KINDS, SCOPE_KIND_LABEL, countUsableOptions,
-  createAiShare, listAiShares, setAiShareStatus, removeAiShare, aiShareUrl,
   type AiChatRecord, type AiFailure, type AiScopeOption, type AiScopeOptions,
-  type AiScopeRef, type AiSourceRef, type AiShareItem } from '@/api/ai';
+  type AiScopeRef, type AiSourceRef } from '@/api/ai';
 import { listDatasets, pickTableColumns, type DatasetColumn, type RowData } from '@/api/reports';
 
 const { useBreakpoint } = Grid;
@@ -152,12 +151,15 @@ export default function AiPage() {
   const [saveBusy, setSaveBusy] = useState(false);
 
   /* ── V10 A1/A2：术语管理 + SQL 示例库 ── */
-  const [termPanelOpen, setTermPanelOpen] = useState(false);
+  /**
+   * V13 B4：这两个面板已改为 Page 的同级标签页（不再用 Drawer 开关）。
+   * termPanelOpen/exPanelOpen 保留仅为兼容历史状态引用，实际不再驱动 UI。
+   */
+  const [aiTab, setAiTab] = useState('chat');
   const [termList, setTermList] = useState<Array<Record<string, unknown>>>([]);
   const [termBusy, setTermBusy] = useState(false);
   const [termForm, setTermForm] = useState({ term: '', definition: '', aliases: '', category: '' });
 
-  const [exPanelOpen, setExPanelOpen] = useState(false);
   const [exList, setExList] = useState<Array<Record<string, unknown>>>([]);
   const [exBusy, setExBusy] = useState(false);
   const [exForm, setExForm] = useState({ question: '', sql: '', description: '', tags: '' });
@@ -186,24 +188,12 @@ export default function AiPage() {
   /** 最近一次失败的问题文本，供「重试」原地重发 */
   const lastFailedRef = useRef('');
 
-  /* ── V8 分享（创建 + 管理）──
-   * 后端：
-   *   POST   /api/ai/shares   { title, scope, password?, expiresDays?, allowExport? }
-   *   GET    /api/ai/shares   → { list, total, page, pageSize, enabled }
-   *   PATCH  /api/ai/shares/:id { status } / DELETE /api/ai/shares/:id
+  /* ── V13 B3：分享的创建与管理已全部迁到「分享中心」（/shares?tab=ai）──
+   * 本页只保留一个跳转按钮，因此下面这些 state 全部删除：
+   *   shareOpen/shareTitle/sharePwd/shareDays/shareExport/shareSaving/shareCreated
+   *   manageOpen/shareList/shareListLoading
+   * 后端接口（/api/ai/shares）保持不变，由分享中心消费。
    */
-  const [shareOpen, setShareOpen] = useState(false);
-  const [shareTitle, setShareTitle] = useState('');
-  const [sharePwd, setSharePwd] = useState('');
-  const [shareDays, setShareDays] = useState<number>(0);
-  const [shareExport, setShareExport] = useState(false);
-  const [shareSaving, setShareSaving] = useState(false);
-  /** 创建成功后的结果（用于展示链接 + 复制 + 打开预览） */
-  const [shareCreated, setShareCreated] = useState<AiShareItem | null>(null);
-
-  const [manageOpen, setManageOpen] = useState(false);
-  const [shareList, setShareList] = useState<AiShareItem[]>([]);
-  const [shareListLoading, setShareListLoading] = useState(false);
 
 
   /**
@@ -323,44 +313,18 @@ export default function AiPage() {
     return `AI 问数 · ${summary}`;
   }, [scopeNames]);
 
-  /** 打开创建分享弹窗（未选范围时禁用，与发送按钮同一判断） */
-  const openShare = useCallback(() => {
-    if (!scope.length) {
-      message.warning('请先选择数据范围，再创建分享');
-      return;
-    }
-    setShareTitle(defaultShareTitle());
-    setSharePwd('');
-    setShareDays(0);
-    setShareExport(false);
-    setShareCreated(null);
-    setShareOpen(true);
-  }, [scope.length, defaultShareTitle, message]);
+  /**
+   * V13 B3：分享统一到「分享中心」。本页不再创建分享、也不管理分享列表，
+   * 只提供一个跳转入口（把「分享」按钮语义从「弹窗创建」改为「去分享中心」）。
+   *
+   * 为什么不再本页创建：用户原话「报表中心和 AI 问数的分享都统一放到分享中心」，
+   * 两个来源（/api/shares 与 /api/ai/shares）此前各有一套独立界面，
+   * 用户在报表中心看到的分享列表和 AI 问数看到的是两份，彼此不可见。
+   */
+  const goShareCentre = useCallback(() => {
+    navigate('/shares?tab=ai');
+  }, [navigate]);
 
-  /** 提交创建分享 */
-  const submitShare = async () => {
-    if (!scope.length || shareSaving) return;
-    setShareSaving(true);
-    try {
-      const item = await createAiShare({
-        title: shareTitle.trim() || defaultShareTitle(),
-        scope: scope.map((s) => ({
-          kind: s.kind,
-          id: s.id,
-          ...(s.tableType ? { tableType: s.tableType } : {}),
-        })),
-        password: sharePwd.trim() || undefined,
-        expiresDays: Number.isFinite(shareDays) ? Math.max(0, Math.trunc(shareDays)) : 0,
-        allowExport: shareExport,
-      });
-      setShareCreated(item);
-      message.success('分享链接已生成');
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : '创建分享失败');
-    } finally {
-      setShareSaving(false);
-    }
-  };
 
   /* ── V10 A1：术语管理 ── */
   const loadTerms = useCallback(async () => {
@@ -500,46 +464,8 @@ export default function AiPage() {
     [message]
   );
 
-  /* ══════════ V8 分享：管理 ══════════ */
-
-  const loadShares = useCallback(async () => {
-    setShareListLoading(true);
-    try {
-      const list = await listAiShares();
-      setShareList(list);
-    } catch (e) {
-      setShareList([]);
-      message.error(e instanceof Error ? e.message : '分享列表加载失败');
-    } finally {
-      setShareListLoading(false);
-    }
-  }, [message]);
-
-  const openManage = useCallback(() => {
-    setManageOpen(true);
-    void loadShares();
-  }, [loadShares]);
-
-  const toggleShare = async (item: AiShareItem) => {
-    const next = item.status === 1 ? 0 : 1;
-    try {
-      await setAiShareStatus(item.id, next);
-      setShareList((prev) => prev.map((x) => (x.id === item.id ? { ...x, status: next } : x)));
-      message.success(next ? '已启用该分享' : '已停用该分享');
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : '操作失败');
-    }
-  };
-
-  const deleteShare = async (item: AiShareItem) => {
-    try {
-      await removeAiShare(item.id);
-      setShareList((prev) => prev.filter((x) => x.id !== item.id));
-      message.success('已删除该分享');
-    } catch (e) {
-      message.error(e instanceof Error ? e.message : '删除失败');
-    }
-  };
+  /* V13 B3：原「V8 分享：管理」的 loadShares / openManage / toggleShare / deleteShare
+     已随分享管理界面一并删除（分享统一到分享中心 /shares?tab=ai）。 */
 
   /**
    * V10：按 sessionKey 拉取某个会话的全部问答，渲染到主聊天区。
@@ -1096,6 +1022,101 @@ export default function AiPage() {
     </Card>
   );
 
+  /**
+   * V13 B4：术语配置 / SQL 示例库改为**同级标签页**（用户原话：「AI问数优化：
+   * 术语配置、SQL 示例库等设置项通过标签页的方式放在 AI 问数下」）。
+   *
+   * 根因：这两项此前是 Page 顶栏两个按钮 + 各自一个 Drawer，与「对话」主界面
+   * 属于**不同层级**（一个是页面、一个是浮层）—— 用户看不出「它们是 AI 问数的一部分」，
+   * 而且改完必须手动关闭抽屉才能回到对话，缺少任务连续性。
+   *
+   * 现在改为与「对话」并列的 Tab：内容片段原样搬过来（功能、接口、校验全不变），
+   * 只是从 Drawer body 变成 Tab children；原来打开 Drawer 时的 loadTerms/loadExamples
+   * 改由切 Tab 时触发（见下方 onTabChange）。
+   */
+  const termPanel = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>
+        术语会注入 AI 的提示词，让模型正确理解业务说法（如「南区」「高净值会员」）。
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
+        <Input placeholder="术语名（如：南区）" value={termForm.term} onChange={(e) => setTermForm({ ...termForm, term: e.target.value })} />
+        <Input placeholder="分类（可选，如：区域）" value={termForm.category} onChange={(e) => setTermForm({ ...termForm, category: e.target.value })} />
+      </div>
+      <Input placeholder="别名（逗号分隔，如：南边,南方）" value={termForm.aliases} onChange={(e) => setTermForm({ ...termForm, aliases: e.target.value })} />
+      <Input.TextArea placeholder="定义（如：区域字段为「南区」的连锁）" rows={2} value={termForm.definition} onChange={(e) => setTermForm({ ...termForm, definition: e.target.value })} />
+      <Button type="primary" loading={termBusy} onClick={createTerm}>添加术语</Button>
+      <div style={{ borderTop: `1px solid ${NEUTRAL.border}`, paddingTop: 12 }}>
+        <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 8 }}>
+          已有术语（{termList.length} 条）
+        </div>
+        {termList.length === 0 ? (
+          <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, padding: '12px 0' }}>暂无术语</div>
+        ) : termList.map((t) => (
+          <div key={String(t.id)} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: `1px solid ${NEUTRAL.border}` }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: NEUTRAL.text }}>
+                {String(t.term || '')}
+                {t.category ? <span style={{ fontSize: 11, color: NEUTRAL.textTertiary, marginLeft: 6 }}>[{String(t.category)}]</span> : null}
+              </div>
+              <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginTop: 2 }}>{String(t.definition || '')}</div>
+              {t.aliases ? <div style={{ fontSize: 11, color: NEUTRAL.textTertiary, marginTop: 2 }}>别名：{String(t.aliases)}</div> : null}
+            </div>
+            <Button size="small" danger type="text" onClick={() => removeTerm(Number(t.id))}>删除</Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  const exPanel = (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>
+        示例会按问题相似度挑选最相关的几条注入提示词，让模型模仿正确写法。
+      </div>
+      <Input placeholder="示例问题（如：本月新增了多少客户？）" value={exForm.question} onChange={(e) => setExForm({ ...exForm, question: e.target.value })} />
+      <Input.TextArea placeholder="参考 SQL" rows={4} value={exForm.sql} onChange={(e) => setExForm({ ...exForm, sql: e.target.value })}
+        style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }} />
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
+        <Input placeholder="说明（可选）" value={exForm.description} onChange={(e) => setExForm({ ...exForm, description: e.target.value })} />
+        <Input placeholder="标签（逗号分隔）" value={exForm.tags} onChange={(e) => setExForm({ ...exForm, tags: e.target.value })} />
+      </div>
+      <Button type="primary" loading={exBusy} onClick={createExample}>添加示例</Button>
+      <div style={{ borderTop: `1px solid ${NEUTRAL.border}`, paddingTop: 12 }}>
+        <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 8 }}>
+          已有示例（{exList.length} 条）
+        </div>
+        {exList.length === 0 ? (
+          <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, padding: '12px 0' }}>暂无示例</div>
+        ) : exList.map((e) => (
+          <div key={String(e.id)} style={{ padding: '10px 0', borderBottom: `1px solid ${NEUTRAL.border}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: NEUTRAL.text }}>{String(e.question || '')}</div>
+              <span style={{ fontSize: 11, color: NEUTRAL.textTertiary }}>命中 {String(e.useCount || 0)} 次</span>
+              <Button size="small" danger type="text" onClick={() => removeExample(Number(e.id))}>删除</Button>
+            </div>
+            <pre style={{ margin: '6px 0 0', padding: 8, borderRadius: 6, background: NEUTRAL.surfaceSunken, fontSize: 11.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
+              {String(e.sql || '')}
+            </pre>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  /** V13 B4：进入术语 / 示例标签页时按需加载（替代原来「打开 Drawer 时加载」） */
+  const onAiTabChange = (k: string) => {
+    setAiTab(k);
+    if (k === 'terms') void loadTerms();
+    if (k === 'examples') void loadExamples();
+  };
+
+  const aiTabItems = [
+    { key: 'chat', label: pageTabLabel(<MessageOutlined />, '对话') },
+    { key: 'terms', label: pageTabLabel(<BookOutlined />, '术语配置', termList.length ? <PageTabTag color={PALETTE.primary}>{termList.length}</PageTabTag> : undefined) },
+    { key: 'examples', label: pageTabLabel(<CodeOutlined />, 'SQL 示例库', exList.length ? <PageTabTag color={PALETTE.primary}>{exList.length}</PageTabTag> : undefined) },
+  ];
+
   /* ── 错误态：友好提示卡片 + 行动指引（不做整页替换） ── */
   const errorCard = lastFailure ? (
     <Card
@@ -1173,89 +1194,8 @@ export default function AiPage() {
           )}
         </div>
       </Modal>
-      {/* V10 A1：术语配置 */}
-      <Drawer
-        title="业务术语配置"
-        open={termPanelOpen}
-        onClose={() => setTermPanelOpen(false)}
-        width={isMobile ? '100%' : 720}
-        destroyOnHidden
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>
-            术语会注入 AI 的提示词，让模型正确理解业务说法（如「南区」「高净值会员」）。
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
-            <Input placeholder="术语名（如：南区）" value={termForm.term} onChange={(e) => setTermForm({ ...termForm, term: e.target.value })} />
-            <Input placeholder="分类（可选，如：区域）" value={termForm.category} onChange={(e) => setTermForm({ ...termForm, category: e.target.value })} />
-          </div>
-          <Input placeholder="别名（逗号分隔，如：南边,南方）" value={termForm.aliases} onChange={(e) => setTermForm({ ...termForm, aliases: e.target.value })} />
-          <Input.TextArea placeholder="定义（如：区域字段为「南区」的连锁）" rows={2} value={termForm.definition} onChange={(e) => setTermForm({ ...termForm, definition: e.target.value })} />
-          <Button type="primary" loading={termBusy} onClick={createTerm}>添加术语</Button>
-          <div style={{ borderTop: `1px solid ${NEUTRAL.border}`, paddingTop: 12 }}>
-            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 8 }}>
-              已有术语（{termList.length} 条）
-            </div>
-            {termList.length === 0 ? (
-              <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, padding: '12px 0' }}>暂无术语</div>
-            ) : termList.map((t) => (
-              <div key={String(t.id)} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: `1px solid ${NEUTRAL.border}` }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: NEUTRAL.text }}>
-                    {String(t.term || '')}
-                    {t.category ? <span style={{ fontSize: 11, color: NEUTRAL.textTertiary, marginLeft: 6 }}>[{String(t.category)}]</span> : null}
-                  </div>
-                  <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginTop: 2 }}>{String(t.definition || '')}</div>
-                  {t.aliases ? <div style={{ fontSize: 11, color: NEUTRAL.textTertiary, marginTop: 2 }}>别名：{String(t.aliases)}</div> : null}
-                </div>
-                <Button size="small" danger type="text" onClick={() => removeTerm(Number(t.id))}>删除</Button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Drawer>
-
-      {/* V10 A2：SQL 示例库 */}
-      <Drawer
-        title="SQL 示例库"
-        open={exPanelOpen}
-        onClose={() => setExPanelOpen(false)}
-        width={isMobile ? '100%' : 860}
-        destroyOnHidden
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontSize: 12, color: NEUTRAL.textSecondary }}>
-            示例会按问题相似度挑选最相关的几条注入提示词，让模型模仿正确写法。
-          </div>
-          <Input placeholder="示例问题（如：本月新增了多少客户？）" value={exForm.question} onChange={(e) => setExForm({ ...exForm, question: e.target.value })} />
-          <Input.TextArea placeholder="参考 SQL" rows={4} value={exForm.sql} onChange={(e) => setExForm({ ...exForm, sql: e.target.value })}
-            style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }} />
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 8 }}>
-            <Input placeholder="说明（可选）" value={exForm.description} onChange={(e) => setExForm({ ...exForm, description: e.target.value })} />
-            <Input placeholder="标签（逗号分隔）" value={exForm.tags} onChange={(e) => setExForm({ ...exForm, tags: e.target.value })} />
-          </div>
-          <Button type="primary" loading={exBusy} onClick={createExample}>添加示例</Button>
-          <div style={{ borderTop: `1px solid ${NEUTRAL.border}`, paddingTop: 12 }}>
-            <div style={{ fontSize: 12, color: NEUTRAL.textSecondary, marginBottom: 8 }}>
-              已有示例（{exList.length} 条）
-            </div>
-            {exList.length === 0 ? (
-              <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, padding: '12px 0' }}>暂无示例</div>
-            ) : exList.map((e) => (
-              <div key={String(e.id)} style={{ padding: '10px 0', borderBottom: `1px solid ${NEUTRAL.border}` }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ flex: 1, fontSize: 13, fontWeight: 600, color: NEUTRAL.text }}>{String(e.question || '')}</div>
-                  <span style={{ fontSize: 11, color: NEUTRAL.textTertiary }}>命中 {String(e.useCount || 0)} 次</span>
-                  <Button size="small" danger type="text" onClick={() => removeExample(Number(e.id))}>删除</Button>
-                </div>
-                <pre style={{ margin: '6px 0 0', padding: 8, borderRadius: 6, background: NEUTRAL.surfaceSunken, fontSize: 11.5, lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflow: 'auto' }}>
-                  {String(e.sql || '')}
-                </pre>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Drawer>
+      {/* V13 B4：术语配置 / SQL 示例库 已改为同级标签页（见下方 Page 的 subTabs），
+          原来两个 Drawer 已删除，避免同一功能存在两套入口。内容见上方 termPanel / exPanel。 */}
 
       <Page
       title="AI 问数"
@@ -1283,27 +1223,23 @@ export default function AiPage() {
       }
       extra={
         <Space size={8} wrap>
-          {/* V8：分享入口 —— 未选数据范围时禁用（与发送按钮同一判断），
-              避免生成一个「什么都能问」的越权链接 */}
-          <Tooltip title={scope.length ? '把当前数据范围生成一个网页链接，他人手机/电脑打开即可问数' : '请先选择数据范围'}>
+          {/*
+            V13 B3 + B4：顶栏按钮收敛。
+            · 「术语配置」「SQL 示例库」→ 已改为同级标签页（见 subTabs），按钮删除。
+            · 「分享管理」→ 分享统一到「分享中心」，本页不再提供列表管理入口。
+            · 「分享」保留为创建入口，但点击后**跳到分享中心**，不在本页弹创建 Modal
+              （用户原话：「报表中心和 AI 问数的分享都统一放到分享中心」）。
+          */}
+          <Tooltip title="AI 问数的分享统一在「分享中心 → AI 问数分享」中创建与管理">
             <Button
               type="primary"
               icon={<ShareAltOutlined />}
-              onClick={openShare}
-              disabled={!scope.length}
+              onClick={goShareCentre}
             >
               分享
             </Button>
           </Tooltip>
-          <Button icon={<LinkOutlined />} onClick={openManage}>
-            分享管理
-          </Button>
-          <Button icon={<BookOutlined />} onClick={() => { setTermPanelOpen(true); void loadTerms(); }}>
-            术语配置
-          </Button>
-          <Button icon={<CodeOutlined />} onClick={() => { setExPanelOpen(true); void loadExamples(); }}>
-            SQL 示例库
-          </Button>          <Button icon={<ClearOutlined />} onClick={reset} disabled={!messages.length}>
+          <Button icon={<ClearOutlined />} onClick={reset} disabled={!messages.length}>
             新会话
           </Button>
           {isMobile && (
@@ -1314,7 +1250,10 @@ export default function AiPage() {
         </Space>
       }
       stats={stats}
+      subTabs={<PageTabs activeKey={aiTab} onChange={onAiTabChange} items={aiTabItems} />}
     >
+      {aiTab === 'terms' ? termPanel : aiTab === 'examples' ? exPanel : (
+      <>
       {errorCard}
 
       {/* 数据范围状态条：始终告诉用户「这份问答问的是哪份数据」 */}
@@ -1518,322 +1457,10 @@ export default function AiPage() {
         {!isMobile && historyPanel}
       </div>
 
-      {/* ══════════ V8 分享：创建弹窗 ══════════ */}
-      <Modal
-        title={
-          <Space size={8}>
-            <ShareAltOutlined style={{ color: PALETTE.primary }} />
-            <span>分享为网页 · 他人手机/电脑打开即可问数</span>
-          </Space>
-        }
-        open={shareOpen}
-        onCancel={() => setShareOpen(false)}
-        width={isMobile ? '100%' : 560}
-        style={isMobile ? { top: 12, maxWidth: 'calc(100vw - 16px)' } : undefined}
-        destroyOnHidden
-        footer={
-          shareCreated
-            ? [
-                <Button key="close" onClick={() => setShareOpen(false)}>
-                  完成
-                </Button>,
-                <Button
-                  key="preview"
-                  type="primary"
-                  icon={<ExportOutlined />}
-                  href={shareCreated.url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  打开预览
-                </Button>,
-              ]
-            : [
-                <Button key="cancel" onClick={() => setShareOpen(false)} disabled={shareSaving}>
-                  取消
-                </Button>,
-                <Button key="ok" type="primary" loading={shareSaving} onClick={submitShare}>
-                  生成分享链接
-                </Button>,
-              ]
-        }
-      >
-        {shareCreated ? (
-          /* ── 成功态：链接 + 复制 + 打开预览（二维码暂不实现，见下方 TODO） ── */
-          <div>
-            <Alert
-              type="success"
-              showIcon
-              message="分享链接已生成"
-              description="用微信 / 浏览器打开即可，手机和电脑都能用。"
-              style={{ marginBottom: 12 }}
-            />
-            <div style={{ fontSize: 12.5, color: NEUTRAL.textSecondary, marginBottom: 4 }}>分享链接</div>
-            <div
-              style={{
-                display: 'flex',
-                gap: 8,
-                alignItems: 'stretch',
-                flexDirection: isMobile ? 'column' : 'row',
-              }}
-            >
-              <Input
-                readOnly
-                value={shareCreated.url}
-                onFocus={(e) => e.currentTarget.select()}
-                style={{ fontSize: 13, flex: 1, minWidth: 0 }}
-              />
-              <Button
-                icon={<CopyOutlined />}
-                onClick={() => void copyText(shareCreated.url)}
-                style={{ flex: '0 0 auto', minHeight: 34 }}
-              >
-                复制链接
-              </Button>
-            </div>
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5 }}>
-              <div style={{ color: NEUTRAL.text }}>
-                标题：<span style={{ color: NEUTRAL.textSecondary }}>{shareCreated.title}</span>
-              </div>
-              <div style={{ color: NEUTRAL.text }}>
-                访问密码：
-                <span style={{ color: NEUTRAL.textSecondary }}>
-                  {shareCreated.hasPassword ? '已设置（请单独告知使用者）' : '无（任何人拿到链接即可问数）'}
-                </span>
-              </div>
-              <div style={{ color: NEUTRAL.text }}>
-                有效期：
-                <span style={{ color: NEUTRAL.textSecondary }}>
-                  {shareDays > 0 ? `${shareDays} 天` : '永久有效'}
-                </span>
-              </div>
-              <div style={{ color: NEUTRAL.text }}>
-                允许导出：
-                <span style={{ color: NEUTRAL.textSecondary }}>{shareCreated.allowExport ? '是' : '否'}</span>
-              </div>
-            </div>
-            <div
-              style={{
-                marginTop: 12,
-                padding: '8px 10px',
-                borderRadius: 8,
-                background: NEUTRAL.surfaceAlt,
-                fontSize: 12,
-                color: NEUTRAL.textTertiary,
-                lineHeight: 1.7,
-              }}
-            >
-              提示：任何拿到链接（且知道密码）的人都能提问，请只分享给你信任的人；
-              可随时在「分享管理」里停用或删除链接。
-              {/* TODO(V8.1)：二维码 —— 项目未内置二维码库，且禁止新增 npm 依赖。
-                  antd 6 自带 QRCode 组件（antd/es/qr-code），后续可用
-                  `<QRCode value={url} size={160} />` 直接渲染，无需新依赖。 */}
-            </div>
-          </div>
-        ) : (
-          <div>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12.5, color: NEUTRAL.textSecondary, marginBottom: 4 }}>
-                分享标题
-              </div>
-              <Input
-                value={shareTitle}
-                onChange={(e) => setShareTitle(e.target.value)}
-                placeholder={defaultShareTitle()}
-                maxLength={100}
-                showCount
-              />
-            </div>
 
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12.5, color: NEUTRAL.textSecondary, marginBottom: 4 }}>
-                访问密码 <span style={{ color: NEUTRAL.textTertiary }}>（留空 = 不需要密码）</span>
-              </div>
-              <Input.Password
-                value={sharePwd}
-                onChange={(e) => setSharePwd(e.target.value)}
-                placeholder="可选，例如：zk2026"
-                maxLength={32}
-                autoComplete="new-password"
-              />
-            </div>
-
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 12.5, color: NEUTRAL.textSecondary, marginBottom: 4 }}>
-                有效期（天） <span style={{ color: NEUTRAL.textTertiary }}>0 = 永久有效</span>
-              </div>
-              <InputNumber
-                min={0}
-                max={3650}
-                precision={0}
-                value={shareDays}
-                onChange={(v) => setShareDays(typeof v === 'number' ? v : 0)}
-                style={{ width: 160 }}
-                addonAfter="天"
-              />
-            </div>
-
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 10,
-                padding: '8px 10px',
-                borderRadius: 8,
-                background: NEUTRAL.surfaceAlt,
-                marginBottom: 12,
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, color: NEUTRAL.text }}>允许导出结果</div>
-                <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary, marginTop: 1 }}>
-                  公开页是否展示导出入口（默认关闭更安全）
-                </div>
-              </div>
-              <Switch checked={shareExport} onChange={setShareExport} />
-            </div>
-
-            <div style={{ fontSize: 12.5, color: NEUTRAL.textSecondary, marginBottom: 4 }}>分享的数据范围</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {scope.map((s) => (
-                <Tag
-                  key={scopeRefKey(s)}
-                  bordered={false}
-                  style={{ background: PALETTE.primarySoft, color: PALETTE.primaryDeep, marginInlineEnd: 0 }}
-                >
-                  <DatabaseOutlined /> {scopeOptionMap.get(scopeRefKey(s))?.name || `${s.kind}#${s.id}`}
-                </Tag>
-              ))}
-            </div>
-          </div>
-        )}
-      </Modal>
-
-      {/* ══════════ V8 分享：管理抽屉 ══════════ */}
-      <Drawer
-        title={
-          <Space size={8}>
-            <LinkOutlined style={{ color: PALETTE.primary }} />
-            <span>分享管理</span>
-            <span style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>共 {shareList.length} 条</span>
-          </Space>
-        }
-        open={manageOpen}
-        onClose={() => setManageOpen(false)}
-        width={isMobile ? '100%' : 720}
-        destroyOnHidden
-        extra={
-          <Button size="small" icon={<ReloadOutlined />} onClick={() => void loadShares()} loading={shareListLoading}>
-            刷新
-          </Button>
-        }
-      >
-        {shareListLoading && !shareList.length ? (
-          <div style={{ padding: 40, textAlign: 'center' }}>
-            <Spin />
-          </div>
-        ) : shareList.length === 0 ? (
-          <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有创建过 AI 问数分享" />
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {shareList.map((item) => {
-              const active = item.status === 1;
-              return (
-                <div
-                  key={item.id}
-                  style={{
-                    border: `1px solid ${active ? NEUTRAL.border : NEUTRAL.borderSubtle}`,
-                    borderRadius: 10,
-                    padding: '10px 12px',
-                    background: active ? NEUTRAL.surface : NEUTRAL.surfaceAlt,
-                  }}
-                >
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 600, color: NEUTRAL.text, minWidth: 0, wordBreak: 'break-all' }}>
-                      {item.title || '(未命名分享)'}
-                    </span>
-                    <Tag
-                      bordered={false}
-                      style={{
-                        marginInlineEnd: 0,
-                        background: active ? `${PALETTE.green}26` : `${PALETTE.gray}33`,
-                        color: active ? PALETTE.green : NEUTRAL.textTertiary,
-                      }}
-                    >
-                      {active ? '启用中' : '已停用'}
-                    </Tag>
-                    {item.hasPassword ? (
-                      <Tag bordered={false} style={{ marginInlineEnd: 0 }}>有密码</Tag>
-                    ) : null}
-                    {item.allowExport ? (
-                      <Tag bordered={false} style={{ marginInlineEnd: 0 }}>允许导出</Tag>
-                    ) : null}
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: 6,
-                      fontSize: 11.5,
-                      color: NEUTRAL.textTertiary,
-                      wordBreak: 'break-all',
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    {item.url}
-                  </div>
-
-                  <div
-                    style={{
-                      marginTop: 6,
-                      display: 'flex',
-                      gap: 12,
-                      flexWrap: 'wrap',
-                      fontSize: 11.5,
-                      color: NEUTRAL.textTertiary,
-                    }}
-                  >
-                    <span>访问 {fmtNum(item.viewCount)} 次</span>
-                    <span>问数 {fmtNum(item.askCount)} 次</span>
-                    {item.expiresAt ? <span>到期 {fmtTime(item.expiresAt, 'YYYY-MM-DD HH:mm')}</span> : <span>永久有效</span>}
-                    <span>创建 {fmtTime(item.createdAt, 'YYYY-MM-DD HH:mm')}</span>
-                  </div>
-
-                  <Space size={8} wrap style={{ marginTop: 10 }}>
-                    <Button size="small" icon={<CopyOutlined />} onClick={() => void copyText(item.url)}>
-                      复制链接
-                    </Button>
-                    <Button
-                      size="small"
-                      icon={<ExportOutlined />}
-                      href={aiShareUrl(item.token)}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      打开
-                    </Button>
-                    <Button size="small" onClick={() => void toggleShare(item)}>
-                      {active ? '停用' : '启用'}
-                    </Button>
-                    <Popconfirm
-                      title="删除这条分享？"
-                      description="删除后链接立即失效且不可恢复，已分享出去的人将无法再打开。"
-                      okText="确认删除"
-                      okButtonProps={{ danger: true }}
-                      cancelText="取消"
-                      onConfirm={() => void deleteShare(item)}
-                    >
-                      <Button size="small" danger icon={<DeleteOutlined />}>
-                        删除
-                      </Button>
-                    </Popconfirm>
-                  </Space>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Drawer>
+      {/* V13 B3：分享创建弹窗与分享管理抽屉已删除 ——
+          AI 问数的分享统一到「分享中心 → AI 问数分享」管理（/shares?tab=ai）。
+          本页不再出现任何分享列表管理界面。 */}
 
       {isMobile && (
         <Modal
@@ -1854,6 +1481,8 @@ export default function AiPage() {
           提示：AI 生成的 SQL 会经过后端只读校验（仅允许单条 SELECT / WITH），不会修改任何数据。
         </Text>
       </Paragraph>
+      </>
+      )}
     </Page>
     </>
   );
