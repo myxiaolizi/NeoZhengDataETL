@@ -152,6 +152,8 @@ export interface DetailRow {
   ownerRole?: string;
   ownerRoles?: string[];
   province?: string;
+  /** V16 4.1：连锁ERP名称（用于签约卡片ERP按钮点击弹窗筛选） */
+  erpName?: string;
   version?: string;
   versionShort?: string;
   signDate?: string;
@@ -458,13 +460,25 @@ export interface SplitValue {
   total: number;
 }
 
+/**
+ * V16 1.1：ROI 三段拆分。ROI 口径变更后分母可能为 0 → 后端返回 null，
+ * 因此四段值都允许 null（各分区可能单独不可计算）。
+ */
+export interface RoiSplitValue {
+  south: number | null;
+  north: number | null;
+  unknown?: number | null;
+  total: number | null;
+}
+
 /** V7：成本指标组 */
 export interface CostMetrics {
   channelCost: SplitValue;   // 渠道成本
   couponCost: SplitValue;    // 用券成本
   totalCost: SplitValue;     // 成本合计 = 渠道 + 用券
   couponGmv: SplitValue;     // 用券销售额
-  roi: SplitValue;           // 营销ROI = 成本合计 ÷ 转化销售额
+  /** V16 1.1：ROI = 转化销售额 ÷ 到店人数（旧：成本合计 ÷ 转化销售额）；无到店 → null */
+  roi: RoiSplitValue;
 }
 
 export interface Row7Data {
@@ -573,7 +587,14 @@ export interface ChainRankRow {
   couponRate: number;        // 优惠券核销率 = 用券人数 ÷ 发券人数（0~1）
   couponCost: number;        // 优惠券成本
   channelCost: number;       // 渠道成本
-  roi: number;               // ROI = (渠道成本 + 优惠券成本) ÷ 转化销售额
+  /** V16 5.3：用券销售额（c_0964f9ffab）。无值记 0，恒为数值 */
+  couponGmv: number;
+  /**
+   * V16 1.1：ROI 口径变更 —— **转化销售额 ÷ 到店人数**（人均到店产出，越大越好）。
+   * 旧口径 (渠道成本 + 优惠券成本) ÷ 转化销售额 已废弃。
+   * 到店人数为 0 时后端返回 `null`，前端必须渲染「—」，不得显示 NaN/Infinity。
+   */
+  roi: number | null;
 }
 
 export interface ChainRankingData {

@@ -114,6 +114,40 @@ export function normalizeSiteSettings(s: PublicSiteSettings | null | undefined):
   };
 }
 
+/* ══════════ 侧栏收起态持久化（V16 W1） ══════════ */
+
+/**
+ * 侧栏收起状态在 localStorage 里的键名（V16 W1 需求原文 L4：
+ * 「右侧菜单用户点击收起后，下次进入时默认收起」）。值固定为 '1' / '0'。
+ */
+export const SIDEBAR_COLLAPSED_KEY = 'jdy:sidebar:collapsed';
+
+/**
+ * 读取侧栏收起态。
+ *
+ * 只有**明确写过** '1' 才算收起；没有该键（首次访问）、值为 '0'、
+ * 值损坏或 localStorage 不可用（隐私模式 / 配额满 / SSR）一律返回 false，
+ * 保持 V15 的「默认展开」行为。
+ */
+export function readSidebarCollapsed(): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** 写入侧栏收起态；写失败（隐私模式 / 配额满）不影响本次会话内的交互 */
+export function writeSidebarCollapsed(collapsed: boolean): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
+  } catch {
+    /* 忽略：持久化失败只影响「下次进入」的默认态，不影响当前渲染 */
+  }
+}
+
 /** 后端开关值（'1'/'0' 字符串）→ 布尔；缺省时返回 null 表示「未知」 */
 export function parseOnOff(value: unknown): boolean | null {
   const raw = String(value ?? '').trim().toLowerCase();

@@ -18,6 +18,8 @@ const integrations = require('../integrations');
 const ai = require('../ai');
 const aiScope = require('../ai-scope');
 const aiShares = require('../ai-shares');
+const aiReports = require('../ai-reports');
+const shareVisits = require('../share-visits');
 const aiTerms = require('../ai-terms');
 const aiSqlExamples = require('../ai-sql-examples');
 const audit = require('../audit');
@@ -87,7 +89,7 @@ router.get('/public/shares/:token', async (req, res, next) => {
 
     let result;
     try {
-      result = await reports.accessShare(token, password);
+      result = await reports.accessShare(token, password, { req, path: '/s/' + token });
     } catch (execErr) {
       /*
        * accessShare 通过校验后会立即执行报表；若报表依赖的数据集/项目已被删除、
@@ -142,14 +144,17 @@ router.get('/public/shares/:token', async (req, res, next) => {
         share: {
           id: s.id,
           token: s.token,
+          title: s.title || '',
           targetType: s.targetType || s.target_type,
           targetId: s.targetId || s.target_id,
           expiresAt: s.expiresAt || s.expires_at,
           viewCount: s.viewCount || s.view_count,
           createdAt: s.createdAt || s.created_at,
+          hasPassword: !!s.hasPassword,
         },
         targetType: s.targetType || s.target_type || 'report',
-        targetName: (result.report && result.report.name) || '',
+        targetName: result.targetName || s.title || (result.report && result.report.name) || '',
+        boardKey: result.boardKey || null,
         payload: {
           report: result.report || null,
           rows: result.rows || [],
@@ -175,7 +180,7 @@ router.get('/public/board', async (req, res) => {
     if (!token) return res.status(400).json({ ok: false, message: '缺少分享令牌' });
 
     const reports = require('../reports');
-    const chk = await reports.accessShare(token, pwd);
+    const chk = await reports.accessShare(token, pwd, { req, path: '/api/public/board' });
     if (!chk || chk.ok !== true) {
       const code = (chk && chk.code) || 'not_found';
       // 密码错误 → 403；其它（不存在/停用/过期）→ 404
@@ -240,7 +245,7 @@ router.get('/public/ai-shares/:token', async (req, res, next) => {
     if (!token) return res.status(400).json({ ok: false, message: '缺少分享令牌' });
 
     const pwd = req.query.pwd !== undefined ? String(req.query.pwd) : '';
-    const r = await aiShares.publicMeta(token, pwd);
+    const r = await aiShares.publicMeta(token, pwd, { req, path: '/a/' + token });
 
     if (r.ok) {
       res.set('Cache-Control', 'no-store');
@@ -2107,6 +2112,18 @@ router.get('/reports/:id/export', auth.requirePerm('report:read'), async (req, r
   }
 });
 
+/** V16：复制报表（支持普通 BI 报表与 AI 报表，副本默认停用、source='user'） */
+router.post('/reports/:id/copy', auth.requirePerm('report:write'), async (req, res) => {
+  try {
+    const row = await aiReports.copy(req.params.id, req.user && req.user.id);
+    if (!row) return res.status(404).json({ ok: false, message: '报表不存在' });
+    await audit.log(req, 'report.copy', { targetType: 'report', targetId: row.id });
+    res.json({ ok: true, data: row, message: '报表已复制' });
+  } catch (err) {
+    res.status(400).json({ ok: false, message: err.message });
+  }
+});
+
 /* ══════════════════════════════════════════════════════════
  *  分享
  * ══════════════════════════════════════════════════════════ */
@@ -2134,13 +2151,51 @@ router.post('/shares', auth.requirePerm('share:write'), async (req, res, next) =
   }
 });
 
+/**
+ * V16 2.1~2.4：分享链接编辑（契约 §3.1）
+ *
+ * 需求：「分享的连接项目可以设置页面标题和修改以下内容：分享标题 / 有效期 / 访问密码，开关访问密码」
+ * 旧实现只接受 `status` 一个字段；V16 扩展为多字段，**只传 status 时行为与 V15 完全一致**。
+ */
 router.put('/shares/:id', auth.requirePerm('share:write'), async (req, res, next) => {
   try {
-    const share = await reports.toggleShare(req.params.id, (req.body || {}).status);
-    res.json({ ok: true, data: share, message: share.status ? '分享已启用' : '分享已停用' });
+    const body = req.body || {};
+    /* V15 兼容路径：只传 status → 走原 toggleShare，语义/返回完全不变 */
+    const keys = Object.keys(body).filter((k) => body[k] !== undefined);
+    if (keys.length && keys.every((k) => k === 'status')) {
+      const share = await reports.toggleShare(req.params.id, body.status);
+      return res.json({ ok: true, data: share, message: share.status ? '分享已启用' : '分享已停用' });
+    }
+    const share = await reports.updateShare(req.params.id, body);
+    await audit.log(req, 'share.update', {
+      targetType: 'share',
+      targetId: share.id,
+      detail: { fields: keys.filter((k) => k !== 'password') },
+    });
+    res.json({ ok: true, data: share, message: '分享设置已更新' });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
   }
+});
+
+/**
+ * V16 2.5：分享访问统计（10 项指标汇总 + 明细，契约 §2.6）
+ * GET /api/shares/:shareType/:id/stats?days=30&limit=200
+ *   shareType ∈ report | ai
+ * 返回的 beacon（应用埋点）与 nginx（日志回填）**分开给出，不混算**。
+ */
+router.get('/shares/:shareType/:id/stats', auth.requirePerm('share:write'), async (req, res, next) => {
+  try {
+    const shareType = String(req.params.shareType || '');
+    if (!['report', 'ai'].includes(shareType)) {
+      return res.status(400).json({ ok: false, message: '分享类型只能是 report 或 ai' });
+    }
+    const data = await shareVisits.stats(shareType, req.params.id, {
+      days: req.query.days,
+      limit: req.query.limit,
+    });
+    res.json({ ok: true, data });
+  } catch (err) { next(err); }
 });
 
 router.delete('/shares/:id', auth.requirePerm('share:write'), async (req, res, next) => {
@@ -2372,18 +2427,31 @@ router.get('/ai/shares', auth.requirePerm('ai:use'), async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-/** 启停分享 */
+/**
+ * V16 2.1~2.4：AI 问数分享链接编辑（契约 §3.2）
+ * 保留 V15 语义：只传 status 时行为不变（文案/审计一致）。
+ */
 router.patch('/ai/shares/:id', auth.requirePerm('ai:use'), async (req, res, next) => {
   try {
     const body = req.body || {};
-    if (body.status === undefined) {
-      return res.status(400).json({ ok: false, message: '缺少 status 参数（1 启用 / 0 停用）' });
+    const keys = Object.keys(body).filter((k) => body[k] !== undefined);
+    if (keys.length && keys.every((k) => k === 'status')) {
+      if (body.status === undefined) {
+        return res.status(400).json({ ok: false, message: '缺少 status 参数（1 启用 / 0 停用）' });
+      }
+      const share = await aiShares.toggleShare(req.params.id, body.status);
+      await audit.log(req, 'ai.share.update', {
+        targetType: 'ai_share', targetId: share.id, detail: { status: share.status },
+      });
+      return res.json({ ok: true, data: share, message: share.status === 1 ? '已启用' : '已停用' });
     }
-    const share = await aiShares.toggleShare(req.params.id, body.status);
+    const share = await aiShares.updateShare(req.params.id, body);
     await audit.log(req, 'ai.share.update', {
-      targetType: 'ai_share', targetId: share.id, detail: { status: share.status },
+      targetType: 'ai_share',
+      targetId: share.id,
+      detail: { fields: keys.filter((k) => k !== 'password') },
     });
-    res.json({ ok: true, data: share, message: share.status === 1 ? '已启用' : '已停用' });
+    res.json({ ok: true, data: share, message: '分享设置已更新' });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
   }
@@ -3656,6 +3724,113 @@ router.get('/mail-push/parse-name', auth.requirePerm('project:read'), async (req
     const name = String(req.query.filename || '');
     res.json({ ok: true, data: mailPush.parseAttachmentName(name) });
   } catch (err) { next(err); }
+});
+
+/* ══════════════════════════════════════════════════════════
+ *  V16 · AI 报表（受限 DSL 配置驱动，契约 §4.3 / §4.4）
+ *
+ *  ★ 安全红线（P0-2）：绝不 eval / new Function 执行任意代码；
+ *    这里只做「校验 JSON 配置 → 入库」，前端只按 type 渲染白名单组件。
+ * ══════════════════════════════════════════════════════════ */
+
+/** 统一把 DslError 转成 400 + 中文可读文案（而不是 500） */
+function aiReportErr(res, err) {
+  const status = err && err.status ? err.status : 400;
+  return res.status(status).json({ ok: false, message: (err && err.message) || 'AI 报表操作失败' });
+}
+
+/** 列表 */
+router.get('/ai-reports', auth.requirePerm('report:read'), async (req, res) => {
+  try {
+    const list = await aiReports.list({
+      source: req.query.source,
+      group: req.query.group,
+      search: req.query.search,
+    });
+    res.json({ ok: true, data: list });
+  } catch (err) { aiReportErr(res, err); }
+});
+
+/** 白名单描述（前端编辑器提示用，只读、不含任何可执行内容） */
+router.get('/ai-reports/schema', auth.requirePerm('report:read'), async (req, res) => {
+  res.json({
+    ok: true,
+    data: {
+      spec: aiReports.DSL_SPEC,
+      blockTypes: aiReports.BLOCK_TYPES,
+      chartTypes: aiReports.CHART_TYPES,
+      themes: aiReports.THEMES,
+      routes: aiReports.ROUTES,
+      sources: aiReports.SOURCES,
+      maxBlocks: aiReports.MAX_BLOCKS,
+      forbidden: aiReports.FORBIDDEN,
+    },
+  });
+});
+
+/** 详情（含 DSL 原文，「查看代码」用） */
+router.get('/ai-reports/:id', auth.requirePerm('report:read'), async (req, res) => {
+  try {
+    const row = await aiReports.get(req.params.id);
+    if (!row) return res.status(404).json({ ok: false, message: 'AI 报表不存在' });
+    res.json({ ok: true, data: row });
+  } catch (err) { aiReportErr(res, err); }
+});
+
+/** 新建（DSL 必须通过 schema 校验） */
+router.post('/ai-reports', auth.requirePerm('report:write'), async (req, res) => {
+  try {
+    const row = await aiReports.create(req.body || {}, req.user.id);
+    await audit.log(req, 'aiReport.create', { targetType: 'report', targetId: row.id, detail: { name: row.name } });
+    res.json({ ok: true, data: row, message: 'AI 报表已创建' });
+  } catch (err) { aiReportErr(res, err); }
+});
+
+/** AI 生成草稿（只产出 DSL JSON，绝不执行） */
+router.post('/ai-reports/ai-draft', auth.requirePerm('report:write'), async (req, res) => {
+  try {
+    const r = await aiReports.aiDraft((req.body || {}).prompt, req.user);
+    res.json({ ok: true, data: r });
+  } catch (err) { aiReportErr(res, err); }
+});
+
+/** 修改（含 DSL 编辑，保存前 schema 校验） */
+router.put('/ai-reports/:id', auth.requirePerm('report:write'), async (req, res) => {
+  try {
+    const row = await aiReports.update(req.params.id, req.body || {});
+    if (!row) return res.status(404).json({ ok: false, message: 'AI 报表不存在' });
+    await audit.log(req, 'aiReport.update', { targetType: 'report', targetId: row.id });
+    res.json({ ok: true, data: row, message: 'AI 报表已更新' });
+  } catch (err) { aiReportErr(res, err); }
+});
+
+/** DSL 校验预览（不落库，前端「校验」按钮用） */
+router.post('/ai-reports/validate', auth.requirePerm('report:read'), async (req, res) => {
+  try {
+    const dsl = aiReports.validate((req.body || {}).dsl);
+    res.json({ ok: true, data: { valid: true, dsl: aiReports.stringify(dsl) } });
+  } catch (err) {
+    res.status(err && err.status ? err.status : 400)
+      .json({ ok: false, valid: false, message: (err && err.message) || 'DSL 校验失败' });
+  }
+});
+
+/** 复制（名称含「副本」，source 置 user） */
+router.post('/ai-reports/:id/copy', auth.requirePerm('report:write'), async (req, res) => {
+  try {
+    const row = await aiReports.copy(req.params.id, req.user.id);
+    await audit.log(req, 'aiReport.copy', { targetType: 'report', targetId: row.id });
+    res.json({ ok: true, data: row, message: '报表已复制' });
+  } catch (err) { aiReportErr(res, err); }
+});
+
+/** 删除（P0-3：内置来源不可删，后端也拒绝） */
+router.delete('/ai-reports/:id', auth.requirePerm('report:write'), async (req, res) => {
+  try {
+    const r = await aiReports.remove(req.params.id);
+    await audit.log(req, 'aiReport.delete', { targetType: 'report', targetId: req.params.id });
+    res.json({ ok: true, data: r, message: 'AI 报表已删除' });
+  } catch (err) { aiReportErr(res, err); }
 });
 
 module.exports = router;

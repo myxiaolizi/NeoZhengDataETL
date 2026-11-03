@@ -16,13 +16,13 @@
  *  6. **无刷新按钮**（要求 6）：Header 与侧栏都不提供任何刷新/重载入口。
  *  7. fetchSite 成功后同步 document.title = 站点名称（index.html 里的 title 只是占位）。
  */
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Layout, Menu, Avatar, Dropdown, Grid, Drawer, Button } from 'antd';
 import {
   LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MenuOutlined, UserOutlined,
 } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { APP_VERSION, useAppStore } from '@/stores/app';
+import { APP_VERSION, useAppStore, readSidebarCollapsed, writeSidebarCollapsed } from '@/stores/app';
 import { useTabsStore } from '@/stores/tabs';
 import TabsBar from './TabsBar';
 import { MENU_ICONS } from './icons';
@@ -52,8 +52,35 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
   } = useAppStore();
   const screens = useBreakpoint();
   const isMobile = !screens.md;
-  const [collapsed, setCollapsed] = useState(false);
+  /**
+   * 侧栏收起态（V16 W1 需求原文 L4：「右侧菜单用户点击收起后，下次进入时默认收起」）。
+   *
+   * 初值走惰性初始化直接读 localStorage（键名 jdy:sidebar:collapsed，值 '1'/'0'），
+   * 不用 useEffect 回填 —— 回填会先渲染一帧展开态再跳成收起态（视觉闪烁），
+   * 首帧即为持久化值才叫「下次进入默认收起」。
+   * 无该键 / 值损坏 / localStorage 不可用时 readSidebarCollapsed() 返回 false，
+   * 首访行为与 V15 一致（默认展开）。
+   */
+  const [collapsed, setCollapsedState] = useState<boolean>(readSidebarCollapsed);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  /**
+   * 点击「收起/展开菜单」：先落 localStorage，再改 state（写副作用只执行一次）。
+   *
+   * 为什么不把 write 放进 `setCollapsedState((v) => ...)` 的 updater 里：
+   * 首次实现是 `setCollapsedState((v) => { writeSidebarCollapsed(!v); return !v; })`，
+   * 实测在 React 19 下 updater 的调用时机与 ref/DOM 读取错位，出现
+   * 「点一次按钮 title 变了但 sider 宽度没变」的脱节。改为直接读最新 ref。
+   */
+  const collapsedRef = useRef(collapsed);
+  collapsedRef.current = collapsed;
+
+  const toggleCollapsed = () => {
+    const next = !collapsedRef.current;
+    collapsedRef.current = next;
+    writeSidebarCollapsed(next);
+    setCollapsedState(next);
+  };
 
   const { openTab, bindUser, reset: resetTabs } = useTabsStore();
 
@@ -142,7 +169,13 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
   };
 
   useEffect(() => {
-    if (isMobile) setCollapsed(false);
+    if (isMobile) {
+      // 移动端走抽屉，收起态无意义：复位为展开（同时把持久化键写成 '0'，
+      // 避免在手机上进入一次后桌面端「下次进入」接着收起）。
+      collapsedRef.current = false;
+      setCollapsedState(false);
+      writeSidebarCollapsed(false);
+    }
   }, [isMobile]);
 
   useEffect(() => {
@@ -260,7 +293,7 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
         type="text"
         className="v41-sider-collapse"
         icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
-        onClick={() => setCollapsed((v) => !v)}
+        onClick={toggleCollapsed}
         title={collapsed ? '展开菜单' : '收起菜单'}
         style={{
           color: SIDER.itemColor,

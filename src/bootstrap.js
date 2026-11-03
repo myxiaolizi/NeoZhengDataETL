@@ -215,6 +215,36 @@ const DDL = [
     KEY idx_dataset (dataset_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='报表'`,
 
+  /* ══════════ V16 分享访问明细（契约 §2.1，P0-1 方案 C） ══════════
+   * 原先分享只有 jdywh_shares.view_count 一个计数，10 项指标里 7 项无原始数据。
+   * 本表记录每次公开分享访问的 ip / UA / referer / path，UA 派生出浏览器、操作系统、设备类型。
+   * province 列：全仓库无离线 IP 库，恒为 NULL（接口返回 provinceStatus='pending'，不得伪造）。
+   * source 列：'beacon' = 应用埋点；'nginx' = 用生产 nginx 日志回填的历史，
+   *           **两者在统计接口中必须分开返回，不得相加成一个数字**（契约 §2.5）。
+   */
+  `CREATE TABLE IF NOT EXISTS jdywh_share_visits (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    share_type VARCHAR(16) NOT NULL COMMENT 'report=报表/看板分享, ai=AI问数分享',
+    share_id INT UNSIGNED NOT NULL,
+    token VARCHAR(64) NOT NULL,
+    ip VARCHAR(64) NULL COMMENT '访客IP（trust proxy 后的真实IP）',
+    user_agent VARCHAR(512) NULL,
+    referer VARCHAR(512) NULL,
+    path VARCHAR(255) NULL,
+    bytes_sent INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '响应体字节数（流量）',
+    browser VARCHAR(32) NULL COMMENT 'UA解析：浏览器类型',
+    os VARCHAR(32) NULL COMMENT 'UA解析：操作系统类型',
+    device VARCHAR(16) NULL COMMENT 'UA解析：设备类型',
+    province VARCHAR(32) NULL COMMENT '省份（离线IP库），无库时恒 NULL',
+    source VARCHAR(16) NOT NULL DEFAULT 'beacon' COMMENT 'beacon=应用埋点 nginx=日志回填',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_share (share_type, share_id, created_at),
+    KEY idx_token (token, created_at),
+    KEY idx_created (created_at),
+    KEY idx_source (source)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='分享访问明细（V16）'`,
+
   /* ══════════ 分享 ══════════ */
   `CREATE TABLE IF NOT EXISTS jdywh_shares (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -451,6 +481,82 @@ async function ensureColumn(table, column, definition) {
 }
 
 /**
+ * V16 4.2：内置看板 → AI 报表种子数据（幂等）
+ *
+ * 幂等键：`report_type='ai' AND source='builtin' AND board_key=?`
+ * 已存在则**跳过，不覆盖**（用户可能已经改过名字/配置）。
+ *
+ * DSL 为「受限 DSL」（契约 §4.3）：只声明白名单区块 + 白名单数据源，
+ * **不含任何可执行代码**；前端按 type 渲染既有看板组件。
+ * route 指向内置看板页面，保证「查看」仍然打开真实的看板。
+ */
+const BUILTIN_AI_BOARDS = [
+  {
+    boardKey: 'zk',
+    code: 'ai_board_zk',
+    name: '中康智能体客户看板',
+    icon: '🤖',
+    tags: '中康,智能体,客户看板',
+    group: '中康智能体',
+    description: '中康智能体客户看板（V16 由系统内置看板转为 AI 报表，DSL 配置驱动）',
+    route: '/dashboard/board',
+    blocks: [
+      { type: 'summary', source: 'board.sign', title: '签约概览' },
+      { type: 'kpi', source: 'board.erp', title: '客户 ERP 分布' },
+      { type: 'flow', source: 'board.flow', title: '流程状态' },
+      { type: 'ranking', source: 'board.chain', title: '连锁排名' },
+      { type: 'table', source: 'board.run', title: '策略运行情况' },
+    ],
+  },
+  {
+    boardKey: 'crm',
+    code: 'ai_board_crm',
+    name: '客户签约看板',
+    icon: '📝',
+    tags: '客户签约,看板',
+    group: '中康智能体',
+    description: '客户签约看板（V16 由系统内置看板转为 AI 报表，DSL 配置驱动）',
+    route: '/dashboard/crm',
+    blocks: [
+      { type: 'kpi', source: 'board.sign', title: '签约 KPI' },
+      { type: 'chart', source: 'board.sign', title: '签约趋势', options: { chartType: 'line' } },
+      { type: 'table', source: 'board.run', title: '签约明细' },
+    ],
+  },
+];
+
+async function seedBuiltinAiReports() {
+  for (const b of BUILTIN_AI_BOARDS) {
+    const exists = await db.queryOne(
+      "SELECT id FROM jdywh_reports WHERE report_type = 'ai' AND source = 'builtin' AND board_key = ? LIMIT 1",
+      [b.boardKey],
+    );
+    if (exists) continue;
+
+    /* code 唯一索引：若已被占用（历史遗留）则加后缀，保证幂等且不报错 */
+    let code = b.code;
+    const codeDup = await db.queryOne('SELECT id FROM jdywh_reports WHERE code = ? LIMIT 1', [code]);
+    if (codeDup) code = `${b.code}_v16`;
+
+    const dsl = JSON.stringify({
+      spec: 'jdy-bi-dsl/1',
+      title: b.name,
+      theme: 'light',
+      route: b.route,
+      blocks: b.blocks,
+    }, null, 2);
+
+    await db.query(
+      `INSERT INTO jdywh_reports
+         (name, code, description, category, report_type, icon, tags, group_name, source, board_key, dsl, status)
+       VALUES (?,?,?,?, 'ai', ?,?,?, 'builtin', ?, ?, 1)`,
+      [b.name, code, b.description, 'AI', b.icon, b.tags, b.group, b.boardKey, dsl],
+    );
+    console.log(`[migrate] 内置看板已转为 AI 报表：${b.name}（board_key=${b.boardKey}）`);
+  }
+}
+
+/**
  * 迁移：把 1.x 的库结构升级到 2.0，保留原有数据
  */
 async function migrate() {
@@ -515,6 +621,23 @@ async function migrate() {
   // 字段定义表：派生字段源字段键（同一源字段按路径拆出多列，如地址→省/市/区）
   await ensureColumn('jdywh_field_defs', 'source_key',
     '`source_key` VARCHAR(191) NULL COMMENT "派生字段的源字段键" AFTER `parse_path`');
+
+  /* ══════════════════════════════════════════════════════════════
+   * V16：报表模型扩展 + 内置看板转 AI 报表（契约 §4.1 / §4.2）
+   * ──────────────────────────────────────────────────────────────
+   * 需求「中康智能体客户看板和客户签约看板由系统内置看板修改为AI报表」：
+   * 旧实现是 frontend/src/pages/reports.tsx 里的 BUILTIN_BOARDS 前端硬编码数组，
+   * 数据库里根本没有记录。V16 改为数据库种子（report_type='ai' + source='builtin'）。
+   * ══════════════════════════════════════════════════════════════ */
+  const R = 'jdywh_reports';
+  await ensureColumn(R, 'icon', '`icon` VARCHAR(64) NULL COMMENT "图标（emoji 或图标名）"');
+  await ensureColumn(R, 'tags', '`tags` VARCHAR(255) NULL COMMENT "标签，逗号分隔"');
+  /* group 是 MySQL 保留字，列名用 group_name，对外 API 字段名仍为 group */
+  await ensureColumn(R, 'group_name', '`group_name` VARCHAR(64) NULL COMMENT "分组" AFTER `tags`');
+  await ensureColumn(R, 'source', "`source` VARCHAR(16) NOT NULL DEFAULT 'user' COMMENT \"builtin=系统内置 user=用户自建\"");
+  await ensureColumn(R, 'board_key', '`board_key` VARCHAR(32) NULL COMMENT "内置看板标识 zk/crm"');
+  await ensureColumn(R, 'dsl', '`dsl` MEDIUMTEXT NULL COMMENT "AI 报表受限 DSL 配置(JSON)"');
+  await seedBuiltinAiReports();
 
   /*
    * v3.6 数据迁移：把历史自由文本分类 category 提升为正式分组
@@ -693,4 +816,4 @@ async function bootstrap() {
   return admin;
 }
 
-module.exports = { DDL, bootstrap, migrate, ensureDefaultAdmin, ensureDefaultSettings, ensureDefaultRoles };
+module.exports = { DDL, bootstrap, migrate, ensureDefaultAdmin, ensureDefaultSettings, ensureDefaultRoles, BUILTIN_AI_BOARDS, seedBuiltinAiReports };

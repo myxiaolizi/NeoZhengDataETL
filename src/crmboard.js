@@ -42,6 +42,28 @@ const C = {
   trainResult: 'w_1792552277283',
   province: 'w_1792139730191',
   sicStores: 'w_1793101382910',
+  lastMonthSalesStores: 'w_1793101382911',
+  twoYearSalesStores: 'w_1793101382912',
+  erpName: 'w_1793089366573',
+  serialNo: 'w_1792564761950',
+  serviceStartAt: 'widget_1791449342217_p',
+  serviceEndAt: 'widget_1791449342218_p',
+  connectRemark: 'widget_1791596350260',
+  baseMaterials: 'widget_1791510696565_p',
+  couponConfig: 'widget_1791510696561_p',
+  couponResult: 'w_1792547295323',
+  smsFiling: 'w_1792547295325',
+  channelBalance: 'widget_1791509478941_p',
+  serviceRemark: 'w_1792547295328',
+  trainRemark: 'w_1792552277285',
+  unopenedStrategyReason: 'widget_1791964258722',
+  isOpened: 'widget_1792072044675',
+  bizContactName: 'widget_1791882979503',
+  bizContactPhone: 'widget_1791882979504_p',
+  techContactName: 'widget_1791882979505',
+  techContactPhone: 'widget_1791882979506_p',
+  regionLeaderPhone: 'widget_1791453695943',
+  address: 'w_1792131264427_p',
   /** 签约类型原始字段：'SIC合作连锁签约' / 空 */
   signTypeRaw: 'w_1793343168111',
   // 8 个节点时间列
@@ -259,6 +281,28 @@ function div(a, b) {
 function round(v, d = 2) {
   const p = 10 ** d;
   return Math.round((Number(v) || 0) * p) / p;
+}
+
+/**
+ * V16 1.1：ROI 口径全量变更（需求原文 L41「优化ROI计算公式为：转化销售额÷到店人数」）
+ *
+ *   旧口径：ROI = (渠道成本 + 优惠券成本) ÷ 转化销售额   ← 成本转化比，越小越好，语义反直觉
+ *   新口径：ROI = 转化销售额 ÷ 到店人数                  ← 人均到店产出，越大越好
+ *
+ * 除零约定（契约 §1.1）：到店人数为 0 / 空 / 非有限值 → 返回 null（前端渲染「—」），
+ * **严禁** NaN / Infinity。旧实现用 `div()` 会返回 0，语义上「0 元 ROI」是错的。
+ *
+ * @param {number} gmv     转化销售额
+ * @param {number} arrived 到店人数
+ * @returns {number|null}  保留 4 位小数；不可计算时为 null
+ */
+function roiOf(gmv, arrived) {
+  const g = n(gmv);
+  const a = n(arrived);
+  if (!Number.isFinite(g) || !Number.isFinite(a) || a <= 0) return null;
+  const v = g / a;
+  if (!Number.isFinite(v)) return null;
+  return Math.round(v * 10000) / 10000;
 }
 
 /** 人名归一化：去掉括号/邮箱/空格，莎→沙 等价（人员表是「戴丽莎」，CRM 是「戴丽沙」） */
@@ -734,6 +778,30 @@ function normalizeClient(raw, staff, runMap, now) {
     solution: normName(raw[C.solution]),
     trainer: normName(raw[C.trainer]),
     version: s(raw[C.version]),
+    erpName: s(raw[C.erpName]) || '未填写',
+    signSubject: s(raw[C.signSubject]),
+    serialNo: s(raw[C.serialNo]),
+    sicStores: raw[C.sicStores] === null || raw[C.sicStores] === undefined || raw[C.sicStores] === '' ? null : n(raw[C.sicStores]),
+    lastMonthSalesStores: raw[C.lastMonthSalesStores] === null || raw[C.lastMonthSalesStores] === undefined || raw[C.lastMonthSalesStores] === '' ? null : n(raw[C.lastMonthSalesStores]),
+    twoYearSalesStores: raw[C.twoYearSalesStores] === null || raw[C.twoYearSalesStores] === undefined || raw[C.twoYearSalesStores] === '' ? null : n(raw[C.twoYearSalesStores]),
+    serviceStartDate: (() => { const d = toDate(raw[C.serviceStartAt]); return d ? ymd(d) : ''; })(),
+    serviceEndDate: (() => { const d = toDate(raw[C.serviceEndAt]); return d ? ymd(d) : ''; })(),
+    connectRemark: s(raw[C.connectRemark]),
+    baseMaterials: s(raw[C.baseMaterials]),
+    couponConfig: s(raw[C.couponConfig]),
+    couponResult: s(raw[C.couponResult]),
+    smsFiling: s(raw[C.smsFiling]),
+    channelBalance: s(raw[C.channelBalance]),
+    serviceRemark: s(raw[C.serviceRemark]),
+    trainRemark: s(raw[C.trainRemark]),
+    unopenedStrategyReason: s(raw[C.unopenedStrategyReason]),
+    isOpened: s(raw[C.isOpened]),
+    bizContactName: s(raw[C.bizContactName]),
+    bizContactPhone: s(raw[C.bizContactPhone]),
+    techContactName: s(raw[C.techContactName]),
+    techContactPhone: s(raw[C.techContactPhone]),
+    regionLeaderPhone: s(raw[C.regionLeaderPhone]),
+    address: s(raw[C.address]),
     connectResult: s(raw[C.connectResult]),
     trainResult: s(raw[C.trainResult]),
     openedStrategyText: s(raw[C.openedStrategy]),
@@ -795,6 +863,7 @@ function toDetailRow(c) {
     ownerRole: c.ownerRoles && c.ownerRoles.length ? c.ownerRoles[0] : '未分配',
     ownerRoles: c.ownerRoles && c.ownerRoles.length ? c.ownerRoles : ['未分配'],
     province: c.province || '未填写',
+    erpName: c.erpName || '未填写',
     version: rawVer || '-',
     versionShort,
     signDate: signAt ? mdCn(signAt) : '-',
@@ -1901,12 +1970,12 @@ function aggregateRow7(rows, chainRegion) {
     couponCost: withSplit((x) => x.couponCost),
     totalCost: withSplit((x) => x.totalCost),
     couponGmv: withSplit((x) => x.couponGmv),
-    /** 营销ROI = 成本合计 ÷ 转化销售额 */
+    /** V16 1.1：ROI = 转化销售额 ÷ 到店人数（旧：成本合计 ÷ 转化销售额） */
     roi: {
-      south: round(div(so.totalCost, so.gmv), 2),
-      north: round(div(no.totalCost, no.gmv), 2),
-      unknown: round(div(un.totalCost, un.gmv), 2),
-      total: round(div(t.totalCost, t.gmv), 2),
+      south: roiOf(so.gmv, so.arrived),
+      north: roiOf(no.gmv, no.arrived),
+      unknown: roiOf(un.gmv, un.arrived),
+      total: roiOf(t.gmv, t.arrived),
     },
   };
   return out;
@@ -1922,6 +1991,7 @@ function buildRow7(run30, chainRegion) {
  *
  * V7 新增：
  *   - `cost` 指标组（渠道成本 / 用券成本 / 成本合计 / 营销ROI）
+ *     V16 1.1：ROI 口径改为「转化销售额 ÷ 到店人数」（人均到店产出），与成本无关
  *   - `modules`：按模块聚合的树形结构（前端画「模块 → 类型」链接图用）
  *   - 日期筛选：`range` 参数按「策略开通&触达时间」过滤（默认近 30 日）
  *
@@ -2046,7 +2116,7 @@ function buildRow8(run31, chainRegion, range, allClients) {
         couponRate: round(div(cUsedPpl, cIssuedPpl), 4),
         couponCost: round(couponCost, 2),
         channelCost: round(channelCost, 2),
-        roi: round(div(channelCost + couponCost, gmv), 4),
+        roi: roiOf(gmv, arrived),
       });
     });
     return out.sort((a, b) => b.reachedPeople - a.reachedPeople || a.chainName.localeCompare(b.chainName, 'zh-CN'));
@@ -2099,7 +2169,7 @@ function buildRow8(run31, chainRegion, range, allClients) {
  *   - 触达人数 / 到店人数 / 金额 / 券数 / 成本 → 求和
  *   - 运行策略数 → 按「当日最大」而非求和（同一策略可能每天运行，求和会重复计数）
  *   - 到店率 = 到店 ÷ 触达；优惠券核销率 = 用券人数 ÷ 发券人数
- *   - ROI = (渠道成本 + 优惠券成本) ÷ 转化销售额
+ *   - ROI = 转化销售额 ÷ 到店人数（V16 1.1；旧口径为 (渠道成本 + 优惠券成本) ÷ 转化销售额）
  *
  * 区域/连锁类型/连锁名来自 parsed_16（allClients），mail_31 只有连锁ID。
  * 按「当前节点为空」等业务条件以外，这里不做节点过滤 —— 排名看的是运行效果。
@@ -2154,6 +2224,8 @@ function buildChainRanking(run31, allClients, range) {
     const cUsed = sum(M.couponUsed);
     const channelCost = sum(M.channelCost);
     const couponCost = sum(M.couponCost);
+    /* V16 5.3：用券销售额（需求 L58「连锁排名增加指标用券销售额」） */
+    const couponGmv = sum(M.couponGmv);
 
     /** 运行策略数：按日 MAX（不可求和，同 buildRow9 口径） */
     const runningStrategies = max(M.runningStrategies);
@@ -2182,7 +2254,10 @@ function buildChainRanking(run31, allClients, range) {
       couponRate: round(div(cUsedPpl, cIssuedPpl), 4),
       couponCost: round(couponCost, 2),
       channelCost: round(channelCost, 2),
-      roi: round(div(channelCost + couponCost, gmv), 4),
+      /** V16 5.3：用券销售额（c_0964f9ffab），无值记 0，不出现 undefined/NaN */
+      couponGmv: round(couponGmv, 2),
+      /** V16 1.1：ROI = 转化销售额 ÷ 到店人数 */
+      roi: roiOf(gmv, arrived),
     });
   });
 
@@ -2235,6 +2310,9 @@ async function buildRow9(now) {
   const totalCost = new Array(days.length).fill(0);
   const roi = new Array(days.length).fill(0);
   const gmvArr = new Array(days.length).fill(0);
+  /* V16 1.1：ROI 改成 转化销售额 ÷ 到店人数，趋势轴需要单独的到店人数数组 */
+  const arrivedArr = new Array(days.length).fill(0);
+  const couponGmvArr = new Array(days.length).fill(0);
 
   if (await tableExists('jdywh_mail_31')) {
     const maxd = await db.queryOne('SELECT MAX(import_date) AS d FROM jdywh_mail_31');
@@ -2248,6 +2326,7 @@ async function buildRow9(now) {
                 SUM(CAST(${M.couponIssuedPeople} AS DECIMAL(18,2))) AS cIssued,
                 SUM(CAST(${M.couponUsedPeople} AS DECIMAL(18,2))) AS cUsed,
                 SUM(CAST(${M.gmv} AS DECIMAL(18,2))) AS gmv,
+                SUM(CAST(${M.couponGmv} AS DECIMAL(18,2))) AS coupon_gmv,
                 SUM(CAST(${M.channelCost} AS DECIMAL(18,2))) AS channel_cost,
                 SUM(CAST(${M.couponCost} AS DECIMAL(18,2))) AS coupon_cost,
                 COUNT(DISTINCT CASE WHEN CAST(${M.runningStrategies} AS DECIMAL(18,2)) > 0 THEN ${M.chainId} END) AS run_chains
@@ -2275,7 +2354,10 @@ async function buildRow9(now) {
         couponCost[i] = round(n(row.coupon_cost), 2);
         totalCost[i] = round(cost, 2);
         gmvArr[i] = round(gmv, 2);
-        roi[i] = round(div(cost, gmv), 4);
+        arrivedArr[i] = round(n(row.arrived), 2);
+        couponGmvArr[i] = round(n(row.coupon_gmv), 2);
+        /* V16 1.1：ROI = 转化销售额 ÷ 到店人数（无到店 → null，前端断点） */
+        roi[i] = roiOf(gmv, n(row.arrived));
       });
     }
   }
@@ -2293,6 +2375,9 @@ async function buildRow9(now) {
     couponCost,
     totalCost,
     gmv: gmvArr,
+    /** V16 1.1：新增到店人数轴与用券销售额轴（ROI 口径变更配套） */
+    arrived: arrivedArr,
+    couponGmv: couponGmvArr,
     roi,
   };
 }
@@ -2602,7 +2687,7 @@ async function buildClientTrend(chainId, now) {
   const acc = {
     reached: mk(), arrived: mk(),
     couponIssued: mk(), couponIssuedPpl: mk(), couponUsed: mk(), couponUsedPpl: mk(),
-    channelCost: mk(), couponCost: mk(), gmv: mk(),
+    channelCost: mk(), couponCost: mk(), gmv: mk(), couponGmv: mk(),
   };
   days.forEach((d, i) => {
     byDay.get(d).forEach((r) => {
@@ -2615,6 +2700,7 @@ async function buildClientTrend(chainId, now) {
       acc.channelCost[i] += n(r[M.channelCost]);
       acc.couponCost[i] += n(r[M.couponCost]);
       acc.gmv[i] += n(r[M.gmv]);
+      acc.couponGmv[i] += n(r[M.couponGmv]);
     });
   });
 
@@ -2636,7 +2722,11 @@ async function buildClientTrend(chainId, now) {
       channelCost: acc.channelCost.map(r4),
       couponCost: acc.couponCost.map(r4),
       totalCost: acc.channelCost.map((v, i) => r4(v + acc.couponCost[i])),
-      roi: acc.gmv.map((v, i) => r4(div(acc.channelCost[i] + acc.couponCost[i], v))),
+      /* V16 1.1：ROI = 转化销售额 ÷ 到店人数，并把两个分母/分子一并暴露（可审计、可前端复算） */
+      arrived: acc.arrived.map(r4),
+      gmv: acc.gmv.map(r4),
+      couponGmv: acc.couponGmv.map(r4),
+      roi: acc.gmv.map((v, i) => roiOf(v, acc.arrived[i])),
     },
   };
 }
@@ -2753,15 +2843,41 @@ async function buildClientDetail(chainId) {
       chainType: c.chainType,
       region: c.region,
       province: c.province,
+      address: c.address || '',
       stores: c.stores,
+      sicStores: c.sicStores,
+      lastMonthSalesStores: c.lastMonthSalesStores,
+      twoYearSalesStores: c.twoYearSalesStores,
+      signSubject: c.signSubject || '',
+      serialNo: c.serialNo || '',
+      erpName: c.erpName || '未填写',
       signType: c.signType,
+      serviceStartDate: c.serviceStartDate || '',
+      serviceEndDate: c.serviceEndDate || '',
       sales: c.sales,
       service: c.service,
       solution: c.solution,
       trainer: c.trainer,
       version: c.version,
       connectResult: c.connectResult,
+      connectRemark: c.connectRemark || '',
+      baseMaterials: c.baseMaterials || '',
+      couponConfig: c.couponConfig || '',
+      couponResult: c.couponResult || '',
+      smsFiling: c.smsFiling || '',
+      channelBalance: c.channelBalance || '',
+      serviceRemark: c.serviceRemark || '',
       trainResult: c.trainResult,
+      trainRemark: c.trainRemark || '',
+      strategyOpenStatus: c.strategyOpenStatus || '',
+      openedStrategyText: c.openedStrategyText || '',
+      unopenedStrategyReason: c.unopenedStrategyReason || '',
+      isOpened: c.isOpened || '',
+      bizContactName: c.bizContactName || '',
+      bizContactPhone: c.bizContactPhone || '',
+      techContactName: c.techContactName || '',
+      techContactPhone: c.techContactPhone || '',
+      regionLeaderPhone: c.regionLeaderPhone || '',
     },
     progress: {
       node: c.node,
@@ -2856,7 +2972,8 @@ async function buildClientDetail(chainId) {
           couponRate: round(div(tUsePpl, tIssPpl), 4),
           couponCost: round(tCpCost, 2),
           channelCost: round(tChCost, 2),
-          roi: round(div(tTotCost, tGmv), 4),
+          /* V16 1.1：ROI = 转化销售额 ÷ 到店人数 */
+          roi: roiOf(tGmv, tArr),
         };
       }).sort((a, b) => b.reachedPeople - a.reachedPeople || a.type.localeCompare(b.type, 'zh-CN'));
 
@@ -2880,7 +2997,8 @@ async function buildClientDetail(chainId) {
         channelCost: round(channelCost, 2),
         couponCost: round(couponCost, 2),
         totalCost: round(totalCost, 2),
-        roi: round(div(totalCost, gmv), 4),
+        /* V16 1.1：ROI = 转化销售额 ÷ 到店人数 */
+        roi: roiOf(gmv, arrived),
       };
     })(),
     /** V10 CD：近 30 日策略运行趋势（无数据则 null，前端降级展示） */

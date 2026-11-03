@@ -383,6 +383,83 @@ async function toggleShare(id, status) {
   return publicShare(row);
 }
 
+/**
+ * V16 2.1~2.4：AI 问数分享链接编辑（契约 §3.2）
+ *
+ * 与 `reports.updateShare` 语义完全对齐（同一套「开关密码 / 永久有效期」约定），
+ * 区别只有表与列长度：`jdywh_ai_shares.password` / `password_plain` 都是 VARCHAR(64)。
+ *
+ * @param {number|string} id
+ * @param {Object} body { title?, expiresAt?, expiresDays?, password?, passwordOn?, status? }
+ */
+async function updateShare(id, body) {
+  await ensureTable();
+  const n = Number(id);
+  if (!Number.isFinite(n) || n <= 0) throw new Error('分享 ID 不合法');
+  const cur = await db.queryOne('SELECT * FROM jdywh_ai_shares WHERE id = ? LIMIT 1', [n]);
+  if (!cur) throw new Error('分享不存在');
+
+  const b = body || {};
+  const sets = [];
+  const params = [];
+
+  if (b.status !== undefined) {
+    sets.push('status = ?');
+    params.push(Number(b.status) ? 1 : 0);
+  }
+
+  if (b.title !== undefined) {
+    const t = String(b.title === null ? '' : b.title);
+    if (t.length > 191) throw new Error('分享标题不能超过 191 个字符');
+    sets.push('title = ?');
+    params.push(t);
+  }
+
+  if (b.expiresAt !== undefined || b.expiresDays !== undefined) {
+    let exp = null;
+    if (b.expiresAt === null || b.expiresAt === '' || b.expiresAt === 'never' || b.expiresAt === '永久') {
+      exp = null;
+    } else if (typeof b.expiresAt === 'string' && /^days:\d+$/.test(b.expiresAt)) {
+      exp = new Date(Date.now() + Number(b.expiresAt.slice(5)) * 86400000);
+    } else if (b.expiresDays !== undefined && b.expiresDays !== null && b.expiresDays !== '') {
+      const d = Number(b.expiresDays);
+      if (!Number.isFinite(d) || d < 0) throw new Error('有效期天数无效');
+      exp = d === 0 ? null : new Date(Date.now() + d * 86400000);
+    } else if (b.expiresAt !== undefined) {
+      const d = new Date(String(b.expiresAt).replace(' ', 'T'));
+      if (Number.isNaN(d.getTime())) throw new Error('有效期时间格式无效');
+      exp = d;
+    }
+    if (exp && Number.isNaN(exp.getTime())) throw new Error('有效期时间格式无效');
+    sets.push('expires_at = ?');
+    params.push(exp);
+  }
+
+  if (b.password !== undefined || b.passwordOn !== undefined) {
+    const raw = b.password;
+    const isOff = raw === null || raw === undefined || raw === '' || raw === false;
+    if (isOff) {
+      if (b.passwordOn === true) throw new Error('开启访问密码时必须填写密码');
+      sets.push('password = ?'); params.push(null);
+      sets.push('password_plain = ?'); params.push(null);
+    } else {
+      const plain = String(raw);
+      /* 该表 password / password_plain 均为 VARCHAR(64)，超长必须拒绝而不是静默截断 */
+      if (plain.length > 64) throw new Error('访问密码不能超过 64 个字符');
+      const hash = crypto.createHash('sha256').update(plain).digest('hex');
+      sets.push('password = ?'); params.push(hash);
+      sets.push('password_plain = ?'); params.push(plain);
+    }
+  }
+
+  if (!sets.length) throw new Error('没有需要修改的字段');
+
+  params.push(n);
+  await db.query(`UPDATE jdywh_ai_shares SET ${sets.join(', ')} WHERE id = ?`, params);
+  const row = await db.queryOne('SELECT * FROM jdywh_ai_shares WHERE id = ? LIMIT 1', [n]);
+  return publicShare(row);
+}
+
 /** 删除 */
 async function deleteShare(id) {
   await ensureTable();
@@ -426,6 +503,13 @@ async function findByToken(token) {
  * @param {string} token
  * @param {string} [pwd]
  * @param {{now?:number}} [opts]
+ */
+/**
+ * 按 token 取分享的公开元信息（含访问计数与埋点）。
+ *
+ * @param {string} token
+ * @param {string} [pwd]
+ * @param {Object} [opts] V16：{ req, path } —— 用于访问埋点（可选，旧调用方不传也能正常工作）
  */
 async function publicMeta(token, pwd, opts) {
   const now = (opts && opts.now) || Date.now();
@@ -476,6 +560,14 @@ async function publicMeta(token, pwd, opts) {
 
   // 访问计数（元信息通过密码后 +1，与 jdywh_shares 的行为一致）
   await db.query('UPDATE jdywh_ai_shares SET view_count = view_count + 1 WHERE id = ?', [row.id]);
+
+  /**
+   * V16 2.5：分享访问埋点（契约 §2.2，share_type='ai'）
+   * 与报表分享同一套：校验全通过后才记、异步、30 秒去抖、失败不影响主流程。
+   */
+  try {
+    require('./share-visits').record(opts && opts.req, 'ai', row.id, row.token, (opts && opts.path) || null);
+  } catch (e) { /* 埋点失败绝不影响主流程 */ }
 
   // 解析数据范围（只暴露名字与行数）
   let sources = [];
@@ -647,6 +739,7 @@ module.exports = {
   listShares,
   getShare,
   toggleShare,
+  updateShare,
   deleteShare,
   // 公开端
   findByToken,

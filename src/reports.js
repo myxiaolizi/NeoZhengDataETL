@@ -467,6 +467,12 @@ function publicReport(r) {
     datasetId: r.dataset_id ? Number(r.dataset_id) : null,
     config: safeJson(r.config) || {},
     layout: safeJson(r.layout) || null,
+    icon: r.icon || '',
+    tags: r.tags || '',
+    group: r.group_name || r.category || '',
+    source: r.source || 'user',
+    boardKey: r.board_key || null,
+    dsl: r.dsl || '',
     status: Number(r.status),
     createdBy: r.created_by,
     viewCount: Number(r.view_count || 0),
@@ -483,8 +489,8 @@ async function listReports(keyword) {
                LEFT JOIN jdywh_datasets d ON d.id = r.dataset_id`;
   const params = [];
   if (kw) {
-    sql += ' WHERE r.name LIKE ? OR r.code LIKE ? OR r.category LIKE ?';
-    params.push(`%${kw}%`, `%${kw}%`, `%${kw}%`);
+    sql += ' WHERE r.name LIKE ? OR r.code LIKE ? OR r.category LIKE ? OR r.tags LIKE ? OR r.group_name LIKE ?';
+    params.push(`%${kw}%`, `%${kw}%`, `%${kw}%`, `%${kw}%`, `%${kw}%`);
   }
   sql += ' ORDER BY r.id DESC';
   const rows = await db.query(sql, params);
@@ -503,18 +509,22 @@ async function createReport(input, userId) {
   const name = String(input.name || '').trim();
   if (!name) throw new Error('报表名称不能为空');
   const code = await uniqueCode('jdywh_reports', input.code || name, 'code');
+  const groupVal = input.group !== undefined ? String(input.group || '').trim() : String(input.category || '').trim();
   const result = await db.query(
     `INSERT INTO jdywh_reports
-       (name, code, description, category, report_type, dataset_id, config, layout, status, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+       (name, code, description, category, report_type, dataset_id, config, layout, icon, tags, group_name, source, status, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,'user',?,?)`,
     [
       name, code,
       String(input.description || '').trim() || null,
-      String(input.category || '').trim() || null,
-      ['chart', 'table', 'dashboard'].includes(input.reportType) ? input.reportType : 'chart',
+      String(input.category || groupVal || '').trim() || null,
+      ['chart', 'table', 'dashboard', 'ai'].includes(input.reportType) ? input.reportType : 'chart',
       input.datasetId ? Number(input.datasetId) : null,
       input.config ? JSON.stringify(input.config) : null,
       input.layout ? JSON.stringify(input.layout) : null,
+      String(input.icon || '').trim() || null,
+      String(input.tags || '').trim() || null,
+      groupVal || null,
       input.status === 0 ? 0 : 1,
       userId || null,
     ]
@@ -533,6 +543,9 @@ async function updateReport(id, input) {
   if (input.name !== undefined) set('name', String(input.name).trim());
   if (input.description !== undefined) set('description', String(input.description || '').trim() || null);
   if (input.category !== undefined) set('category', String(input.category || '').trim() || null);
+  if (input.group !== undefined) set('group_name', String(input.group || '').trim() || null);
+  if (input.icon !== undefined) set('icon', String(input.icon || '').trim() || null);
+  if (input.tags !== undefined) set('tags', String(input.tags || '').trim() || null);
   if (input.reportType !== undefined) set('report_type', input.reportType);
   if (input.datasetId !== undefined) set('dataset_id', input.datasetId ? Number(input.datasetId) : null);
   if (input.config !== undefined) set('config', input.config ? JSON.stringify(input.config) : null);
@@ -546,6 +559,10 @@ async function updateReport(id, input) {
 }
 
 async function deleteReport(id) {
+  const row = await db.queryOne('SELECT id, report_type, source FROM jdywh_reports WHERE id = ? LIMIT 1', [id]);
+  if (row && row.report_type === 'ai' && row.source === 'builtin') {
+    throw new Error('内置看板来源的 AI 报表不允许删除，只能停用');
+  }
   await db.query("DELETE FROM jdywh_shares WHERE target_type = 'report' AND target_id = ?", [id]);
   await db.query('DELETE FROM jdywh_reports WHERE id = ?', [id]);
   return true;
@@ -650,8 +667,103 @@ async function toggleShare(id, status) {
   return publicShare(row);
 }
 
-/** 通过 token 访问分享 */
-async function accessShare(token, password) {
+/**
+ * V16 2.1~2.4：分享链接编辑（契约 §3.1）
+ *
+ * 需求原文 L7-10：「分享的连接项目可以设置页面标题和修改以下内容：
+ *   支持修改分享标题 / 支持修改有效期 / 支持修改访问密码，开关访问密码」
+ *
+ * V15 现状（实测）：`PUT /shares/:id` 只接受 `status` 一个字段，全仓库 `grep "SET title"` 0 命中，
+ * 即编辑能力是**从 0 到 1**，不是给旧接口补参数。
+ *
+ * 语义约定（与读取侧 `password IS NULL = 无密码`、`expires_at IS NULL = 永久` 完全一致）：
+ *   - `title`     : 非空字符串 → 写入；空串 → 写入空串（公开页回退为看板/报表名）
+ *   - `expiresAt` : `null`/'永久' → NULL；ISO 时间 → 该时间；`days:N` → 当前 + N 天
+ *   - `password`  : `null`/空串/`false` → 清空密码（关闭访问密码）；非空 → 设为该密码
+ *   - `passwordOn`: `true` 且当前无密码 → 需同时给 password，否则报错
+ *   - `status`    : 1/0，行为与 V15 完全一致（**只传 status 时向后兼容**）
+ *
+ * @param {number|string} id
+ * @param {Object} body
+ */
+async function updateShare(id, body) {
+  const n = Number(id);
+  if (!n) throw new Error('分享 ID 无效');
+  const cur = await db.queryOne('SELECT * FROM jdywh_shares WHERE id = ? LIMIT 1', [n]);
+  if (!cur) throw new Error('分享链接不存在');
+
+  const b = body || {};
+  const sets = [];
+  const params = [];
+
+  /* status —— 与 V15 toggleShare 完全相同的落库语义 */
+  if (b.status !== undefined) {
+    sets.push('status = ?');
+    params.push(Number(b.status) ? 1 : 0);
+  }
+
+  /* title —— 需求 2.0 / 2.1「页面标题」「分享标题」 */
+  if (b.title !== undefined) {
+    const t = String(b.title === null ? '' : b.title);
+    if (t.length > 191) throw new Error('分享标题不能超过 191 个字符');
+    sets.push('title = ?');
+    params.push(t);
+  }
+
+  /* expiresAt —— 需求 2.2「支持修改有效期」 */
+  if (b.expiresAt !== undefined || b.expiresDays !== undefined) {
+    let exp = null;
+    if (b.expiresAt === null || b.expiresAt === '' || b.expiresAt === 'never' || b.expiresAt === '永久') {
+      exp = null;
+    } else if (typeof b.expiresAt === 'string' && /^days:\d+$/.test(b.expiresAt)) {
+      exp = new Date(Date.now() + Number(b.expiresAt.slice(5)) * 86400000);
+    } else if (b.expiresDays !== undefined && b.expiresDays !== null && b.expiresDays !== '') {
+      const d = Number(b.expiresDays);
+      if (!Number.isFinite(d) || d < 0) throw new Error('有效期天数无效');
+      exp = d === 0 ? null : new Date(Date.now() + d * 86400000);
+    } else if (b.expiresAt !== undefined) {
+      const d = new Date(String(b.expiresAt).replace(' ', 'T'));
+      if (Number.isNaN(d.getTime())) throw new Error('有效期时间格式无效');
+      exp = d;
+    }
+    if (exp && Number.isNaN(exp.getTime())) throw new Error('有效期时间格式无效');
+    sets.push('expires_at = ?');
+    params.push(exp);
+  }
+
+  /* password —— 需求 2.3「修改访问密码」 + 2.4「开关访问密码」 */
+  if (b.password !== undefined || b.passwordOn !== undefined) {
+    const raw = b.password;
+    const isOff = raw === null || raw === undefined || raw === '' || raw === false;
+    if (isOff) {
+      /* 关闭访问密码：password IS NULL 即读取侧认定的「无密码」语义 */
+      if (b.passwordOn === true) throw new Error('开启访问密码时必须填写密码');
+      sets.push('password = ?'); params.push(null);
+      sets.push('password_plain = ?'); params.push(null);
+    } else {
+      const plain = String(raw);
+      if (plain.length > 64) throw new Error('访问密码不能超过 64 个字符');
+      const hash = crypto.createHash('sha256').update(plain).digest('hex');
+      sets.push('password = ?'); params.push(hash);
+      sets.push('password_plain = ?'); params.push(plain.slice(0, 128));
+    }
+  }
+
+  if (!sets.length) throw new Error('没有需要修改的字段');
+
+  params.push(n);
+  await db.query(`UPDATE jdywh_shares SET ${sets.join(', ')} WHERE id = ?`, params);
+  const row = await db.queryOne('SELECT * FROM jdywh_shares WHERE id = ?', [n]);
+  return publicShare(row);
+}
+
+/** 通过 token 访问分享
+ *
+ * @param {string} token
+ * @param {string} [password]
+ * @param {Object} [ctx] V16：{ req, path } —— 用于访问埋点（可选，旧调用方不传也能正常工作）
+ */
+async function accessShare(token, password, ctx) {
   const row = await db.queryOne('SELECT * FROM jdywh_shares WHERE token = ? LIMIT 1', [token]);
   if (!row) return { ok: false, code: 'not_found', message: '分享链接不存在' };
   if (Number(row.status) !== 1) return { ok: false, code: 'disabled', message: '该分享已被停用' };
@@ -664,6 +776,21 @@ async function accessShare(token, password) {
   }
 
   await db.query('UPDATE jdywh_shares SET view_count = view_count + 1 WHERE id = ?', [row.id]);
+
+  /**
+   * V16 2.5：分享访问埋点（契约 §2.2）
+   *
+   * **只在密码/停用/过期全部校验通过后才记录**，与 view_count +1 同一位置；
+   * 内部 setImmediate 异步写库，失败只 warn，**绝不阻塞公开页响应**。
+   * 30 秒同源去抖在 share-visits 内部实现。
+   */
+  try {
+    require('./share-visits').record(
+      (ctx && ctx.req) || null,
+      'report', row.id, row.token,
+      (ctx && ctx.path) || null,
+    );
+  } catch (e) { /* 埋点失败绝不影响主流程 */ }
 
   /**
    * V7：内置看板分享。
@@ -728,6 +855,7 @@ module.exports = {
   createShare,
   deleteShare,
   toggleShare,
+  updateShare,
   accessShare,
   publicReport,
   publicDataset,
