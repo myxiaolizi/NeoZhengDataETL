@@ -268,6 +268,8 @@ export default function SharesPage() {
   /* 有效期模式：permanent / days / custom（自定义具体时间） */
   const [expireMode, setExpireMode] = useState<'permanent' | 'days' | 'custom'>('permanent');
   const [pwdOn, setPwdOn] = useState(false);
+  /* 打开编辑弹窗时该分享「原本是否已有密码」：决定密码框留空时是「不修改」还是「必须填写」 */
+  const [editHadPassword, setEditHadPassword] = useState(false);
 
   /* ══════════ V16：访问统计抽屉（需求 2.5 / 2.6） ══════════ */
   const [statsOpen, setStatsOpen] = useState(false);
@@ -475,6 +477,7 @@ export default function SharesPage() {
         ? !!(target.row as ShareItem).hasPassword
         : !!(target.row as AiShareItem).hasPassword;
     setPwdOn(hasPwd);
+    setEditHadPassword(hasPwd);
     const exp = row.expiresAt ? new Date(row.expiresAt) : null;
     /* antd6 的 DatePicker 只接受 dayjs 对象：传原生 Date 或 null 都会抛
        `getUDayjs(...).isValid is not a function`，进而让整个弹窗渲染崩掉。 */
@@ -520,8 +523,12 @@ export default function SharesPage() {
       payload.expiresAt = null;
     } else if (expireMode === 'days') {
       const d = Number(values.expiresDays);
-      payload.expiresDays = Number.isFinite(d) && d > 0 ? d : 0;
-      payload.expiresAt = null; /* 让后端按 expiresDays 覆盖，避免残留旧时间 */
+      const days = Number.isFinite(d) && d > 0 ? d : 0;
+      /* 后端 reports.updateShare 的判定顺序是「先看 expiresAt 是否 null，再看 expiresDays」，
+         同发 { expiresAt: null, expiresDays: 7 } 会被 null 抢先判成「永久」。
+         因此按天数模式**只发 expiresDays**，绝不并发 expiresAt。
+         days=0 时后端也会落 null（永久），无需再补 expiresAt:null。 */
+      payload.expiresDays = days;
     } else {
       const dt = values.expiresAt as { toDate?: () => Date } | null | undefined;
       const d = dt && typeof dt.toDate === 'function' ? dt.toDate() : null;
@@ -534,15 +541,21 @@ export default function SharesPage() {
     } else {
       const pwd = String(values.password ?? '');
       if (!pwd) {
-        message.error('开启访问密码时必须填写密码');
-        return;
+        /* 密码框留空 = 不修改密码。
+           原本就有密码（用户只改标题/有效期）⇒ 完全不提交密码字段，后端保持原密码；
+           原本没有密码却打开了开关 ⇒ 必须填写，否则后端 400。 */
+        if (!editHadPassword) {
+          message.error('开启访问密码时必须填写密码');
+          return;
+        }
+      } else {
+        if (pwd.length > 64) {
+          message.error('访问密码不能超过 64 个字符');
+          return;
+        }
+        payload.password = pwd;
+        payload.passwordOn = true;
       }
-      if (pwd.length > 64) {
-        message.error('访问密码不能超过 64 个字符');
-        return;
-      }
-      payload.password = pwd;
-      payload.passwordOn = true;
     }
 
     setEditSaving(true);
