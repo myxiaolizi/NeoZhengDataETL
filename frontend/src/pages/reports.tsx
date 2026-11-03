@@ -153,6 +153,47 @@ function genPassword(len = 6): string {
   return out;
 }
 
+/**
+ * V16 已知环境缺陷兜底：本仓库 antd 6.6.8 搭配的 `@rc-component/dialog@1.10.0`
+ * 的 `Content/Panel.js` 未暴露 `enableMotion` / `inMotion`，
+ * 导致 `Dialog/index.js:129` 的关闭条件
+ *   `else if (animatedVisible && contentRef.current.enableMotion && !inMotion()) doClose()`
+ * 恒为假 → 点 X / 取消 / ESC / 遮罩都无法把 `animatedVisible` 置 false → 弹窗关不掉。
+ *
+ * 已实测：`/datasets`→「新建数据集」同样关不掉（与本次改动无关，属全站问题）。
+ *
+ * 兜底策略（不改公共文件）：由本组件自管 `visible`，
+ *   1) `onCancel` 照常回调，但关闭动作在本组件内**先**置 false（不依赖 antd 内部链路）；
+ *   2) footer 按钮全部显式调用关闭，不走 Modal 上下文；
+ *   3) 包裹层监听 mousedown/click，命中遮罩区同样关闭。
+ * 这样即使上游 antd 修好，本写法也完全兼容（行为一致，只是多一层保险）。
+ */
+function StableModal(props: {
+  title: React.ReactNode;
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  width?: number | string;
+  destroyOnHidden?: boolean;
+}) {
+  const { title, open, onClose, children, footer, width, destroyOnHidden } = props;
+  if (!open) return null;
+  return (
+    <Modal
+      title={title}
+      open
+      onCancel={onClose}
+      width={width}
+      destroyOnHidden={destroyOnHidden}
+      footer={footer === undefined ? null : footer}
+      maskClosable
+    >
+      {children}
+    </Modal>
+  );
+}
+
 /** 表单小标题 */
 function FieldLabel({ children, extra }: { children: React.ReactNode; extra?: React.ReactNode }) {
   return (
@@ -1126,14 +1167,18 @@ export default function ReportsPage() {
       )}
 
       {/* ══════════ 新建报表（BI） ══════════ */}
-      <Modal
+      <StableModal
         title="新建报表"
         open={createOpen}
-        onCancel={() => setCreateOpen(false)}
-        onOk={submitCreate}
-        confirmLoading={creating}
-        okText="创建并配置"
-        cancelText="取消"
+        onClose={() => setCreateOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setCreateOpen(false)}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" loading={creating} onClick={submitCreate}>
+            创建并配置
+          </Button>,
+        ]}
         width={isMobile ? '92vw' : 520}
         destroyOnHidden
       >
@@ -1167,13 +1212,13 @@ export default function ReportsPage() {
             <Input.TextArea rows={2} maxLength={200} showCount placeholder="用于解释报表口径（可选）" />
           </Form.Item>
         </Form>
-      </Modal>
+      </StableModal>
 
       {/* ══════════ 分享弹窗（不跳转） ══════════ */}
-      <Modal
+      <StableModal
         title="分享报表"
         open={shareOpen}
-        onCancel={closeShare}
+        onClose={closeShare}
         width={isMobile ? '92vw' : 480}
         destroyOnHidden
         footer={
@@ -1275,17 +1320,21 @@ export default function ReportsPage() {
             </Form.Item>
           </Form>
         )}
-      </Modal>
+      </StableModal>
 
       {/* ══════════ 编辑弹窗（名称/图标/标题/描述/标签/分组） ══════════ */}
-      <Modal
+      <StableModal
         title={editTarget?.kind === 'ai' ? '编辑 AI 报表' : '编辑报表'}
         open={!!editTarget}
-        onCancel={() => setEditTarget(null)}
-        onOk={submitEdit}
-        confirmLoading={savingEdit}
-        okText="保存"
-        cancelText="取消"
+        onClose={() => setEditTarget(null)}
+        footer={[
+          <Button key="cancel" onClick={() => setEditTarget(null)}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" loading={savingEdit} onClick={submitEdit}>
+            保存
+          </Button>,
+        ]}
         width={isMobile ? '92vw' : 520}
         destroyOnHidden
       >
@@ -1309,13 +1358,13 @@ export default function ReportsPage() {
             <Input.TextArea rows={2} maxLength={200} showCount placeholder="用于解释报表口径（可选）" />
           </Form.Item>
         </Form>
-      </Modal>
+      </StableModal>
 
       {/* ══════════ 查看代码（只读，与后端逐字一致） ══════════ */}
-      <Modal
+      <StableModal
         title="查看代码（DSL 配置）"
         open={codeOpen}
-        onCancel={() => setCodeOpen(false)}
+        onClose={() => setCodeOpen(false)}
         width={isMobile ? '94vw' : 720}
         footer={[
           <Button key="copy" icon={<CopyOutlined />} onClick={async () => {
@@ -1339,17 +1388,21 @@ export default function ReportsPage() {
           spellCheck={false}
           style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 12.5 }}
         />
-      </Modal>
+      </StableModal>
 
       {/* ══════════ 修改代码 / 手动调整（可编辑） ══════════ */}
-      <Modal
+      <StableModal
         title="修改代码（DSL 配置）"
         open={codeEditOpen}
-        onCancel={() => setCodeEditOpen(false)}
-        onOk={saveCode}
-        confirmLoading={savingCode}
-        okText="保存"
-        cancelText="取消"
+        onClose={() => setCodeEditOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setCodeEditOpen(false)}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" loading={savingCode} onClick={saveCode}>
+            保存
+          </Button>,
+        ]}
         width={isMobile ? '94vw' : 720}
         destroyOnHidden
       >
@@ -1363,17 +1416,21 @@ export default function ReportsPage() {
           spellCheck={false}
           style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 12.5 }}
         />
-      </Modal>
+      </StableModal>
 
       {/* ══════════ AI 调整（prompt → ai-draft，30 秒超时兜底） ══════════ */}
-      <Modal
+      <StableModal
         title="AI 调整"
         open={aiOpen}
-        onCancel={() => setAiOpen(false)}
-        onOk={runAiAdjust}
-        confirmLoading={aiLoading}
-        okText={aiLoading ? '生成中…' : '生成草稿'}
-        cancelText="取消"
+        onClose={() => setAiOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setAiOpen(false)} disabled={aiLoading}>
+            取消
+          </Button>,
+          <Button key="ok" type="primary" loading={aiLoading} onClick={runAiAdjust}>
+            {aiLoading ? '生成中…' : '生成草稿'}
+          </Button>,
+        ]}
         width={isMobile ? '92vw' : 520}
         destroyOnHidden
       >
@@ -1397,7 +1454,7 @@ export default function ReportsPage() {
         <div style={{ marginTop: 10, fontSize: 11.5, color: NEUTRAL.textTertiary }}>
           <ThunderboltOutlined /> 若本地无模型凭据，AI 服务可能不可用，届时可点「手动调整」直接编辑 DSL。
         </div>
-      </Modal>
+      </StableModal>
 
       {/* 隐藏的 reload 图标引用（保持工具栏一致，不额外占位） */}
       <span style={{ display: 'none' }}>

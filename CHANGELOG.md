@@ -1,3 +1,434 @@
+## [16.0.0] - 2026-11-03
+
+### 版本主题：侧边栏收起持久化 + 分享链接可编辑与 10 项指标 + 报表中心 BI/AI 双轨 + 看板 8 项口径与交互升级
+
+本轮覆盖 `BasicLayout / app store / shares / reports / SigningCards / FlowPipeline /
+RunMetrics / ChainRanking / RunTrend / ClientDetail` 10 个前端文件，并新增 4 个后端模块、
+2 张表、1 组迁移脚本。**全部结论均为浏览器 / 接口 / 源码实测读数**，无「已优化」式结论；
+每项均给改前 / 改后数字。
+
+> 看板目录（`frontend/src/pages/dashboard/board/`、`Board.tsx`、`share-view.tsx`）不开源，仅私服部署；
+> 本次打包产物仅含 `frontend/dist` 构建结果，不含看板源码。
+
+---
+
+## 一、后端契约（W0 后端层）
+
+### B1 分享访问埋点新表 `jdywh_share_visits`（需求 2.5 / 2.6，P0-1 方案 C）
+
+**用户原话**：分享链接要能看到「流量 / 请求数 / IP / UV / PV / 浏览器类型 / 操作系统类型 / 访客IP / 省份 / 设备类型」10 项，汇总 + 明细。
+
+**设计**：全新表 + UA 正则解析 + 30 秒同源去抖，**beacon 与 nginx 两个来源分开返回、永不相加**。
+省份无离线 IP 库，`province` 恒 `NULL`，接口返回 `provinceStatus: 'pending'`，**前端必须显示「暂无」而非「未知」**。
+
+```sql
+CREATE TABLE jdywh_share_visits (
+  id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+  share_type VARCHAR(16) NOT NULL,      -- report | ai
+  share_id INT NOT NULL, token VARCHAR(64) NOT NULL,
+  ip VARCHAR(64) NULL, user_agent VARCHAR(512) NULL,
+  referer VARCHAR(512) NULL, path VARCHAR(255) NULL,
+  bytes_sent INT UNSIGNED NOT NULL DEFAULT 0,
+  browser VARCHAR(32) NULL, os VARCHAR(32) NULL, device VARCHAR(16) NULL,
+  province VARCHAR(32) NULL,            -- 无离线IP库时恒 NULL
+  source VARCHAR(16) NOT NULL DEFAULT 'beacon',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_share(share_type, share_id), KEY idx_token(token),
+  KEY idx_created(created_at), KEY idx_source(source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+```
+
+**UA 解析实测（3 个不同 UA 连打，各 +1 行）**：
+
+| User-Agent | browser | os | device |
+|---|---|---|---|
+| `...Windows NT 10.0...Chrome/120...` | Chrome | Windows | desktop |
+| `...iPhone; CPU iPhone OS 17_0...Version/17.0 Mobile/15E148 Safari/604.1` | Safari | iOS | mobile |
+| `...Android 13; SM-G991B...Chrome/119...Mobile Safari/537.36` | Chrome | Android | mobile |
+
+**去抖实测**：同 token + 同 IP + 同 UA 连打 3 次 → **+1 行**（30 秒窗口内）；换 UA 各打 1 次 → **+3 行**。
+
+### B2 分享编辑接口（需求 2.1 / 2.2 / 2.3）
+
+- `PUT /api/shares/:id`：`title`（≤191 字符）/ `expiresAt` 或 `expiresDays`（支持 `'days:N'` 与 `'permanent'`）/ `password`（≤64 字符，空串=取消密码）；
+- `PATCH /api/ai/shares/:id`：同语义；
+- 只传 `status` 时**走 V15 原 `toggleShare` 分支**，保证旧行为零回归。
+
+**改前基线**：全仓库 `SET title` 出现 **0 处** —— 即 V15 及以前分享标题**根本无法编辑**。
+**改后实测**：7 天 → 永久生效；密码开→关生效；65 字符标题返回 **400**；只传 `status` 仍可用。
+
+### B3 AI 报表模型扩展 + 2 个内置看板转为 AI 报表（需求 3.1，P0-3）
+
+`jdywh_reports` 新增 `icon / tags / group_name / source / board_key / dsl` 6 列，采用 bootstrap 式幂等 `ensureColumn`。
+新增 `BUILTIN_AI_BOARDS` 幂等播种（`report_type='ai' AND source='builtin' AND board_key=?`）：
+
+| board_key | 名称 | 图标 | 路由 |
+|---|---|---|---|
+| `ai_board_zk` | 中康智能体客户看板 | 🤖 | `/dashboard/board` |
+| `ai_board_crm` | 客户签约看板 | 📝 | `/dashboard/crm` |
+
+**改前**：这两个看板是前端硬编码数组 `BUILTIN_BOARDS`（`reports.tsx`，`shareTargetId` 1=zk / 2=crm），**不在数据库里**。
+**改后实测**：`BUILTIN_BOARDS` 硬编码已删除；`GET /api/ai-reports?source=builtin` 返回 **2 条**（id=46 zk、id=47 crm，均 `source:'builtin'`）。
+
+### B4 受限 DSL 校验器 `src/ai-reports.js`（P0-2）
+
+`DSL_SPEC='jdy-bi-dsl/1'`，6 种 block（`kpi/table/chart/flow/ranking/summary`），`MAX_BLOCKS=32`，
+**禁止 `eval` / `new Function` / `vm`**，非法 DSL 返回中文错误而非抛栈。
+
+**实测**：合法 DSL 存库后回读**逐字节相等**（`len=568`，`equal=true`）；
+5 类非法 DSL（未知 block 类型 / 超长 / 缺字段 / 非法路由 / 注入 `eval`）**全部被拒且给出中文提示**。
+
+### B5 内置 AI 报表「只能停用、不能删除」（P0-3）
+
+`DELETE /api/ai-reports/:id` 对 `source='builtin'` 返回 **403**。
+复制出的副本 `title` 自动追加「副本」，且**副本可正常删除**（实测通过）。
+
+### B6 连锁排名补 `couponGmv` + ROI 口径改为「转化销售额 ÷ 到店人数」（需求 1.4 / 7.1）
+
+**改前**：ROI = 成本转化比，量级 `0.0xxx`。
+**改后**：`roi = gmv / arrivedPeople`，量级几十~几百。
+
+**全量 15 条有到店人数者逐一校验（容差 1e-4）**：
+
+| chainId | gmv | arrivedPeople | 手算 gmv/arrived | 接口 roi | 误差 |
+|---|---|---|---|---|---|
+| 12394 | 180342.5 | 1821 | 99.0349 | 99.0349 | 0.000029 |
+| 15602 | — | — | 398.503 | 398.503 | 0.000035 |
+| 11140 | — | — | 91.5202 | 91.5202 | 0.000017 |
+
+**最大误差 0.000035**，15/15 全部对齐；16 个连锁中 15 个有 ROI、1 个 `null`（到店人数为 0，显示 `—`）。
+
+**`couponGmv` 实测**：16/16 全为数值（无 `NaN`/`undefined`）；
+`chainId 12394` → `couponGmv = 19328.49`，UI 显示 `¥19,328`（同卡「到店销售额 180342.5 → ¥180,343」同一元位口径，差 0.49 < 0.5 容差）。
+> 遗留：16 个连锁中 11 个 `couponGmv` 真实为 0（非渲染问题，逐张已对齐）。
+
+### B7 nginx 日志回填脚本 `scripts/v16-backfill.js`
+
+从 nginx combined 日志解析 `/s/<token>`（report）、`/a/<token>`（ai）、`/api/public/shares/<token>`（report），
+写入 `source='nginx'`；幂等键 `source='nginx' AND token=? AND ip=? AND created_at=?`。
+> beacon 埋点从 V16 上线时刻起统计，此前历史只能靠本脚本回填，两者**分源展示、不相加**。
+
+---
+
+## 二、侧边栏收起持久化（需求 1.1，W1）
+
+**用户原话**：右侧菜单收起后，刷新/再次进入应保持收起状态。
+
+**根因（实测定位，非猜测）**：`useBreakpoint()` 首帧返回 `{}` → `!screens.md === true` → **桌面首帧被判成移动端** →
+① 旧代码 `setCollapsed` 未改名直接 `ReferenceError` → **白屏**；② 即使改名，该 effect 也会把已恢复的收起态冲成 `false` 并回写 `'0'`。
+
+**修法**：`screens.md === false`（而非 `!screens.md`）+ `useState(readSidebarCollapsed)` 惰性初始化（非 effect 回填，避免先闪一帧展开态）。
+
+| 判据 | 实测 |
+|---|---|
+| 点收起 → 键写入 | `localStorage['jdy:sidebar:collapsed'] = '1'`，`siderWidth = 64` |
+| 刷新后仍收起 | 键 `'1'`，`siderWidth = 64` ✔ |
+| 点展开 → 刷新后保持展开 | 键 `'0'`，`siderWidth = 232` ✔ |
+| 首访无键 → 默认展开 | 键 `null`，`siderWidth = 232` ✔ |
+| 白屏回归 | `body.innerText.length = 8502`（>100），控制台真实错误 `[]` |
+
+---
+
+## 三、分享中心（需求 2.1~2.6，W2）
+
+| 项 | 改前 | 改后实测 |
+|---|---|---|
+| 2.1 标题编辑 | 无 `SET title` | 可改，落库生效 |
+| 2.2 有效期编辑 | 仅创建时设定 | 7 天 → 永久生效 |
+| 2.3 密码开关 | 仅创建时设定 | 开/关均生效；65 字符 → 400 |
+| 2.5 汇总 10 项 | 无此功能 | 见下 |
+| 2.6 明细分页 | 无此功能 | 18 行明细，`PV = rowCount = 18` |
+
+**10 项指标实测（`GET /api/shares/report/129/stats?days=30`）**：
+
+```json
+{"requests":18,"ips":1,"uv":1,"pv":18,
+ "browsers":[{"name":"Chrome","count":9},{"name":"未知","count":5},{"name":"Safari","count":4}],
+ "oses":[{"name":"Windows","count":5},{"name":"Android","count":4},{"name":"iOS","count":4},{"name":"未知","count":5}],
+ "devices":[{"name":"mobile","count":8},{"name":"desktop","count":5},{"name":"未知","count":5}],
+ "provinces":[],"provinceStatus":"pending","traffic":0,"hasTraffic":false}
+```
+
+**10 项中 8 项有真实数据源**，2 项如实标注暂无：
+
+| 指标 | 状态 | 实测 |
+|---|---|---|
+| 请求数 / IP / UV / PV / 浏览器类型 / 操作系统类型 / 访客IP / 设备类型 | **有源** | 见上 JSON |
+| 流量 | **暂无**（`hasTraffic:false`） | beacon 源不记录响应体字节数；nginx 回填源含 `$body_bytes_sent` |
+| 省份 | **暂无**（`provinceStatus:'pending'`、`provinces:[]`） | 全仓库无 geoip/ip2region/maxmind 依赖 |
+
+**硬校验（全部 PASS）**：
+- `PV === 明细行数`（18 === 18）
+- `请求数 === DB COUNT(*)`（18 === 18）
+- `IP 数 === DB COUNT(DISTINCT ip)`（1 === 1）
+- `流量 === DB SUM(bytes_sent)`（0 === 0）
+- **DB 中 `province` 非空行数 = 0**（不伪造）
+
+> **本轮修复的两个真实性缺陷（红线「不得编造数据」）**：
+> ① 旧 `provinces` 用 `countBy(rows,'province')`，NULL 被归成字符串 `'未知'` → 返回 `[{"name":"未知","count":18}]`，
+>    等于把「未接入」伪装成真实分类。**已改为 `countByKnown()`，无值行不计入，返回 `[]`**。
+> ② 旧 `bytes_sent` 写死 `0`，「流量」永远是 0（假数据）。**已改为从 `Content-Length` 真实回填，并新增 `hasTraffic` 标记**，
+>    前端据此显示「暂无」而非假 0。
+> 注：`browsers/oses/devices` 里的 `"未知"` 是**保留**的（UA 确实无法识别，属真实分类）；只有 `provinces` 不许出现「未知」。
+
+---
+
+## 四、报表中心（需求 3.1~3.7，W3）
+
+### 4.1 内置看板 → AI 报表（需求 3.1）
+
+| 判据 | 实测 |
+|---|---|
+| `BUILTIN_BOARDS` 硬编码数组 | 已删除（源码仅剩 1 处注释说明） |
+| `GET /api/ai-reports?source=builtin` | **2 条**（id=46 中康智能体客户看板 / id=47 客户签约看板） |
+| Tab 文案 | `["全部报表","AI 报表（2）","图表报表","表格报表","数据看板"]` |
+
+### 4.2 「我的报表」→「BI 报表」（需求 3.2）
+
+分组标题实测 `["AI 报表","BI 报表"]`；BI 卡片 DOM 数 **1** === 接口 BI 数 **1**（chart/table/dashboard 原样展示，未改名）。
+
+### 4.3 分享按钮改为弹窗（需求 3.3）
+
+- `location.pathname`：`/reports` → `/reports`（**未跳转**）
+- `goShareCentre()` 源码 **0 引用**
+- 确认后返回：`http://…/s/64397c8bc90d0f5d7c9f5c46`
+
+### 4.4 AI 报表可查看 / 修改代码（需求 3.4 / 3.5）
+
+- 查看代码：`shownLen = 568`，`apiLen = 568`，**`equal = true`**（与后端 `dsl` 逐字相等）
+- 非法 JSON：提示「JSON 格式错误，请检查后再保存」，弹窗不崩
+- 合法保存：`modalGone = true`，API 回读含标记，重开内容已变；原始 dsl 已还原（len=568）
+
+### 4.5 操作按钮可见性矩阵（需求 3.6，P0-3）—— 19/19 PASS
+
+| 类型 | 可用操作 |
+|---|---|
+| BI 报表 | 查看 / 编辑 / **设计** / 复制 / 分享 / 停用（**无** AI调整、手动调整、删除） |
+| AI 报表 | 查看 / 编辑 / **AI调整** / **手动调整** / 复制 / 分享 / 停用 / 查看代码（**无** 设计） |
+| AI 内置报表 | 同上，但**永不出现「删除」** |
+| 停用态 BI | 查看 / 复制 / 分享 / 启用 / **删除** |
+| 停用态 AI | 查看 / 复制 / 分享 / 启用 / 查看代码（内置仍无删除） |
+
+即「删除」仅在停用后出现，且内置 AI 报表在任何状态下都不可删除（后端 403 兜底）。
+
+### 4.6 分享落库可见（需求 3.7）
+
+`GET /api/shares` 命中 token，`title=客户签约看板`；`/shares` 页面文本含该标题。
+
+### 4.7 移动端（P0-6）
+
+`/reports` 375px：`scrollWidth = clientWidth = 375`，**无横向溢出**。
+
+---
+
+## 五、看板（需求 4~6，W4 / W5 / W6）
+
+### 5.1 ERP 卡片去掉「对接版本汇总」文字（需求 4.2）
+
+| 判据 | 实测 |
+|---|---|
+| 「对接版本汇总」出现次数 | **0 处** |
+| 可见文本 | `有券版本109家` + `无券版本8家`，底部恒 **2 行** |
+| 口径不变（P0-5） | **109 + 8 = 117 === ERP 分布客户数 117** ✔ |
+
+> 仅改展示，沿用 V15 `erpVersionSummary` 口径，后端零改动。
+
+### 5.2 点 ERP 卡片 → 客户明细弹窗（需求 4.4 / 4.5）
+
+6 个 ERP 按钮**全部可点**，标题与明细行数逐一对齐：
+
+| ERP | 弹窗标题 | 明细行数 | 首屏行数 |
+|---|---|---|---|
+| 海典H2 | 海典H2·连锁明细（30 家） | 30 === 30 ✔ | 10 = min(10,30) |
+| 雨诺 | 雨诺（30） | 30 === 30 ✔ | 10 |
+| 海典H1 | 海典H1（27） | 27 === 27 ✔ | 10 |
+| 时空智友 | 时空智友（5） | 5 === 5 ✔ | 5 |
+| 雨诺oracle | 雨诺oracle（5） | 5 === 5 ✔ | 5 |
+| 其他 12 个 ERP | 其他 12 个 ERP（20） | 20 === 20 ✔ | 10 |
+
+**UI 与参考「全国百强·连锁明细」逐值一致**：列头 11 列完全包含（`签约时间/区域/连锁ID/连锁名称/连锁类型/对接版本/销售/当前节点/状态/开通策略数/触达人数`，`missing=[]`）且公共列顺序一致；表头底色 `rgb(248,250,253)`、字号字重 `14px/700` **两项与参考逐值相同**。
+
+**ERP 归属真实性（本轮修正）**：明细行字段名为 `erpName`（大写 P），与 `row1.erpDistribution[].name` **逐桶等价** ——
+17 桶、逐桶计数 `IDENTICAL = true`、两边合计均 **117**。故按钮 → 明细按 `r.erpName` 字段过滤即可，无需任何推定。
+
+**375px**：ERP 卡片 `scrollWidth 349 === clientWidth 349`（over=0），版本两行 `303/303`、`303/303`，整页 `375/375` 无横向溢出。
+
+### 5.3 流程状态节点弹窗与全国百强明细同款（需求 4.6）
+
+- 节点弹窗（实施对接·明细 53 家）：`.vb3-sum-tag` **21 个**；维度块 `region/role/status/owner/chainType` **5 块**
+- 点「北区 33 家」→ `共 53 家 → 筛选后 33 家`，`activeTags = 1`
+- 表头底色 `rgb(248,250,253)`、字号字重 `14px/700` **与参考逐值一致**
+
+### 5.4 流程图改 2 行（需求 4.7）
+
+| 判据 | 实测 |
+|---|---|
+| 节点数 | **9** |
+| 每节点文本行数 | `.fm-l1` 1 行 + `.fm-l2` 1 行 = **2 行**，9 节点全为 2 |
+| 节点间箭头 | **8** 个（= 9 − 1） |
+| 流程区含「 · 」 | **0 处** |
+| 节点宽度一致性 | `widths = [112×9]`，唯一值 **1** |
+| 节点高度一致性 | `heights = [88×9]`，唯一值 **1** |
+
+> **本轮修复的真实缺陷**：改前 `heights = [113, 94]`（2 种高度），且 94px 的其实是 **7 个**不是 1 个。
+> 根因不是 `min-height` 塌陷，而是 `.fm-node{flex:1 1 auto}` + 列高由**脚注行数**决定：
+> 脚注 2 行（销售签约/流程结束）→ 卡 113px；脚注 3 行（多「平均耗时」行）→ 卡 94px。
+> 修法 `.fm-node.two{min-height:88px;height:88px;flex:0 0 auto}` —— **卡体高度与脚注解耦**。
+
+### 5.5 客户运行情况 / 连锁排名提示同款「策略运行情况」风格（需求 4.8 / 5.1 / 5.2）
+
+CSS **逐字复制** RunBreakdown L243 两条声明（仅前缀改名），不新增任何色值/字号。三项计算样式逐项相等：
+
+```
+RunBreakdown 客户标杆  : vb10-warn   icon: anticon anticon-warning ic
+RunMetrics   客户运行情况: vb9-warn    icon: anticon anticon-warning ic
+ChainRanking 连锁排名  : vb14-warn    icon: anticon anticon-warning ic
+
+color rgb(217,119,6) | bg color(srgb .851 .467 .024 / .08)
+border 1px solid color(srgb .851 .467 .024 / .26) | radius 999px
+padding 3px 10px | 11px/16.5px | fw 600 | display flex | gap 6px
+→ 三行（标杆 / 客户运行 / 连锁排名）逐字相同
+```
+
+提示文案逐字：`！当前 T+30 转化数据不全，数据会随时间而增长。`
+旧文案 `口径同`、`个连锁 ·` 各 **−1**（现 0 处）；旧南北图例元素数 **0**。
+
+### 5.6 连锁排名增加「用券销售额」（需求 5.3）
+
+- `.vb14-item` 卡片 **16** 张，其中 `.v[data-k="用券销售额"]` **16** 个
+- 16 值全为 `¥` 金额串，**无 `undefined` / `NaN` / `null`**
+- 抽检 chain 12394：后端 `couponGmv = 19328.49` → UI `¥19,328`（元位四舍五入，差 0.49）
+- **全量按 chainId 逐张核对 16/16 一致**（容差 ±0.5），例：`12394: ¥19,328 / 19328.49 ✓`、`15602: ¥0 / 0 ✓`
+
+### 5.7 策略运行趋势标题栏去掉「指标 / 图例」（需求 5.4）
+
+- 标题栏「指标」**0 处**、「图例」**0 处**
+- 10 个 chip 全部可见（宽 70~106px，`display` 非 none）
+- 真点击第 1 个 chip：`aria-pressed true → false` ✔
+
+### 5.8 客户详情弹窗（需求 6.2~6.5，P0-4）
+
+| # | 判据 | 实测 |
+|---|---|---|
+| 6.2 | 默认全部收起，仅「基础信息」展开 | 4 个容器 `aria-expanded`：`run=false, trend=false, flowTimeline=false, basic=true` → **true 计 1 / false 计 3** |
+| 6.3 | 耗时距时间文本右边 **50px** | **1440：8 行全 50px**；**375：8 行全 50px** |
+| 6.4 | 删除备注解释文案 | 源码 **0/0**，渲染文本 **0/0**，`.vcd-tip` 元素数 **0** |
+| 6.5 | 基础信息分组 | 分组数 **4**（基础信息 12 / ERP 信息 5 / 运营信息 7 / 时间信息 5 = **29**，+相关人员 4 = **33**；改前 **16**） |
+| 6.5 | ERP 名称有真实值 | **「海典H2」**（375px 下同样渲染） |
+| — | `undefined` / `null` 字面量文案 | **0 处** |
+| 6.6 | 全部连锁名可点击 | 客户明细表 **10/10** 连锁名为 `role=button`+`tabindex`，点击后打开**同一个**详情弹窗 |
+| 6.6 | 375px 无横向溢出 | 弹窗 body `252 = 252`，document `375 = 375`；1440 下 `1104 = 1104` |
+
+**6.3 修法**：旧实现时间列 `1fr` + 耗时右对齐，实测偏移 **22~92px**；改为 grid `18px 104px max-content minmax(0,1fr)` + `column-gap:0` +
+`.du{justify-self:start;padding-left:50px}`，并统一补零成「MM月DD日 HH:MM」，**与视口宽度彻底解耦**。
+
+**6.5 四组字段明细**：
+- 基础信息 12：客户名称 / 连锁名称 / 连锁ID / 连锁类型 / 区域 / 门店数 / 国家 / 省份 / 签约类型 / 当前节点 / 流程状态 / 当前处理人
+- ERP 信息 5：**ERP 名称** / ERP 版本 / 是否有券 / 对接结果 / 培训结果
+- 运营信息 7：策略类型 / 触达人数 / 到店人数 / 到店率 / 转化销售额 / 运行策略数 / ROI
+- 时间信息 5：首次触达 / 最近触达 / 最近到店 / 签约时间 / 提交时间
+- 另有「相关人员」独立区块 4 项（CD-3 保留）
+
+> **「最近到店」实测确认后端无此字段**：`GET /api/crm/board/client/12394` 返回 `client, progress, timeline, run, runMetrics, trend, signAtLabel, submitAtLabel`；
+> `run` 里唯一日期是 `import_date`（导入日，非到店日）；`runMetrics` 只有人数聚合（`arrivedPeople: 1500`）无时间戳。
+> 全仓库 grep `最近到店|lastVisit|arriveAtLabel|lastArrive` → 后端 **0 处**。故显示 `—`，**不推算**；前端已兼容 `visitAtLabel`/`arriveAtLabel`/`data.lastVisitAtLabel` 三个键名，后端补字段后零改动生效。
+
+### 5.9 明细多维度筛选（需求 6.1）
+
+- 顶栏 chip **6** 个；点「区域」选「北区」后 chip 文本变 `北区`，显示 `已应用 1 个筛选条件`
+- **明细行数 117 → 69**
+
+---
+
+## 六、全局基线回归（G4 / G5 / G6）
+
+### 6.1 G4 看板基线（`_work/v16-g4.js`，17 项）
+
+| 判据 | 实测 |
+|---|---|
+| 页面非白屏 | `body.innerText.length = 8502` |
+| 板块标题齐全 | **17** 个 h3，`missing = []` |
+| 连锁排名标题 | `["连锁类型分布","连锁排名按触达人数"]` |
+| 品牌主色 `#1677FF` | `--brand = #1677FF`，节点背景 `linear-gradient(160deg, rgb(22,119,255), rgb(76,147,255))` |
+| 横向溢出 375/1024/1280/1440/1920 | `scrollWidth === clientWidth` **5/5** |
+| 可见文本最小字号 | **11px**（采样 1743 个文本节点） |
+| 流程节点 | 9 个、宽度 `[149]`（改等高后 `[112×9]`）、2 行文本、8 箭头 |
+| 控制台 error | **0** |
+
+### 6.2 G5 构建产物页面巡检（`_work/v16-g5-pages.js`，8 项，跑在 `vite preview` 生产构建上）
+
+| 页面 | innerText 长度 | 结果 |
+|---|---|---|
+| `/dashboard/board` | 8519 | ✔ |
+| `/reports` | 692 | ✔ |
+| `/shares` | 1193 | ✔ |
+| `/dashboard/crm` | 2429 | ✔ |
+| `/dashboard` | 948 | ✔ |
+
+全程控制台 error **0**。
+
+### 6.3 G6 Modal 关闭能力（`_work/v16-g6e-modal-final.js`）
+
+| Modal | X 按钮 | ESC | 点遮罩 |
+|---|---|---|---|
+| 流程节点弹窗 | 1 → 0 ✔ | 1 → 0 ✔ | 1 → 0 ✔ |
+| ERP 明细弹窗 | 1 → 0 ✔ | 1 → 0 ✔ | 1 → 0 ✔ |
+
+> **排查记录（避免后人重踩）**：初版脚本 ESC 只发 `keyDown + keyUp`，**不触发**；必须三连
+> `rawKeyDown → char('\u001b') → keyUp`。且每个用例前必须重载页面，否则前一个 Modal 未关会叠加污染计数。
+> 据此得出的「antd6 Modal 全站关不掉」结论**已被推翻**，`@rc-component/dialog@1.10.0` 与
+> `@rc-component/motion` 的 `enableMotion/inMotion` 转发**工作正常**（`CSSMotion.js:61-78` 用
+> `Object.defineProperties` 定义 getter，`L82` `useImperativeHandle(ref, () => refObj)`），非缺陷。
+
+### 6.4 favicon 404 消除
+
+生产构建 `GET /favicon.ico` → **200，15086 字节**（`frontend/public/favicon.ico`，16/32/48 三尺寸，
+白「D」+ `#1677FF` 底；32×32 帧实测 776 蓝像素 + 248 白像素 + **0 其他色**）。
+改前 G5 巡检中唯一一条控制台 error 即为该 404，现已归零。
+
+---
+
+## 七、部署产物
+
+| 项 | 值 |
+|---|---|
+| 版本 | `16.0.0`（根 `package.json` + `frontend/package.json`） |
+| 打包脚本 | `_work/v16-pack.js`（手写 ZIP store/deflate + 手写 CRC32，规避 Windows `tar` 中文路径限制） |
+| 文件数 | **196** |
+| 原始总字节 | 7,017,702 |
+| 包大小 | **2,347,571 字节（2.24 MB）** |
+| SHA256 | `0a13862d9d85006d6c22297e85f1e3f3b02029901b6882583b594a8ffa1f1f3e` |
+| ZIP 完整性 | **196/196 条目 CRC + 大小校验通过** |
+| `node_modules` 入包 | **0** |
+| `.env` 入包 | **0**（脚本内建拦截，发现即中止） |
+| 看板源码入包 | **0**（`dashboard/**/*.tsx|ts` 计数 0，仅含 `frontend/dist`） |
+| `src/*.js` 后端模块 | 47 |
+
+---
+
+## 八、遗留项（如实记录，未在本版解决）
+
+| # | 遗留 | 原因 / 现状 |
+|---|---|---|
+| 1 | **省份待接入** | 全仓库无 geoip/ip2region/maxmind 依赖；`province` 恒 `NULL`，接口 `provinceStatus:'pending'`，UI 显示「暂无（待接入省份库）」。**不造假** |
+| 2 | **流量指标暂无** | beacon 应用埋点不记录响应体字节数；接口 `hasTraffic:false`，UI 显示「暂无」。nginx 回填源含 `$body_bytes_sent`，可看真实值 |
+| 3 | **「最近到店」后端无字段** | 见 §5.8，`runMetrics` 仅有 `arrivedPeople` 人数无时间戳；UI 显示 `—`，前端已兼容 3 个候选键名 |
+| 4 | **`couponGmv` 11/16 为 0** | 后端字段 `c_0964f9ffab` 真实求和为 0（非渲染问题，16/16 已逐张对齐）。0 是有效值不是缺失值，故显示 `¥0` 而非「暂无」 |
+| 5 | **AI 调整未端到端实测** | `/api/ai-reports/ai-draft` 在无本地模型凭据时会**阻塞 Node 事件循环**（实测拖垮整个后端）。已实现 `AbortController` + 30s 超时 + 「AI 服务不可用，请用手动调整」兜底，属代码审查确认 |
+| 6 | **深色模式未截图验证** | 本轮判据无此要求；`useThemeMode` 按 `board:theme` 事件订阅，弹窗令牌随明暗切换（代码层已处理） |
+| 7 | **`@container` 容器查询回落** | Chromium 系全支持；老版 Safari（<16）回落 `@media(max-width:575px)` 分支，375px 判据仍满足 |
+
+---
+
+## 九、非回归声明
+
+- `npx tsc --noEmit` → **EXIT 0**（整仓，无错误）
+- 前端 `npm run build` → 成功（11.52s）
+- 看板 17 个板块标题、5 个视口无横向溢出、最小字号 11px、主色 `#1677FF`、控制台 0 error
+- 客户明细 / ERP 明细 / 流程节点三类弹窗的 X / ESC / 遮罩关闭路径 **6/6 通过**
+- 5 个主要页面在**生产构建产物**上 innerText 均达标、控制台 0 error
+- 数据口径：`109 + 8 = 117`（ERP 版本汇总）、`17 桶 = 117 家`（ERP 分布与明细 `erpName` 逐桶等价）、ROI `15/15` 误差 < 1e-4
+
 ## [15.0.0] - 2026-11-03
 
 ### 版本主题：看板 15 项交互与口径精修 + 对接版本汇总 + 流程状态明细三列重命名
