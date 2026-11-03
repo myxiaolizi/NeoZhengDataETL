@@ -11,7 +11,7 @@
  * 前端必须展示 loading 态，不能按流式逐字渲染。
  */
 import { api, qs, ApiError } from '@/api/client';
-import type { DatasetColumn, RowData } from '@/api/reports';
+import type { DatasetColumn, RowData, ShareStatsResult } from '@/api/reports';
 
 export interface AiAskPayload {
   question: string;
@@ -393,8 +393,19 @@ export interface AiShareItem {
   lastAskAt?: string | null;
   createdAt?: string;
   hasPassword: boolean;
+  /** 管理端仅对管理员返回的密码明文（用于编辑弹窗回显或开关校验） */
+  password?: string | null;
   /** 分享包含的范围（列表接口不一定回传，缺省为空数组） */
   scope: AiScopeRef[];
+}
+
+export interface AiShareUpdatePayload {
+  title?: string;
+  expiresAt?: string | null;
+  expiresDays?: number;
+  password?: string | null | false;
+  passwordOn?: boolean;
+  status?: number;
 }
 
 export interface AiShareCreatePayload {
@@ -446,7 +457,8 @@ export function normalizeShareItem(raw: unknown): AiShareItem {
     askCount: toNum(o.askCount ?? o.ask_count),
     lastAskAt: (o.lastAskAt ?? o.last_ask_at ?? null) as string | null,
     createdAt: (o.createdAt ?? o.created_at ?? undefined) as string | undefined,
-    hasPassword: o.hasPassword === true || o.password === true || !!o.password_plain,
+    hasPassword: o.hasPassword === true || o.password === true || !!o.password_plain || (typeof o.password === 'string' && o.password.length > 0),
+    password: typeof o.password === 'string' ? o.password : typeof o.password_plain === 'string' ? o.password_plain : null,
     scope,
   };
 }
@@ -479,6 +491,26 @@ export async function setAiShareStatus(id: number, status: number): Promise<AiSh
   const raw = await api.patch<unknown>(`/ai/shares/${id}`, { status: status ? 1 : 0 }, { silent: true });
   if (!raw || typeof raw !== 'object') return null;
   return normalizeShareItem(raw);
+}
+
+/** V16 2.1~2.4：编辑 AI 问数分享（标题 / 有效期 / 访问密码开关与修改 / 状态） */
+export async function updateAiShare(id: number, payload: AiShareUpdatePayload): Promise<AiShareItem> {
+  const raw = await api.patch<unknown>(`/ai/shares/${id}`, payload, { silent: true });
+  return normalizeShareItem(raw);
+}
+
+/** V16 §2.6：AI 问数分享的访问统计（10 项汇总 + 明细）
+ *
+ * 与报表分享共用同一个后端接口 `GET /api/shares/:shareType/:id/stats`，
+ * shareType 固定为 `ai`；返回结构与 `ShareStatsResult` 完全一致，
+ * 因此直接复用 reports.ts 的类型，不再另起一套。
+ * beacon（应用埋点）与 nginx（日志回填）在后端已分开给出，前端必须分开展示。
+ */
+export function getAiShareStats(
+  id: number | string,
+  opts?: { days?: number; limit?: number },
+): Promise<ShareStatsResult> {
+  return api.get<ShareStatsResult>(`/shares/ai/${id}/stats` + qs(opts || {}));
 }
 
 /** 删除分享 */

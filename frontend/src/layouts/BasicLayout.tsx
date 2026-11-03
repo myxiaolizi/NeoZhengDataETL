@@ -51,7 +51,17 @@ export default function BasicLayout({ children }: { children: React.ReactNode })
     fetchSite,
   } = useAppStore();
   const screens = useBreakpoint();
-  const isMobile = !screens.md;
+  /**
+   * V16 W1 修复（白屏 + 收起态被冲掉，同一个根因）：
+   *
+   * `useBreakpoint()` 在**首帧**返回空对象 {}（媒体查询还没算出结果），
+   * 于是 `isMobile = !screens.md` 首帧为 true，桌面端也会先渲染一帧「移动端」。
+   * 旧代码 `useEffect(() => { if (isMobile) setCollapsed(false); }, [isMobile])`
+   * 就在这一帧把从 localStorage 恢复的收起态冲成 false 并回写 '0'，
+   * 同时整个桌面 Sider 也被这一帧隐藏 → 表现为「刷新后收起态丢失」。
+   * 现在：只有 screens.md 明确为 false（真实的窄屏）才算移动端，首帧不误判。
+   */
+  const isMobile = screens.md === false;
   /**
    * 侧栏收起态（V16 W1 需求原文 L4：「右侧菜单用户点击收起后，下次进入时默认收起」）。
    *

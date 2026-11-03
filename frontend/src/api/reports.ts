@@ -405,6 +405,7 @@ export function shareUrlOf(share: ShareItem): string {
 export interface PublicShareMeta {
   id: number;
   token: string;
+  title?: string;
   targetType: string;
   targetId: number;
   expiresAt?: string | null;
@@ -419,6 +420,7 @@ export interface PublicSharePayload {
   share: PublicShareMeta;
   targetType: string;
   targetName: string;
+  boardKey?: string | null;
   payload: {
     report?: ReportItem;
     rows?: RowData[];
@@ -476,11 +478,13 @@ export async function fetchPublicShare(token: string, password?: string): Promis
      * 因此这里直接放行，交给 share-view 走看板渲染分支。
      */
     if (data.targetType === 'board') {
+      const pageTitle = data.share.title || data.targetName || '客户看板';
       return {
         ok: true,
         targetType: 'board',
-        targetName: data.targetName || '客户看板',
-        title: data.targetName || '客户看板',
+        targetName: pageTitle,
+        title: pageTitle,
+        boardKey: data.boardKey || (Number(data.share.targetId) === 1 ? 'zk' : 'crm'),
         rowCount: 0,
         rows: [],
         columns: [],
@@ -498,9 +502,11 @@ export async function fetchPublicShare(token: string, password?: string): Promis
 
     const rows = data.payload.rows || [];
     const columns = data.payload.columns || [];
+    const pageTitle = data.share.title || data.targetName || data.payload.report.name;
     return {
       ok: true,
-      title: data.targetName || data.payload.report.name,
+      title: pageTitle,
+      targetName: pageTitle,
       report: data.payload.report,
       rows,
       columns,

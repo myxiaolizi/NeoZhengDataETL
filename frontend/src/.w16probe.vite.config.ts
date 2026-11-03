@@ -126,7 +126,19 @@ export default defineConfig({
     host: '127.0.0.1',
     strictPort: true,
     proxy,
-    watch: null,
+    watch: {
+      // Windows 上编辑器/构建脚本会生成被短暂锁定的临时文件与新配置文件，
+      // 被 watcher 捕获后触发 EBUSY 会让整个 dev server 崩溃，这里统一忽略。
+      ignored: [
+        '**/.*.tmpdir/**',
+        '**/*.tmpdir/**',
+        '**/*.tmp',
+        '**/.*.swp',
+        '**/.DS_Store',
+        '**/dist/**',
+        '**/vite.*.config.*',
+      ],
+    },
   },
   build: {
     outDir: 'dist',

@@ -21,24 +21,30 @@ import {
   Button,
   Card,
   Col,
+  DatePicker,
+  Drawer,
   Empty,
   Form,
   Grid,
   Input,
   Modal,
+  Radio,
   Result,
   Row,
   Select,
   Space,
   Spin,
   Switch,
+  Table,
   Tag,
   Tooltip,
   Typography,
 } from 'antd';
 import {
+  BarChartOutlined,
   CopyOutlined,
   DeleteOutlined,
+  EditOutlined,
   EyeOutlined,
   LinkOutlined,
   LockOutlined,
@@ -57,18 +63,25 @@ import { copyText, fmtAgo, fmtNum, fmtTime } from '@/utils';
 import {
   createShare,
   deleteShare,
+  getShareStats,
   listReports,
   listShares,
   shareUrlOf,
   toggleShare,
+  updateShare,
   type ReportItem,
   type ShareItem,
+  type ShareSourceStats,
+  type ShareStatsResult,
+  type ShareVisitRow,
 } from '@/api/reports';
 import {
   aiShareUrl,
+  getAiShareStats,
   listAiShares,
   removeAiShare,
   setAiShareStatus,
+  updateAiShare,
   type AiShareItem,
 } from '@/api/ai';
 
@@ -90,6 +103,96 @@ function isExpired(s: ShareItem): boolean {
 /** AI 问数分享的有效性判定（字段与 ShareItem 不同：状态同为 1/0，到期字段同名） */
 function isAiExpired(s: AiShareItem): boolean {
   return !!s.expiresAt && new Date(s.expiresAt).getTime() < Date.now();
+}
+
+/* ══════════════ V16：分享访问统计（需求 2.5 / 2.6） ══════════════ */
+
+/**
+ * 需求 2.5 的 10 项指标，逐字命名、顺序固定。
+ * 后端 `provinceStatus==='pending'` 时省份列必须显示「暂无数据（待接入省份库）」，不得伪造。
+ */
+const STAT_SOURCE_LABEL: Record<string, string> = {
+  beacon: '应用埋点',
+  nginx: 'nginx 日志',
+};
+
+function countText(list?: { name: string; count: number }[]): string {
+  if (!list || !list.length) return '—';
+  return list
+    .slice(0, 3)
+    .map((x) => `${x.name} ${fmtNum(x.count)}`)
+    .join('、');
+}
+
+/** 单来源（beacon / nginx）的 10 项指标。**两套数字分开给，绝不合并** */
+function StatSourceBlock({
+  title,
+  data,
+  provinceStatus,
+  provinceNote,
+}: {
+  title: string;
+  data?: ShareSourceStats;
+  provinceStatus?: 'ok' | 'pending';
+  provinceNote?: string;
+}) {
+  const d = data || ({} as ShareSourceStats);
+  const provinceText =
+    provinceStatus === 'pending'
+      ? provinceNote || '暂无数据（待接入省份库）'
+      : countText(d.provinces);
+  const items: { label: string; value: React.ReactNode }[] = [
+    { label: '流量', value: `${fmtNum(d.traffic || 0)} B` },
+    { label: '请求数', value: fmtNum(d.requests || 0) },
+    { label: 'IP', value: fmtNum(d.ips || 0) },
+    { label: 'UV', value: fmtNum(d.uv || 0) },
+    { label: 'PV', value: fmtNum(d.pv || 0) },
+    { label: '浏览器类型', value: countText(d.browsers) },
+    { label: '操作系统类型', value: countText(d.oses) },
+    { label: '访客IP', value: countText(d.visitorIps) },
+    { label: '省份', value: provinceText },
+    { label: '设备类型', value: countText(d.devices) },
+  ];
+  return (
+    <Card
+      size="small"
+      title={<span style={{ fontSize: 13 }}>{title}</span>}
+      style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10, marginBottom: 12 }}
+      styles={{ body: { padding: 12 } }}
+    >
+      <Row gutter={[10, 10]}>
+        {items.map((it) => (
+          <Col xs={12} sm={8} md={6} lg={4} key={it.label}>
+            <div
+              data-stat-item={it.label}
+              style={{
+                padding: '8px 10px',
+                borderRadius: 8,
+                background: NEUTRAL.surfaceSunken,
+                minHeight: 58,
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ fontSize: 11.5, color: NEUTRAL.textTertiary }}>{it.label}</div>
+              <div
+                style={{
+                  fontSize: 14,
+                  fontWeight: 700,
+                  color: NEUTRAL.text,
+                  marginTop: 4,
+                  wordBreak: 'break-all',
+                }}
+              >
+                {it.value}
+              </div>
+            </div>
+          </Col>
+        ))}
+      </Row>
+    </Card>
+  );
 }
 
 export default function SharesPage() {
@@ -126,6 +229,27 @@ export default function SharesPage() {
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState<ShareItem | null>(null);
   const [form] = Form.useForm();
+
+  /* ══════════ V16：编辑分享（需求 2.0~2.4 / 2.7，两个 Tab 共用一套弹窗） ══════════ */
+  const [editOpen, setEditOpen] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editTarget, setEditTarget] = useState<
+    { kind: 'report'; row: ShareItem } | { kind: 'ai'; row: AiShareItem } | null
+  >(null);
+  const [editForm] = Form.useForm();
+  /* 有效期模式：permanent / days / custom（自定义具体时间） */
+  const [expireMode, setExpireMode] = useState<'permanent' | 'days' | 'custom'>('permanent');
+  const [pwdOn, setPwdOn] = useState(false);
+
+  /* ══════════ V16：访问统计抽屉（需求 2.5 / 2.6） ══════════ */
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState('');
+  const [stats, setStats] = useState<ShareStatsResult | null>(null);
+  const [statsDays, setStatsDays] = useState(30);
+  const [statsTarget, setStatsTarget] = useState<
+    { kind: 'report' | 'ai'; id: number; title: string } | null
+  >(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -306,6 +430,153 @@ export default function SharesPage() {
     });
   };
 
+  /* ══════════════════════════════════════════════════════════════
+   * V16 需求 2.0~2.4 / 2.7：编辑分享（报表分享 + AI 问数分享共用）
+   *   · 报表分享 → PUT    /api/shares/:id
+   *   · AI 分享   → PATCH  /api/ai/shares/:id
+   * 两者字段语义完全一致：title / expiresAt|expiresDays / password / passwordOn / status
+   * ══════════════════════════════════════════════════════════════ */
+
+  /** 打开编辑弹窗：按类型回填当前值（需求 2.0「复开回填正确」） */
+  const openEdit = (target: { kind: 'report'; row: ShareItem } | { kind: 'ai'; row: AiShareItem }) => {
+    const row = target.row;
+    setEditTarget(target);
+    editForm.resetFields();
+    const hasPwd =
+      target.kind === 'report'
+        ? !!(target.row as ShareItem).hasPassword
+        : !!(target.row as AiShareItem).hasPassword;
+    setPwdOn(hasPwd);
+    const exp = row.expiresAt ? new Date(row.expiresAt) : null;
+    const validExp = exp && !Number.isNaN(exp.getTime()) ? exp : null;
+    setExpireMode(validExp ? 'custom' : 'permanent');
+    editForm.setFieldsValue({
+      title: row.title || '',
+      expiresDays: undefined,
+      /* antd6 的 DatePicker 收到 null 会抛 `getUDayjs(...).isValid is not a function`，
+         因此「无到期时间」时只靠 resetFields 清空，绝不把 null 塞给该字段。 */
+      ...(validExp ? { expiresAt: validExp } : {}),
+      passwordOn: hasPwd,
+      password: '',
+    });
+    setEditOpen(true);
+  };
+
+  /** 保存编辑：把表单收集成后端 PUT/PATCH 的 payload */
+  const submitEdit = async () => {
+    if (!editTarget) return;
+    /* 提前快照：后面会先 setEditTarget(null)，闭包里的 state 不能再读 */
+    const target = editTarget;
+    let values: Record<string, unknown>;
+    try {
+      values = (await editForm.validateFields()) as Record<string, unknown>;
+    } catch {
+      return; /* 校验失败，Form 已自行提示 */
+    }
+
+    const payload: {
+      title?: string;
+      expiresAt?: string | null;
+      expiresDays?: number;
+      password?: string | null;
+      passwordOn?: boolean;
+    } = {};
+
+    /* 需求 2.0 / 2.1：分享标题（空串 = 清除，后端会落空串） */
+    payload.title = String(values.title ?? '');
+
+    /* 需求 2.2：有效期 —— 永久(null) / N 天 / 自定义具体时间 */
+    if (expireMode === 'permanent') {
+      payload.expiresAt = null;
+    } else if (expireMode === 'days') {
+      const d = Number(values.expiresDays);
+      payload.expiresDays = Number.isFinite(d) && d > 0 ? d : 0;
+      payload.expiresAt = null; /* 让后端按 expiresDays 覆盖，避免残留旧时间 */
+    } else {
+      const dt = values.expiresAt as { toDate?: () => Date } | null | undefined;
+      const d = dt && typeof dt.toDate === 'function' ? dt.toDate() : null;
+      payload.expiresAt = d && !Number.isNaN(d.getTime()) ? d.toISOString() : null;
+    }
+
+    /* 需求 2.3 / 2.4：访问密码 —— 关 = password:''（后端置 NULL）；开 = 必须给新密码 */
+    if (!pwdOn) {
+      payload.password = '';
+    } else {
+      const pwd = String(values.password ?? '');
+      if (!pwd) {
+        message.error('开启访问密码时必须填写密码');
+        return;
+      }
+      if (pwd.length > 64) {
+        message.error('访问密码不能超过 64 个字符');
+        return;
+      }
+      payload.password = pwd;
+      payload.passwordOn = true;
+    }
+
+    setEditSaving(true);
+    try {
+      if (target.kind === 'report') {
+        const next = await updateShare(target.row.id, payload);
+        setList((prev) =>
+          prev.map((x) =>
+            x.id === target.row.id
+              ? {
+                  ...x,
+                  ...next,
+                  /* 后端 publicShare 可能不回 reportName，保留原值避免列表标题闪没 */
+                  reportName: next.reportName || x.reportName,
+                }
+              : x,
+          ),
+        );
+      } else {
+        const next = await updateAiShare(target.row.id, payload);
+        setAiList((prev) => prev.map((x) => (x.id === target.row.id ? { ...x, ...next } : x)));
+      }
+      message.success('分享设置已更新');
+      setEditOpen(false);
+      setEditTarget(null);
+      /* 兜底再拉一次列表，确保与后端落库一致 */
+      if (target.kind === 'report') load();
+      else loadAi();
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '保存失败');
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════
+   * V16 需求 2.5 / 2.6：访问统计（10 项汇总 + 明细）
+   * ══════════════════════════════════════════════════════════════ */
+
+  const loadStats = useCallback(
+    async (kind: 'report' | 'ai', id: number, days: number) => {
+      setStatsLoading(true);
+      setStatsError('');
+      try {
+        const res =
+          kind === 'report' ? await getShareStats('report', id, { days, limit: 200 }) : await getAiShareStats(id, { days, limit: 200 });
+        setStats(res);
+      } catch (e) {
+        setStats(null);
+        setStatsError(e instanceof Error ? e.message : '加载访问统计失败');
+      } finally {
+        setStatsLoading(false);
+      }
+    },
+    [],
+  );
+
+  const openStats = (kind: 'report' | 'ai', id: number, title: string) => {
+    setStatsTarget({ kind, id, title });
+    setStats(null);
+    setStatsOpen(true);
+    loadStats(kind, id, statsDays);
+  };
+
   const statusTag = (s: ShareItem) => {
     if (Number(s.status) !== 1) return <Tag color={PALETTE.gray}>已停用</Tag>;
     if (isExpired(s)) return <Tag color={PALETTE.red}>已过期</Tag>;
@@ -406,7 +677,7 @@ export default function SharesPage() {
     {
       title: '操作',
       valueType: 'option',
-      width: 150,
+      width: 210,
       fixed: 'right',
       render: (_, s) => [
         <a key="open" onClick={() => window.open(shareUrlOf(s), '_blank')}>
@@ -414,6 +685,14 @@ export default function SharesPage() {
         </a>,
         <a key="copy" onClick={() => copyLink(s)}>
           复制
+        </a>,
+        canWrite ? (
+          <a key="edit" data-act="edit" onClick={() => openEdit({ kind: 'report', row: s })}>
+            编辑
+          </a>
+        ) : null,
+        <a key="stats" data-act="stats" onClick={() => openStats('report', s.id, s.title || s.reportName || `报表 #${s.targetId}`)}>
+          统计
         </a>,
         canWrite ? (
           <a key="del" style={{ color: PALETTE.red }} onClick={() => handleDelete(s)}>
@@ -556,7 +835,7 @@ export default function SharesPage() {
     {
       title: '操作',
       valueType: 'option',
-      width: 150,
+      width: 210,
       fixed: 'right',
       render: (_, s) => [
         <a key="open" onClick={() => window.open(s.url || aiShareUrl(s.token), '_blank')}>
@@ -564,6 +843,14 @@ export default function SharesPage() {
         </a>,
         <a key="copy" onClick={() => copyAiLink(s)}>
           复制
+        </a>,
+        canWrite ? (
+          <a key="edit" data-act="edit" onClick={() => openEdit({ kind: 'ai', row: s })}>
+            编辑
+          </a>
+        ) : null,
+        <a key="stats" data-act="stats" onClick={() => openStats('ai', s.id, s.title || `AI 分享 #${s.id}`)}>
+          统计
         </a>,
         canWrite ? (
           <a key="del" style={{ color: PALETTE.red }} onClick={() => handleAiDelete(s)}>
@@ -603,6 +890,24 @@ export default function SharesPage() {
       <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Button size="middle" icon={<CopyOutlined />} onClick={() => copyAiLink(s)} style={{ minHeight: 44 }}>复制</Button>
         <Button size="middle" icon={<LinkOutlined />} onClick={() => window.open(s.url || aiShareUrl(s.token), '_blank')} style={{ minHeight: 44 }}>打开</Button>
+        <Button
+          size="middle"
+          data-act="edit"
+          icon={<EditOutlined />}
+          onClick={() => openEdit({ kind: 'ai', row: s })}
+          style={{ minHeight: 44 }}
+        >
+          编辑
+        </Button>
+        <Button
+          size="middle"
+          data-act="stats"
+          icon={<BarChartOutlined />}
+          onClick={() => openStats('ai', s.id, s.title || `AI 分享 #${s.id}`)}
+          style={{ minHeight: 44 }}
+        >
+          统计
+        </Button>
         {canWrite && (
           <>
             <Button size="middle" onClick={() => handleAiToggle(s, Number(s.status) !== 1)} style={{ minHeight: 44 }}>
@@ -677,6 +982,24 @@ export default function SharesPage() {
         </Button>
         <Button size="middle" icon={<LinkOutlined />} onClick={() => window.open(shareUrlOf(s), '_blank')} style={{ minHeight: 44 }}>
           打开
+        </Button>
+        <Button
+          size="middle"
+          data-act="edit"
+          icon={<EditOutlined />}
+          onClick={() => openEdit({ kind: 'report', row: s })}
+          style={{ minHeight: 44 }}
+        >
+          编辑
+        </Button>
+        <Button
+          size="middle"
+          data-act="stats"
+          icon={<BarChartOutlined />}
+          onClick={() => openStats('report', s.id, s.title || s.reportName || `报表 #${s.targetId}`)}
+          style={{ minHeight: 44 }}
+        >
+          统计
         </Button>
         {canWrite && (
           <>
@@ -831,6 +1154,259 @@ export default function SharesPage() {
       )}
       </>
       )}
+
+
+      {/* ══════════ V16 编辑分享（需求 2.0~2.4 / 2.7：两个 Tab 共用） ══════════ */}
+      <Modal
+        title="编辑分享"
+        open={editOpen}
+        onCancel={() => {
+          setEditOpen(false);
+          setEditTarget(null);
+        }}
+        onOk={submitEdit}
+        okText="保存"
+        confirmLoading={editSaving}
+        cancelText="取消"
+        width={isMobile ? '94vw' : 520}
+        destroyOnHidden
+        forceRender
+      >
+        <Form form={editForm} layout="vertical" requiredMark={false} style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12, color: NEUTRAL.textTertiary, marginBottom: 10 }}>
+            {editTarget?.kind === 'ai' ? 'AI 问数分享' : '报表分享'} ·{' '}
+            <Text code style={{ fontSize: 11.5 }}>
+              {(editTarget?.kind === 'ai'
+                ? (editTarget?.row as AiShareItem | undefined)?.token
+                : (editTarget?.row as ShareItem | undefined)?.token)?.slice(0, 10)}
+              …
+            </Text>
+          </div>
+
+          {/* 需求 2.0 / 2.1：分享标题 */}
+          <Form.Item name="title" label="分享标题" extra="对外展示的页面标题，留空则回落到默认名称">
+            <Input size="large" maxLength={60} placeholder="对外展示的标题" data-field="title" />
+          </Form.Item>
+
+          {/* 需求 2.2：有效期 */}
+          <Form.Item label="有效期" style={{ marginBottom: 8 }}>
+            <Radio.Group
+              value={expireMode}
+              onChange={(e) => setExpireMode(e.target.value)}
+              optionType="button"
+              buttonStyle="solid"
+              data-field="expireMode"
+              options={[
+                { label: '永久有效', value: 'permanent' },
+                { label: '按天数', value: 'days' },
+                { label: '自定义时间', value: 'custom' },
+              ]}
+            />
+          </Form.Item>
+          {expireMode === 'days' && (
+            <Form.Item name="expiresDays" label="有效天数" extra="从保存时刻起算，0 = 永久有效">
+              <Select
+                size="large"
+                allowClear
+                placeholder="选择天数"
+                data-field="expiresDays"
+                options={EXPIRE_OPTIONS}
+              />
+            </Form.Item>
+          )}
+          {expireMode === 'custom' && (
+            <Form.Item name="expiresAt" label="到期时间">
+              <DatePicker
+                size="large"
+                showTime
+                style={{ width: '100%' }}
+                format="YYYY-MM-DD HH:mm"
+                data-field="expiresAt"
+              />
+            </Form.Item>
+          )}
+
+          {/* 需求 2.3 / 2.4：访问密码开关 + 修改密码 */}
+          <Form.Item label="访问密码" style={{ marginBottom: 8 }}>
+            <Space size={10} align="center">
+              <Switch
+                checked={pwdOn}
+                onChange={(v) => {
+                  setPwdOn(v);
+                  if (!v) editForm.setFieldsValue({ password: '' });
+                }}
+                data-field="passwordOn"
+              />
+              <span style={{ fontSize: 12.5, color: NEUTRAL.textSecondary }}>
+                {pwdOn ? '已开启：访问者需输入密码' : '已关闭：任何人凭链接即可访问'}
+              </span>
+            </Space>
+          </Form.Item>
+          {pwdOn && (
+            <Form.Item
+              name="password"
+              label="新访问密码"
+              extra="留空表示保留原有密码；填写则立即替换（最多 64 个字符）"
+              rules={[{ max: 64, message: '访问密码不能超过 64 个字符' }]}
+            >
+              <Input.Password
+                size="large"
+                maxLength={64}
+                placeholder="输入新密码，留空则保持不变"
+                autoComplete="new-password"
+                data-field="password"
+              />
+            </Form.Item>
+          )}
+
+          <div style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>
+            保存后立即生效；已分发出去的链接会沿用新设置。
+          </div>
+        </Form>
+      </Modal>
+
+      {/* ══════════ V16 访问统计（需求 2.5 十项汇总 + 2.6 明细） ══════════ */}
+      <Drawer
+        title="访问统计"
+        open={statsOpen}
+        onClose={() => setStatsOpen(false)}
+        width={isMobile ? '100vw' : 880}
+        destroyOnHidden
+        styles={{ body: { padding: 14 } }}
+      >
+        <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13.5, fontWeight: 600, color: NEUTRAL.text, wordBreak: 'break-all' }}>
+            {statsTarget?.title || '—'}
+          </span>
+          <Tag bordered={false} color={PALETTE.primary} style={{ color: NEUTRAL.textInverse }}>
+            {statsTarget?.kind === 'ai' ? 'AI 问数分享' : '报表分享'}
+          </Tag>
+          <Select
+            size="small"
+            value={statsDays}
+            style={{ width: 110 }}
+            data-field="statsDays"
+            onChange={(v) => {
+              setStatsDays(v);
+              if (statsTarget) loadStats(statsTarget.kind, statsTarget.id, v);
+            }}
+            options={[
+              { value: 7, label: '近 7 天' },
+              { value: 30, label: '近 30 天' },
+              { value: 90, label: '近 90 天' },
+            ]}
+          />
+        </div>
+
+        {statsError && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 12 }}
+            title="加载访问统计失败"
+            description={statsError}
+            action={
+              statsTarget ? (
+                <Button size="small" onClick={() => loadStats(statsTarget.kind, statsTarget.id, statsDays)}>
+                  重试
+                </Button>
+              ) : null
+            }
+          />
+        )}
+
+        {statsLoading ? (
+          <div style={{ padding: 60, textAlign: 'center' }}>
+            <Spin size="large" />
+          </div>
+        ) : stats ? (
+          <>
+            <Alert
+              type="info"
+              showIcon
+              style={{ marginBottom: 12 }}
+              title="统计口径：埋点与日志分开统计，不相加"
+              description={
+                <span style={{ fontSize: 12 }}>
+                  {stats.summary.statsSince || '应用埋点上线起统计；历史回填见 nginx 日志口径。'}
+                </span>
+              }
+            />
+
+            {/* 2.5：两套来源各自 10 项指标，分开显示 */}
+            <StatSourceBlock
+              title={stats.bySource.beacon?.label || '应用埋点（V16 上线起）'}
+              data={stats.bySource.beacon}
+              provinceStatus={stats.summary.provinceStatus}
+              provinceNote={stats.summary.provinceNote}
+            />
+            <StatSourceBlock
+              title={stats.bySource.nginx?.label || 'nginx 日志回填'}
+              data={stats.bySource.nginx}
+              provinceStatus={stats.summary.provinceStatus}
+              provinceNote={stats.summary.provinceNote}
+            />
+
+            {/* 2.6：明细 */}
+            <Card
+              size="small"
+              title={<span style={{ fontSize: 13 }}>访问明细（共 {fmtNum(stats.rowCount)} 条）</span>}
+              style={{ border: `1px solid ${NEUTRAL.border}`, borderRadius: 10 }}
+              styles={{ body: { padding: 0 } }}
+            >
+              <Table<ShareVisitRow>
+                size="small"
+                rowKey="id"
+                dataSource={stats.rows}
+                scroll={{ x: 'max-content' }}
+                pagination={{ pageSize: 20, showSizeChanger: false, showTotal: (t) => `共 ${t} 条` }}
+                locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该时间段内暂无访问记录" /> }}
+                columns={[
+                  {
+                    title: '时间',
+                    dataIndex: 'createdAt',
+                    width: 150,
+                    render: (v: string) => (
+                      <span style={{ fontSize: 12 }}>{v ? fmtTime(v, 'YYYY-MM-DD HH:mm') : '—'}</span>
+                    ),
+                  },
+                  { title: '访客IP', dataIndex: 'ip', width: 130, render: (v: string) => <Text code style={{ fontSize: 11.5 }}>{v || '—'}</Text> },
+                  { title: '浏览器类型', dataIndex: 'browser', width: 110, render: (v: string) => v || '—' },
+                  { title: '操作系统类型', dataIndex: 'os', width: 110, render: (v: string) => v || '—' },
+                  { title: '设备类型', dataIndex: 'device', width: 100, render: (v: string) => v || '—' },
+                  {
+                    title: '省份',
+                    dataIndex: 'province',
+                    width: 170,
+                    render: (v: string | null) =>
+                      stats.summary.provinceStatus === 'pending'
+                        ? <span style={{ fontSize: 12, color: NEUTRAL.textTertiary }}>暂无数据（待接入省份库）</span>
+                        : (v || '—'),
+                  },
+                  {
+                    title: '来源',
+                    dataIndex: 'source',
+                    width: 110,
+                    render: (v: string) => (
+                      <Tag bordered={false} color={v === 'nginx' ? PALETTE.yellow : PALETTE.primary} style={v === 'nginx' ? undefined : { color: NEUTRAL.textInverse }}>
+                        {STAT_SOURCE_LABEL[v] || v || '—'}
+                      </Tag>
+                    ),
+                  },
+                  {
+                    title: '访问路径',
+                    dataIndex: 'path',
+                    width: 200,
+                    render: (v: string) => (
+                      <span style={{ fontSize: 11.5, color: NEUTRAL.textSecondary, wordBreak: 'break-all' }}>{v || '—'}</span>
+                    ),
+                  },
+                ]}
+              />
+            </Card>
+          </>
+        ) : null}
+      </Drawer>
 
       {/* 创建分享 */}
       <Modal

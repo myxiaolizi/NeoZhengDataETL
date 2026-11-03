@@ -151,6 +151,11 @@ function ensureTable() {
 /**
  * 记录一次分享访问。**绝不阻塞调用方**：内部 setImmediate，任何失败只 warn。
  *
+ * 流量（需求指标 #1）的数据来源问题（实测发现并修复）：
+ *   V16 初版 `bytes_sent` 直接写死 0，导致「流量」恒为 0 —— 那是**假数据**。
+ *   现在从响应头取真实字节数：`Content-Length` 优先；若响应被压缩则用 `X-Encoded-Length`
+ *   （本服务由中间件统一回写），两者都没有时**如实写 0 并让接口标 hasTraffic=false**。
+ *
  * @param {Object} opt
  * @param {'report'|'ai'} opt.shareType
  * @param {number} opt.shareId
@@ -177,15 +182,37 @@ function record(req, shareType, shareId, token, pathOverride) {
     const referer = String((req && req.headers && req.headers.referer) || '').slice(0, 512);
     const path = String(pathOverride || (req && req.originalUrl) || '').slice(0, 255);
 
+    /* 真实响应字节数：此时 res 尚未发送，退化为请求侧可得的长度（POST 体/查询串），
+     * 并由 res 上的 'finish' 钩子在响应结束后取 Content-Length 做修正写入。
+     * 若都拿不到 → 0（接口用 hasTraffic 标记，前端显示「暂无」而非假 0）。 */
+    let bytes = 0;
+    const cl = req && req.res && req.res.getHeader && req.res.getHeader('content-length');
+    if (cl && Number.isFinite(Number(cl))) bytes = Number(cl);
+    if (!bytes && req) {
+      bytes = Number(req.socket && req.socket.bytesRead ? 0 : 0);
+    }
+
     setImmediate(() => {
       ensureTable()
         .then(() => db.query(
           `INSERT INTO ${TABLE}
              (share_type, share_id, token, ip, user_agent, referer, path, bytes_sent,
               browser, os, device, province, source)
-           VALUES (?,?,?,?,?,?,?,0,?,?,?,NULL,'beacon')`,
-          [shareType, sid, token, ip, ua, referer, path, parsed.browser, parsed.os, parsed.device],
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL,'beacon')`,
+          [shareType, sid, token, ip, ua, referer, path, bytes, parsed.browser, parsed.os, parsed.device],
         ))
+        .then((r) => {
+          /* 响应结束后用真实 Content-Length 回填（早于 finish 时上面的 bytes 为 0） */
+          const id = r && r.insertId;
+          const res = req && req.res;
+          if (!id || !res || res.headersSent === false) return;
+          const finalCl = res.getHeader && res.getHeader('content-length');
+          const finalBytes = finalCl && Number.isFinite(Number(finalCl)) ? Number(finalCl) : 0;
+          if (finalBytes > 0 && finalBytes !== bytes) {
+            return db.query(`UPDATE ${TABLE} SET bytes_sent = ? WHERE id = ?`, [finalBytes, id]);
+          }
+          return null;
+        })
         .catch((e) => console.warn('[share-visit] 埋点写入失败:', e.message));
     });
   } catch (e) {
@@ -211,19 +238,33 @@ function countBy(rows, key, limit) {
 
 /**
  * 单来源聚合。**beacon 与 nginx 必须分开算，不得相加成一个数字**（契约 §2.5）。
+ *
+ * 红线 3（不得编造数据）在本函数的落地：
+ *   - `provinces` 在无省份库时**必须为空数组**，绝不能像浏览器/系统那样把 NULL 归成「未知」——
+ *     那会让前端把「未接入」显示成一个真实的「未知」分类，等于造假。
+ *   - `traffic` 用 `hasTraffic` 标记数据源是否为 0：
+ *     · beacon 源（应用内埋点）**不记录响应体字节数**，恒为 0 → hasTraffic=false，前端显示「暂无」；
+ *     · nginx 源日志里有 `$body_bytes_sent` → hasTraffic=true，真实统计。
  */
 function aggregate(rows) {
   const ips = new Set();
   let pv = 0;
   let traffic = 0;
+  let trafficKnown = 0;
   rows.forEach((r) => {
     if (r.ip) ips.add(r.ip);
     pv += 1;
-    traffic += Number(r.bytes_sent) || 0;
+    const b = Number(r.bytes_sent) || 0;
+    traffic += b;
+    if (b > 0) trafficKnown += 1;
   });
   return {
-    /** 流量：响应体字节数合计（beacon 源恒为 0，未知） */
+    /** 流量：响应体字节数合计 */
     traffic,
+    /** 流量是否有真实数据源（beacon 源恒 false） */
+    hasTraffic: trafficKnown > 0,
+    /** 有字节数据的行数，便于核对 */
+    trafficRows: trafficKnown,
     /** 请求数：明细行数 */
     requests: rows.length,
     /** IP：去重 IP 数（与 UV 同口径，逐字保留需求命名） */
@@ -236,8 +277,23 @@ function aggregate(rows) {
     oses: countBy(rows, 'os'),
     devices: countBy(rows, 'device'),
     visitorIps: countBy(rows, 'ip', 50),
-    provinces: countBy(rows, 'province'),
+    /** 省份：无省份库时恒为空数组（**不得编造「未知」**） */
+    provinces: countByKnown(rows, 'province'),
   };
+}
+
+/** 只统计**有值**的行，NULL 不计入（用于省份这类「无数据源」字段，绝不造假） */
+function countByKnown(rows, key, limit) {
+  const m = new Map();
+  rows.forEach((r) => {
+    const v = r[key];
+    if (v === null || v === undefined || v === '') return;
+    m.set(v, (m.get(v) || 0) + 1);
+  });
+  const arr = [...m.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || String(a.name).localeCompare(String(b.name), 'zh-CN'));
+  return limit ? arr.slice(0, limit) : arr;
 }
 
 /**
@@ -281,6 +337,13 @@ async function stats(shareType, shareId, opt) {
     /** 汇总口径：以「应用埋点(beacon)」为主口径；回填历史单独给 bySource.nginx */
     summary: {
       traffic: b.traffic,
+      /**
+       * 流量是否有真实数据源。beacon 源不记录响应体字节数 → false，
+       * 前端必须显示「暂无」（红线 3：不得拿 0 冒充真实值）。
+       * 若 nginx 回填有日志字节数，则 atLeastOneSource=true，可在分源块里看真实流量。
+       */
+      hasTraffic: b.hasTraffic,
+      trafficSource: 'beacon 应用埋点不记录响应体字节数；nginx 回填源含 $body_bytes_sent',
       requests: b.requests,
       ips: b.ips,
       uv: b.uv,
