@@ -129,6 +129,10 @@ export interface ShareItem {
   targetType: string;
   targetId: number;
   title?: string;
+  /** V16.1：分享描述（公开页 <meta name="description"> / og:description） */
+  description?: string;
+  /** V16.1：分享缩略图 URL（og:image），http(s) 绝对地址或以 / 开头的站内路径 */
+  thumb?: string;
   hasPassword?: boolean;
   /** 后端仅向管理员返回明文密码，页面不得展示，仅用于访问校验 */
   password?: string | null;
@@ -146,6 +150,9 @@ export interface ShareCreatePayload {
   targetType?: string;
   targetId: number;
   title?: string;
+  /** V16.1：分享描述 / 缩略图（可选） */
+  description?: string;
+  thumb?: string;
   expiresDays?: number;
   password?: string;
   allowExport?: boolean;
@@ -173,11 +180,27 @@ export interface ReportCreatePayload {
 
 export interface ShareUpdatePayload {
   title?: string;
+  /** V16.1：分享描述 / 缩略图（空串 = 清除） */
+  description?: string;
+  thumb?: string;
   expiresAt?: string | null;
   expiresDays?: number;
   password?: string | null | false;
   passwordOn?: boolean;
   status?: number;
+}
+
+/** V16.1：分享展示元信息（不含任何报表数据，密码未通过也能拿到） */
+export interface ShareMeta {
+  token: string;
+  title: string;
+  description: string;
+  thumb: string;
+  targetType: string;
+  targetId: number;
+  hasPassword: boolean;
+  expired: boolean;
+  disabled: boolean;
 }
 
 export interface ShareCountItem {
@@ -413,6 +436,9 @@ export interface PublicShareMeta {
   id: number;
   token: string;
   title?: string;
+  /** V16.1：分享描述 / 缩略图（公开页 <meta> 用） */
+  description?: string;
+  thumb?: string;
   targetType: string;
   targetId: number;
   expiresAt?: string | null;
@@ -420,6 +446,14 @@ export interface PublicShareMeta {
   createdAt?: string;
   /** 后端补充该字段后即可在页面提示密码保护 */
   hasPassword?: boolean;
+}
+
+/**
+ * V16.1：取分享展示元信息（标题 / 描述 / 缩略图）。
+ * 不需要密码即可调用；后端只回门面信息，**不含任何报表数据**。
+ */
+export function getPublicShareMeta(token: string): Promise<ShareMeta> {
+  return api.get<ShareMeta>(`/public/shares/${encodeURIComponent(token)}/meta`);
 }
 
 /** GET /api/public/shares/:token 的 data 结构 */

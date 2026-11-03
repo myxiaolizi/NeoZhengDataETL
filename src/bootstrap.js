@@ -252,6 +252,8 @@ const DDL = [
     target_type VARCHAR(32) NOT NULL COMMENT 'report/dashboard',
     target_id INT UNSIGNED NOT NULL,
     title VARCHAR(191) NULL,
+    description VARCHAR(500) NULL COMMENT 'V16.1：分享描述（og:description / 页面摘要）',
+    thumb VARCHAR(500) NULL COMMENT 'V16.1：分享缩略图 URL（og:image）',
     password VARCHAR(128) NULL COMMENT '访问密码(可选)',
     expires_at DATETIME NULL COMMENT '过期时间，NULL=永久',
     allow_export TINYINT(1) NOT NULL DEFAULT 0,
@@ -746,6 +748,12 @@ async function ensureDefaultSettings() {
   // v3.1 迁移：分享密码明文列（便于管理员查看）
   await ensureColumn('jdywh_shares', 'password_plain',
     '`password_plain` VARCHAR(128) NULL COMMENT "访问密码明文（便于管理员查看）" AFTER `password`');
+
+  // V16.1 迁移：分享描述 + 分享缩略图（浏览器标题栏 / 链接预览 og:title·og:description·og:image）
+  await ensureColumn('jdywh_shares', 'description',
+    '`description` VARCHAR(500) NULL COMMENT "V16.1：分享描述（og:description）" AFTER `title`');
+  await ensureColumn('jdywh_shares', 'thumb',
+    '`thumb` VARCHAR(500) NULL COMMENT "V16.1：分享缩略图 URL（og:image）" AFTER `description`');
 
   // v3.2 迁移：表单类型
   await ensureColumn('jdywh_forms', 'form_type',

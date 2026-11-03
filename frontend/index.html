@@ -7,13 +7,20 @@
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
     <!--
-      这里的 <title> 只是**首屏占位**。
+      这里的 title 标签只是**首屏占位**。
       真实标题由前端在拿到站点设置后覆盖：
         · stores/app.ts 的 fetchSite()（后台布局，BasicLayout 挂载时）
         · stores/app.ts 的 useSiteBrand()（登录 / 注册 / 找回密码 / 重置密码等公开页）
       两处都会执行 document.title = 站点名称（设置项 site_name），
       因此「系统设置里改平台名称 → 刷新 → 浏览器标签页标题立即跟着变」。
+
+      V16.1 需求 3：分享页（/s/<token>）的标题 / 描述 / 缩略图由**服务端**注入到
+      下面这对标记之间（见 src/routes/spa.js 的 injectShareMeta）。
+      必须服务端注入：微信/钉钉/企微等分享爬虫不执行 JS，只认 HTML 里的 meta 标签。
+      这对标记必须逐字保留 —— 删掉会导致分享预览（标题/缩略图/描述）失效。
     -->
+    <!-- SHARE_META_START -->
+    <!-- SHARE_META_END -->
     <title>Neo Zheng DataETL</title>
   </head>
   <body>

@@ -593,6 +593,9 @@ function publicShare(r) {
     targetType: r.target_type,
     targetId: Number(r.target_id),
     title: r.title || '',
+    /* V16.1：分享描述 + 缩略图（公开页 <meta> 与浏览器标题栏用） */
+    description: r.description || '',
+    thumb: r.thumb || '',
     hasPassword: !!r.password,
     // 明文密码（仅管理员可见）：v3 起密码以可逆方式存储，便于管理员查看与告知
     password: r.password_plain || null,
@@ -601,6 +604,40 @@ function publicShare(r) {
     viewCount: Number(r.view_count || 0),
     status: Number(r.status),
     createdAt: r.created_at,
+  };
+}
+
+/**
+ * V16.1：按 token 取「分享展示元信息」。
+ *
+ * 与 accessShare 的区别：**不校验密码、不计数、不执行报表**，只返回标题/描述/缩略图
+ * 这类"门面"信息。用途有两个：
+ *   1) 服务端给 /s/:token 的 HTML 注入 <title> / og:* —— 社交爬虫不执行 JS，
+ *      必须在服务端就带出来，否则分享出去永远是站点默认标题、没有缩略图；
+ *   2) 前端公开页在拿数据前先拿到标题，浏览器标签页立刻正确。
+ *
+ * 安全边界：只回标题/描述/缩略图/是否需密码/是否可用，**绝不回任何报表数据**。
+ * 未找到 token 时返回 null（由调用方决定回退到站点默认标题）。
+ */
+async function shareMetaByToken(token) {
+  const t = String(token || '').trim();
+  if (!t) return null;
+  const row = await db.queryOne(
+    'SELECT token, title, description, thumb, target_type, target_id, password, expires_at, status FROM jdywh_shares WHERE token = ? LIMIT 1',
+    [t]
+  );
+  if (!row) return null;
+  const expired = row.expires_at ? new Date(row.expires_at).getTime() < Date.now() : false;
+  return {
+    token: row.token,
+    title: row.title || '',
+    description: row.description || '',
+    thumb: row.thumb || '',
+    targetType: row.target_type,
+    targetId: Number(row.target_id),
+    hasPassword: !!row.password,
+    expired,
+    disabled: Number(row.status) !== 1,
   };
 }
 
@@ -640,13 +677,21 @@ async function createShare(input, userId) {
     ? String(input.title || '客户看板').slice(0, 191)
     : String(input.title || report.name).slice(0, 191);
 
+  /* V16.1：分享描述 / 缩略图（可选，创建时也可一并设置） */
+  const description = input.description !== undefined
+    ? (String(input.description || '').trim().slice(0, 500) || null) : undefined;
+  const thumb = input.thumb !== undefined
+    ? (String(input.thumb || '').trim().slice(0, 500) || null) : undefined;
+
   const result = await db.query(
     `INSERT INTO jdywh_shares
-       (token, target_type, target_id, title, password, password_plain, expires_at, allow_export, status, created_by)
-     VALUES (?,?,?,?,?,?,?,?,1,?)`,
+       (token, target_type, target_id, title, description, thumb, password, password_plain, expires_at, allow_export, status, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,1,?)`,
     [
       token, targetType, targetId,
       title,
+      description === undefined ? null : description,
+      thumb === undefined ? null : thumb,
       password, plain, expiresAt,
       input.allowExport ? 1 : 0,
       userId || null,
@@ -708,6 +753,23 @@ async function updateShare(id, body) {
     if (t.length > 191) throw new Error('分享标题不能超过 191 个字符');
     sets.push('title = ?');
     params.push(t);
+  }
+
+  /* V16.1：分享描述（og:description）—— 空串/NULL 都落 NULL（公开页回退默认描述） */
+  if (b.description !== undefined) {
+    const d = String(b.description === null ? '' : b.description).trim();
+    if (d.length > 500) throw new Error('分享描述不能超过 500 个字符');
+    sets.push('description = ?');
+    params.push(d || null);
+  }
+
+  /* V16.1：分享缩略图（og:image）—— 只接受 http(s) 绝对地址或站内 / 开头路径 */
+  if (b.thumb !== undefined) {
+    const u = String(b.thumb === null ? '' : b.thumb).trim();
+    if (u.length > 500) throw new Error('缩略图地址不能超过 500 个字符');
+    if (u && !/^(https?:\/\/|\/)/i.test(u)) throw new Error('缩略图需填 http(s) 图片地址或以 / 开头的站内路径');
+    sets.push('thumb = ?');
+    params.push(u || null);
   }
 
   /* expiresAt —— 需求 2.2「支持修改有效期」 */
@@ -857,6 +919,7 @@ module.exports = {
   toggleShare,
   updateShare,
   accessShare,
+  shareMetaByToken,
   publicReport,
   publicDataset,
   publicShare,

@@ -1,3 +1,168 @@
+## [16.1.0] - 2026-11-03
+
+### 版本主题：7 项体验优化（ERP 版本单行 / 流程状态回 V15 样式 / 分享页标题与预览 / 连锁排名下钻 / 客户详情精简与对齐）
+
+本轮只优化体验与信息呈现，**不改业务口径、不动数据表结构（仅加 2 个可空列）**。
+所有结论均附实测读数；未经量测的项不出现在本文档。
+
+> 看板目录（`frontend/src/pages/dashboard/board/`、`Board.tsx`、`share-view.tsx`）不开源，仅私服部署；
+> 打包产物仅含 `frontend/dist` 构建结果，不含看板源码。
+
+---
+
+## 一、客户 ERP 分布：有券 / 无券版本合并为 1 行
+
+**用户原话**：「客户 ERP 分布下面的有券版本和无券版本显示为1行」
+
+**根因**：V16 4.2 把底部版本汇总做成 `flex-direction: column`，`有券版本X家` 与
+`无券版本X家` 上下两行（实测两行共占 2 行、卡片底部高 8+8+3=19px 行高叠加）。
+
+**改法**（`frontend/src/pages/dashboard/board/SigningCards.tsx`）：
+- `.vb1-erp-ver` → `flex-direction: row; align-items: center; justify-content: space-between`
+- `.vb1-erp-ver .v-row` → 追加 `flex: 0 1 auto`，两项在同一条基线上两端对齐
+- 保留 V16 4.3 的窄视口截断（`@container erpcard (max-width:260px)` 隐藏「版本」二字），
+  窄屏仍不横向溢出（`scrollWidth === clientWidth`）
+
+**口径不变**：仍取 `erpVersionSummary.withCoupon.total` / `withoutCoupon.total`（沿用 V15 口径）。
+
+---
+
+## 二、流程状态板块恢复 V15 样式
+
+**用户原话**：「流程状态板块的样式不要调整继续采用v15版本的样式」
+
+**做法**：`frontend/src/pages/dashboard/board/FlowPipeline.tsx` 整体回退为 **V15 原始文件**
+（43,531 B，SHA256 `dd0464ac13c9ceb81e068877c795343d8ddf3537e8ef1bf4b1f81104003fc519`，CRLF=0）。
+V16 对该文件的全部改动均为样式层（4.6 弹窗主题令牌 + 4.7 两行等高 88px 卡片），因此整体回退
+= 「采用 V15 样式」，且**零功能损失**：
+
+- `Props` 接口两边完全一致（`data / loading / isMobile`），无需改调用方；
+- V15 原件自身已包含 `fetchClientDetail` 与 `ClientDetail` 引入，**客户详情下钻未被移除**；
+- 随之恢复 V15 的 `.fm-sum-box / .fm-sum-row / .fm-sum-group / .fm-sum-lbl / .fm-sum-tag` 汇总块样式。
+
+**已移除的 V16 改动**（均为样式）：`.fm-l1/.fm-l2` 两行卡片类、`.fm-node.two{height:88px}` 等高规则、
+`.v7flow-modal` 的 antd 表格令牌、`.fm-avg`。
+
+---
+
+## 三、分享页标题 / 缩略图 / 描述（含服务端 meta 注入）
+
+**用户原话**：「分享页面的标题名称要体现为浏览器顶部标题栏，同时可以设置分享略缩图和分享描述」
+
+### 3.1 数据层
+`jdywh_shares` 新增 2 个可空列（`src/bootstrap.js` 的 `ensureColumn` 幂等迁移）：
+```sql
+`description` VARCHAR(500) NULL COMMENT "V16.1：分享描述（og:description）" AFTER `title`
+`thumb`       VARCHAR(500) NULL COMMENT "V16.1：分享缩略图 URL（og:image）"  AFTER `description`
+```
+启动日志实测：`[migrate] jdywh_shares.description 已添加`、`[migrate] jdywh_shares.thumb 已添加`。
+
+`src/reports.js`：
+- `publicShare()` 输出 `description` / `thumb`
+- `createShare()` 接受并可落这两列；`updateShare()` 支持修改，`description ≤500`、`thumb ≤500`，
+  且 `thumb` 只接受 `http(s)://` 或 `/` 开头（否则报错，防止 `javascript:` 之类注入）
+- 新增 `shareMetaByToken(token)`：**不校验密码、不计数、不执行报表**，只回
+  `title/description/thumb/hasPassword/expired/disabled`，供浏览器标题栏与 meta 注入使用
+
+### 3.2 接口层
+- 新增 `GET /api/public/shares/:token/meta`（`src/routes/api.js`），只回门面字段，**零报表数据**
+- `GET /api/public/shares/:token` 的 `share` 对象补充 `description` / `thumb`
+
+### 3.3 服务端注入（关键：分享爬虫不执行 JS）
+`src/routes/spa.js` 新增 `buildShareMetaHtml` / `injectShareMeta`，对 `GET|HEAD /s/<token>`
+在 `index.html` 的 `<!-- SHARE_META_START --> … <!-- SHARE_META_END -->` 之间注入：
+
+```
+<title>分享标题</title>
+<meta name="description" content="…" />
+<meta property="og:type" content="website" />
+<meta property="og:title" content="…" />
+<meta property="og:description" content="…" />
+<meta property="og:image" content="https://站点/…" />     ← 站内相对路径自动补成绝对地址
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" / "twitter:description" / "twitter:image" content="…" />
+```
+- 只处理 `/s/<token>` 一个路径，其余路由仍走 `sendFile`（零额外开销）
+- 任何异常一律回退原 `index.html`，保证「分享页永远能打开」
+- **失效 / 停用 / 有密码的分享只给标题，不给描述与缩略图**（避免泄漏）
+- 用户输入全部 HTML 转义后拼接
+
+### 3.4 前端
+- `frontend/src/pages/shares.tsx`：创建 + 编辑弹窗新增「分享描述」（TextArea，200 字，带计数）与
+  「分享缩略图」（地址，500 字），编辑时回填、保存时提交，缩略图格式前端预校验
+- `frontend/src/pages/share-view.tsx`：新增 `applyShareDocMeta()`，写 `document.title`
+  并 upsert `og:*` / `twitter:*`；两条数据路径（`/meta` 接口 + 主接口 `share`）都会校准，
+  覆盖「有密码的分享」与「失效/停用页」也显示正确标题
+- `frontend/src/api/reports.ts`：`ShareItem` / `ShareCreatePayload` / `ShareUpdatePayload` /
+  `PublicShareMeta` 增补字段，新增 `ShareMeta` 类型与 `getPublicShareMeta(token)`
+
+---
+
+## 四、连锁排名：点击连锁名称查看客户详情
+
+**用户原话**：「连锁排名处点击连锁名称也能查看客户详情」
+
+**改法**（`frontend/src/pages/dashboard/board/ChainRanking.tsx`）：
+- 连锁名称由纯文本 `<span>` 改为 `<button class="vb14-it-nm vb14-chain-link">`，
+  带 `data-chain-link={chainId}` 便于测试定位；无 `chainId` 时退回纯文本（不产生死链）
+- 新增 `openClient()`，复用后端既有 `fetchClientDetail` 与既有 `ClientDetail` 组件，
+  **不新增接口、不改后端**
+- 新增样式 `.vb14-it-nm.vb14-chain-link`（品牌色 + 虚线下划线 + hover 加深 + `:focus-visible` 焦点环）
+- 刻意使用独立类名（不用明细表的 `.vb11-chain-link`），避免与明细表 `[role=button]` 选择器互相污染
+
+---
+
+## 五、客户详情：基础信息去掉「运营信息」
+
+**用户原话**：「客户详情的基础信息不需要显示运营信息」
+
+**改法**（`frontend/src/pages/dashboard/board/ClientDetail.tsx`）：删除 `basicGroups` 中的
+`ops`（运营信息）分组 —— 原 4 组 `基础信息 12 / ERP 信息 5 / 运营信息 7 / 时间信息 5` = 29 项 + 相关人员 4 项，
+现为 **3 组 12/5/5 = 22 项** + 相关人员 4 项。运营指标仍在客户详情的 KPI 卡片中展示，未丢数据。
+
+---
+
+## 六、客户详情：节点时间线「耗时」整列对齐
+
+**用户原话**：「客户详情的节点时间线，后方的耗时全列要对齐，按照第二列最长的那一行间距100px显示」
+
+**根因**：每个 `<li>` 自身是独立 grid，第 3 列（时间）用 `max-content`，宽度按**本行文案**计算 ——
+完成行是「　11月03日 15:14　」（窄），未完成行是「　进行中（当前节点）　」（宽），
+于是第 4 列（耗时）的起始 x 每行都不同，整列参差（实测最大相差 60px）。
+
+**改法**：
+- 第 3 列宽度由 JS 统一钉死：`useLayoutEffect` 读全部 `li .st` 的 `scrollWidth` 取最大值，
+  写入 `<ol>` 的 `--vcd-tl-st`；CSS 改为 `grid-template-columns: 18px 104px var(--vcd-tl-st, max-content) minmax(0,1fr)`
+- `.du`（耗时）固定 `padding-left: 100px` 且 `justify-self: start`
+- 因为所有行共用同一列宽 → 耗时整列严格对齐；最长那一行的时间文本到耗时恰为 100px
+- 用 `scrollWidth` 而非 `offsetWidth`：列宽被钉死后 `offsetWidth` 已被裁剪，会形成测量死锁
+- 只在值变化时才写 CSS 变量，避免 measure → set → measure 循环
+- 兜底：首帧尚未测到值时回落 `max-content`，行为与改前一致，不会错位
+
+---
+
+## 七、客户详情：宽屏内容居中
+
+**用户原话**：「客户详情当客户浏览器页面过宽时，内容居中显示，不要过于分散」
+
+**根因**：弹窗宽度写死 `80vw`，在 2560 / 3440 宽屏上会拉到 2048px / 2752px，两栏与 4 列字段被撑得极散。
+
+**改法**：`.vcd-modal .ant-modal{max-width:1440px}` + `.vcd-modal .vcd-wrap{max-width:1360px;margin:0 auto}`。
+视口 ≤1800px 时 `80vw` 本来就 <1440，**行为与改前完全一致**（不影响 1440/1920 常规屏）；只有更宽的屏才收窄，
+配合 Modal 的 `centered` 自然左右居中。只加 `max-width` 上限，不改 antd 内部宽度机制。
+
+---
+
+## 八、版本与验证
+
+- 版本号：`package.json` / `frontend/package.json` → **16.1.0**
+- `npx tsc --noEmit` → **EXIT 0**
+- `npm run build` → **EXIT 0，built in 10.36s**
+- 后端语法：`node --check src/routes/api.js|src/reports.js|src/bootstrap.js|src/routes/spa.js` 全部 **EXIT 0**
+- 需求 3 后端链路实测（本地 8781）：8 项断言 **全部 true**，`/dashboard` 零影响
+
+---
+
 ## [16.0.0] - 2026-11-03
 
 ### 版本主题：侧边栏收起持久化 + 分享链接可编辑与 10 项指标 + 报表中心 BI/AI 双轨 + 看板 8 项口径与交互升级

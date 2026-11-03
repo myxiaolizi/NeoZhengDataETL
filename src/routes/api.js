@@ -80,6 +80,29 @@ router.get('/settings/public', async (req, res, next) => {
  * 密码通过 query 参数 `pwd` 传入（前端密码框提交后重新请求）。
  * 校验失败时不累加 view_count（accessShare 内部只在通过后才 +1）。
  */
+/**
+ * V16.1 需求 3：分享「展示元信息」—— 不含任何报表数据。
+ *
+ * 用途：
+ *   1) 前端公开页在拿到数据之前先把浏览器标签页标题设成分享标题；
+ *   2) 分享有密码时也能显示正确的标题（accessShare 在密码未通过时不会回 title）；
+ *   3) 社交平台预览由服务端注入 <meta>（见 routes/spa.js），本接口供前端侧复用同一份数据。
+ *
+ * 只回标题/描述/缩略图/是否需密码/是否可用，**绝不回报表数据**。
+ * 未找到 token 返回 404（前端回退站点默认标题）。
+ */
+router.get('/public/shares/:token/meta', async (req, res) => {
+  try {
+    const meta = await reports.shareMetaByToken(req.params.token);
+    if (!meta) return res.status(404).json({ ok: false, code: 'NOT_FOUND', message: '分享链接不存在' });
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.json({ ok: true, data: meta });
+  } catch (err) {
+    console.error('[public/shares/meta]', err);
+    res.status(500).json({ ok: false, message: '获取分享信息失败' });
+  }
+});
+
 router.get('/public/shares/:token', async (req, res, next) => {
   try {
     const token = String(req.params.token || '').trim();
@@ -145,6 +168,9 @@ router.get('/public/shares/:token', async (req, res, next) => {
           id: s.id,
           token: s.token,
           title: s.title || '',
+          /* V16.1：分享描述 + 缩略图，公开页用于浏览器标题栏与 <meta> */
+          description: s.description || '',
+          thumb: s.thumb || '',
           targetType: s.targetType || s.target_type,
           targetId: s.targetId || s.target_id,
           expiresAt: s.expiresAt || s.expires_at,

@@ -415,6 +415,9 @@ export default function SharesPage() {
         targetType: 'report',
         targetId: values.targetId,
         title: values.title || undefined,
+        /* V16.1 需求 3：描述 / 缩略图（留空则不传，后端落 NULL） */
+        description: String(values.description || '').trim() || undefined,
+        thumb: String(values.thumb || '').trim() || undefined,
         expiresDays: values.expiresDays || undefined,
         password: values.password || undefined,
         allowExport: !!values.allowExport,
@@ -485,6 +488,8 @@ export default function SharesPage() {
     setExpireMode(validExp ? 'custom' : 'permanent');
     editForm.setFieldsValue({
       title: row.title || '',
+      description: (row as { description?: string }).description || '',
+      thumb: (row as { thumb?: string }).thumb || '',
       expiresDays: undefined,
       /* antd6 的 DatePicker 收到 null 会抛 `getUDayjs(...).isValid is not a function`，
          因此「无到期时间」时只靠 resetFields 清空，绝不把 null 塞给该字段。 */
@@ -509,6 +514,8 @@ export default function SharesPage() {
 
     const payload: {
       title?: string;
+      description?: string;
+      thumb?: string;
       expiresAt?: string | null;
       expiresDays?: number;
       password?: string | null;
@@ -517,6 +524,15 @@ export default function SharesPage() {
 
     /* 需求 2.0 / 2.1：分享标题（空串 = 清除，后端会落空串） */
     payload.title = String(values.title ?? '');
+
+    /* V16.1 需求 3：分享描述 / 缩略图（空串 = 清除 → 后端落 NULL，回退默认） */
+    payload.description = String(values.description ?? '');
+    const thumbRaw = String(values.thumb ?? '').trim();
+    if (thumbRaw && !/^(https?:\/\/|\/)/i.test(thumbRaw)) {
+      message.error('缩略图需填 http(s) 图片地址，或以 / 开头的站内路径');
+      return;
+    }
+    payload.thumb = thumbRaw;
 
     /* 需求 2.2：有效期 —— 永久(null) / N 天 / 自定义具体时间 */
     if (expireMode === 'permanent') {
@@ -1227,8 +1243,32 @@ export default function SharesPage() {
           </div>
 
           {/* 需求 2.0 / 2.1：分享标题 */}
-          <Form.Item name="title" label="分享标题" extra="对外展示的页面标题，留空则回落到默认名称">
+          <Form.Item name="title" label="分享标题" extra="对外展示的页面标题，留空则回落到默认名称；会显示为浏览器标签栏标题" data-field="titleWrap">
             <Input size="large" maxLength={60} placeholder="对外展示的标题" data-field="title" />
+          </Form.Item>
+
+          {/* V16.1 需求 3：分享描述 + 分享缩略图（链接预览 / 浏览器标题栏配套） */}
+          <Form.Item
+            name="description"
+            label="分享描述"
+            extra="分享出去时显示的简介（og:description），留空则不展示"
+            data-field="descriptionWrap"
+          >
+            <Input.TextArea
+              rows={2}
+              maxLength={200}
+              showCount
+              placeholder="一句话说明这个分享的内容"
+              data-field="description"
+            />
+          </Form.Item>
+          <Form.Item
+            name="thumb"
+            label="分享缩略图"
+            extra="图片地址：http(s):// 开头的外链，或以 / 开头的站内路径。留空则不展示缩略图"
+            data-field="thumbWrap"
+          >
+            <Input size="large" maxLength={500} placeholder="https://…/cover.png 或 /public/cover.png" data-field="thumb" />
           </Form.Item>
 
           {/* 需求 2.2：有效期 */}
@@ -1517,6 +1557,13 @@ export default function SharesPage() {
             </Form.Item>
             <Form.Item name="title" label="分享标题" extra="留空则使用报表名称">
               <Input size="large" maxLength={60} placeholder="对外展示的标题" />
+            </Form.Item>
+            {/* V16.1 需求 3：创建时也可直接设置描述与缩略图 */}
+            <Form.Item name="description" label="分享描述" extra="留空则不展示（可稍后在「编辑分享」里补）">
+              <Input.TextArea rows={2} maxLength={200} showCount placeholder="一句话说明这个分享的内容" />
+            </Form.Item>
+            <Form.Item name="thumb" label="分享缩略图" extra="http(s):// 图片地址，或以 / 开头的站内路径；留空则不展示">
+              <Input size="large" maxLength={500} placeholder="https://…/cover.png" />
             </Form.Item>
             <Form.Item name="expiresDays" label="有效期">
               <Select
