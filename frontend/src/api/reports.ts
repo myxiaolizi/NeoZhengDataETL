@@ -187,6 +187,12 @@ export interface ShareCountItem {
 
 export interface ShareSourceStats {
   traffic: number;
+  /** 流量是否有真实数据源：beacon 源不记响应体字节数 → false，前端必须显示「暂无」而非假 0 */
+  hasTraffic?: boolean;
+  /** 有字节数据的行数，便于核对 */
+  trafficRows?: number;
+  /** 流量口径说明 */
+  trafficSource?: string;
   requests: number;
   ips: number;
   uv: number;
@@ -195,6 +201,7 @@ export interface ShareSourceStats {
   oses: ShareCountItem[];
   devices: ShareCountItem[];
   visitorIps?: ShareCountItem[];
+  /** 省份：无省份库时为空数组（后端不得编造「未知」，前端不得显示「未知」） */
   provinces: ShareCountItem[];
   label?: string;
 }

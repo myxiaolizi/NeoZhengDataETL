@@ -54,6 +54,7 @@ import {
 import { ProTable } from '@ant-design/pro-components';
 import type { ProColumns } from '@ant-design/pro-components';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import dayjs from 'dayjs';
 import Page from '@/components/Page';
 import PageTabs, { PageTabTag, pageTabLabel } from '@/components/PageTabs';
 import type { StatCardItem } from '@/components/StatCards';
@@ -124,6 +125,15 @@ function countText(list?: { name: string; count: number }[]): string {
     .join('、');
 }
 
+/** 字节数友好格式（流量指标用；无真实数据源时调用方显示「暂无」） */
+function fmtBytes(n: number): string {
+  const v = Number(n) || 0;
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} MB`;
+  return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 /** 单来源（beacon / nginx）的 10 项指标。**两套数字分开给，绝不合并** */
 function StatSourceBlock({
   title,
@@ -137,12 +147,30 @@ function StatSourceBlock({
   provinceNote?: string;
 }) {
   const d = data || ({} as ShareSourceStats);
-  const provinceText =
-    provinceStatus === 'pending'
-      ? provinceNote || '暂无数据（待接入省份库）'
-      : countText(d.provinces);
+
+  /* 省份：无省份库（pending）或后端明确返回空数组时，一律如实说「暂无」，
+     绝不把「未接入」渲染成「未知」这样的真实分类。 */
+  const provincePending = provinceStatus === 'pending' || !d.provinces || d.provinces.length === 0;
+  const provinceText = provincePending
+    ? provinceNote || '暂无（待接入省份库）'
+    : countText(d.provinces);
+
+  /* 流量：beacon 源不记响应体字节数（hasTraffic=false），此时显示「暂无」而非假 0 */
+  const trafficKnown = d.hasTraffic === true;
+  const trafficText = trafficKnown ? fmtBytes(d.traffic || 0) : '暂无';
+  const trafficTip = trafficKnown
+    ? d.trafficSource || '响应体字节数合计'
+    : '应用埋点不记录响应体字节数，接入 nginx 日志回填后可见';
+
   const items: { label: string; value: React.ReactNode }[] = [
-    { label: '流量', value: `${fmtNum(d.traffic || 0)} B` },
+    {
+      label: '流量',
+      value: (
+        <Tooltip title={trafficTip}>
+          <span data-traffic-text={trafficText}>{trafficText}</span>
+        </Tooltip>
+      ),
+    },
     { label: '请求数', value: fmtNum(d.requests || 0) },
     { label: 'IP', value: fmtNum(d.ips || 0) },
     { label: 'UV', value: fmtNum(d.uv || 0) },
@@ -448,7 +476,9 @@ export default function SharesPage() {
         : !!(target.row as AiShareItem).hasPassword;
     setPwdOn(hasPwd);
     const exp = row.expiresAt ? new Date(row.expiresAt) : null;
-    const validExp = exp && !Number.isNaN(exp.getTime()) ? exp : null;
+    /* antd6 的 DatePicker 只接受 dayjs 对象：传原生 Date 或 null 都会抛
+       `getUDayjs(...).isValid is not a function`，进而让整个弹窗渲染崩掉。 */
+    const validExp = exp && !Number.isNaN(exp.getTime()) ? dayjs(exp) : null;
     setExpireMode(validExp ? 'custom' : 'permanent');
     editForm.setFieldsValue({
       title: row.title || '',
