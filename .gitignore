@@ -58,3 +58,9 @@ zk1-board/
 éœ€æ±‚/
 req/
 docs/board/
+
+# V16£ºÁÙÊ± vite Ì½ÕëÅäÖÃÓëµ÷ÊÔ²úÎï£¨²»Èë¿â£©
+frontend/src/.w16probe.vite.config.ts
+_work/vite.w16probe.config.ts
+frontend/.w16*.ts
+
