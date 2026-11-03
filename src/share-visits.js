@@ -235,6 +235,7 @@ function aggregate(rows) {
     browsers: countBy(rows, 'browser'),
     oses: countBy(rows, 'os'),
     devices: countBy(rows, 'device'),
+    visitorIps: countBy(rows, 'ip', 50),
     provinces: countBy(rows, 'province'),
   };
 }
@@ -287,8 +288,10 @@ async function stats(shareType, shareId, opt) {
       browsers: b.browsers,
       oses: b.oses,
       devices: b.devices,
+      visitorIps: b.visitorIps,
       provinces: b.provinces,
       provinceStatus,
+      provinceNote: '暂无数据（待接入省份库）',
       /** 标注统计起点，避免把「埋点上线前」当成 0 访问 */
       statsSince: 'beacon 埋点上线时刻（V16 部署时）起，此前历史不可追溯；历史回填见 bySource.nginx',
     },

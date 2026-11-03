@@ -69,13 +69,20 @@ export interface ReportItem {
   id: number;
   name: string;
   code?: string;
+  title?: string;
   description?: string;
   category?: string;
-  reportType: string; // chart | table | dashboard
+  reportType: string; // chart | table | dashboard | ai
   datasetId?: number | null;
   datasetName?: string;
   config?: ReportConfig;
   layout?: unknown;
+  icon?: string;
+  tags?: string;
+  group?: string;
+  source?: 'builtin' | 'user' | string;
+  boardKey?: string | null;
+  dsl?: string;
   status: number;
   viewCount?: number;
   shareCount?: number;
@@ -154,10 +161,84 @@ export interface ReportCreatePayload {
   name: string;
   description?: string;
   category?: string;
+  group?: string;
+  icon?: string;
+  tags?: string;
+  dsl?: string;
   reportType?: string;
   datasetId?: number | null;
   config?: ReportConfig;
   status?: number;
+}
+
+export interface ShareUpdatePayload {
+  title?: string;
+  expiresAt?: string | null;
+  expiresDays?: number;
+  password?: string | null | false;
+  passwordOn?: boolean;
+  status?: number;
+}
+
+export interface ShareCountItem {
+  name: string;
+  count: number;
+}
+
+export interface ShareSourceStats {
+  traffic: number;
+  requests: number;
+  ips: number;
+  uv: number;
+  pv: number;
+  browsers: ShareCountItem[];
+  oses: ShareCountItem[];
+  devices: ShareCountItem[];
+  visitorIps?: ShareCountItem[];
+  provinces: ShareCountItem[];
+  label?: string;
+}
+
+export interface ShareVisitRow {
+  id: number;
+  createdAt: string;
+  ip: string;
+  browser: string;
+  os: string;
+  device: string;
+  province: string | null;
+  referer: string;
+  path: string;
+  source: 'beacon' | 'nginx' | string;
+  userAgent: string;
+}
+
+export interface ShareStatsResult {
+  shareType: 'report' | 'ai';
+  shareId: number;
+  days: number;
+  summary: ShareSourceStats & {
+    provinceStatus: 'ok' | 'pending';
+    provinceNote?: string;
+    statsSince?: string;
+  };
+  bySource: {
+    beacon: ShareSourceStats;
+    nginx: ShareSourceStats;
+  };
+  rows: ShareVisitRow[];
+  rowCount: number;
+}
+
+export interface AiReportSchema {
+  spec: string;
+  blockTypes: string[];
+  chartTypes: string[];
+  themes: string[];
+  routes: string[];
+  sources: Record<string, string[]>;
+  maxBlocks: number;
+  forbidden: string[];
 }
 
 /* ══════════════ 报表 ══════════════ */
@@ -180,6 +261,48 @@ export function updateReport(id: number | string, payload: Partial<ReportCreateP
 
 export function deleteReport(id: number | string): Promise<void> {
   return api.delete<void>(`/reports/${id}`);
+}
+
+export function copyReport(id: number | string): Promise<ReportItem> {
+  return api.post<ReportItem>(`/reports/${id}/copy`);
+}
+
+/* ══════════════ V16 · AI 报表（受限 DSL） ══════════════ */
+
+export function listAiReports(params?: { source?: string; group?: string; search?: string }): Promise<ReportItem[]> {
+  return api.get<ReportItem[]>('/ai-reports' + qs(params || {}));
+}
+
+export function getAiReport(id: number | string): Promise<ReportItem> {
+  return api.get<ReportItem>(`/ai-reports/${id}`);
+}
+
+export function createAiReport(payload: ReportCreatePayload): Promise<ReportItem> {
+  return api.post<ReportItem>('/ai-reports', payload);
+}
+
+export function updateAiReport(id: number | string, payload: Partial<ReportCreatePayload>): Promise<ReportItem> {
+  return api.put<ReportItem>(`/ai-reports/${id}`, payload);
+}
+
+export function deleteAiReport(id: number | string): Promise<void> {
+  return api.delete<void>(`/ai-reports/${id}`);
+}
+
+export function copyAiReport(id: number | string): Promise<ReportItem> {
+  return api.post<ReportItem>(`/ai-reports/${id}/copy`);
+}
+
+export function validateAiReportDsl(dsl: string | Record<string, unknown>): Promise<{ valid: boolean; dsl: string }> {
+  return api.post<{ valid: boolean; dsl: string }>('/ai-reports/validate', { dsl });
+}
+
+export function generateAiReportDraft(prompt: string): Promise<{ dsl: string; parsed: Record<string, unknown>; raw: string }> {
+  return api.post<{ dsl: string; parsed: Record<string, unknown>; raw: string }>('/ai-reports/ai-draft', { prompt });
+}
+
+export function getAiReportSchema(): Promise<AiReportSchema> {
+  return api.get<AiReportSchema>('/ai-reports/schema');
 }
 
 /** 执行报表取数（后端为 POST） */
@@ -252,6 +375,18 @@ export function createShare(payload: ShareCreatePayload): Promise<ShareItem> {
 
 export function toggleShare(id: number | string, status: number): Promise<ShareItem> {
   return api.put<ShareItem>(`/shares/${id}`, { status });
+}
+
+export function updateShare(id: number | string, payload: ShareUpdatePayload): Promise<ShareItem> {
+  return api.put<ShareItem>(`/shares/${id}`, payload);
+}
+
+export function getShareStats(
+  shareType: 'report' | 'ai',
+  id: number | string,
+  opts?: { days?: number; limit?: number },
+): Promise<ShareStatsResult> {
+  return api.get<ShareStatsResult>(`/shares/${shareType}/${id}/stats` + qs(opts || {}));
 }
 
 export function deleteShare(id: number | string): Promise<void> {
